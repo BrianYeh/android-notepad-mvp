@@ -84,8 +84,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -1252,9 +1257,12 @@ private fun TextEditorScreen(
 ) {
     val note by viewModel.observeNote(noteId).collectAsStateWithLifecycle(initialValue = null)
     var title by remember(noteId) { mutableStateOf("") }
-    var content by remember(noteId) { mutableStateOf("") }
+    var contentField by remember(noteId) { mutableStateOf(TextFieldValue("")) }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var isFindVisible by remember(noteId) { mutableStateOf(false) }
+    var findQuery by remember(noteId) { mutableStateOf("") }
+    var activeFindIndex by remember(noteId) { mutableStateOf(0) }
     var saveStatus by remember(noteId) { mutableStateOf(SaveStatus.Saved) }
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
     var pendingExportText by remember { mutableStateOf<String?>(null) }
@@ -1262,7 +1270,11 @@ private fun TextEditorScreen(
     val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
     val contentFocusRequester = remember(noteId) { FocusRequester() }
+    val findFocusRequester = remember(noteId) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val content = contentField.text
+    val findMatches = remember(content, findQuery) { findInNoteMatches(content, findQuery) }
+    val currentFindIndex = activeFindIndex.coerceIn(0, (findMatches.size - 1).coerceAtLeast(0))
     val exportTextLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain"),
     ) { uri ->
@@ -1285,7 +1297,7 @@ private fun TextEditorScreen(
     LaunchedEffect(note?.id) {
         val loaded = note ?: return@LaunchedEffect
         title = loaded.title
-        content = loaded.textContent.orEmpty()
+        contentField = TextFieldValue(loaded.textContent.orEmpty())
         loadedNoteId = loaded.id
         lastSavedAt = loaded.updatedAt
         saveStatus = SaveStatus.Saved
@@ -1302,6 +1314,21 @@ private fun TextEditorScreen(
         if (loadedNoteId == noteId) {
             titleFocusRequester.requestFocus()
             keyboardController?.show()
+        }
+    }
+
+    LaunchedEffect(isFindVisible) {
+        if (isFindVisible) {
+            findFocusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
+    LaunchedEffect(findQuery, content, findMatches.size) {
+        activeFindIndex = if (findMatches.isEmpty()) {
+            0
+        } else {
+            activeFindIndex.coerceIn(0, findMatches.lastIndex)
         }
     }
 
@@ -1326,6 +1353,17 @@ private fun TextEditorScreen(
             saveStatus = SaveStatus.Saved
             onBack()
         }
+    }
+
+    fun selectFindMatch(index: Int) {
+        val nextIndex = index.normalizeFindMatchIndex(findMatches.size)
+        if (nextIndex < 0) return
+        val range = findMatches[nextIndex]
+        activeFindIndex = nextIndex
+        contentField = contentField.copy(
+            selection = TextRange(range.first, range.last + 1),
+        )
+        contentFocusRequester.requestFocus()
     }
 
     fun saveCurrentTextNoteThen(onSaved: (NoteEntity) -> Unit) {
@@ -1381,6 +1419,12 @@ private fun TextEditorScreen(
                     }
                 },
                 actions = {
+                    TextButton(
+                        onClick = { isFindVisible = true },
+                        modifier = Modifier.testTag("find_in_note_button"),
+                    ) {
+                        Text(text.findInNote)
+                    }
                     TextButton(
                         onClick = ::shareCurrentTextNote,
                         modifier = Modifier.testTag("share_text_note_button"),
@@ -1472,19 +1516,49 @@ private fun TextEditorScreen(
                     onSetReminder = { reminderAt -> viewModel.setNoteReminder(noteId, reminderAt) },
                     onClearReminder = { viewModel.setNoteReminder(noteId, null) },
                 )
+                if (isFindVisible) {
+                    FindInNoteBar(
+                        query = findQuery,
+                        currentIndex = currentFindIndex,
+                        matchCount = findMatches.size,
+                        text = text,
+                        findFocusRequester = findFocusRequester,
+                        onQueryChange = {
+                            findQuery = it
+                            activeFindIndex = 0
+                        },
+                        onPrevious = {
+                            selectFindMatch(previousFindMatchIndex(currentFindIndex, findMatches.size))
+                        },
+                        onNext = {
+                            selectFindMatch(nextFindMatchIndex(currentFindIndex, findMatches.size))
+                        },
+                        onClearSearch = {
+                            isFindVisible = false
+                            findQuery = ""
+                            activeFindIndex = 0
+                        },
+                    )
+                }
                 Text(
                     text = text.content,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
                 OutlinedTextField(
-                    value = content,
-                    onValueChange = { content = it },
+                    value = contentField,
+                    onValueChange = { contentField = it },
                     placeholder = { Text(text.content) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(
                         fontSize = editorFontSize.fontSizeSp.sp,
                         lineHeight = (editorFontSize.fontSizeSp + 8).sp,
+                    ),
+                    visualTransformation = FindInNoteVisualTransformation(
+                        query = findQuery,
+                        activeMatchIndex = currentFindIndex,
+                        matchColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
                     ),
                     minLines = 12,
                     modifier = Modifier
@@ -1510,6 +1584,79 @@ private fun TextEditorScreen(
                 onDeleted()
             },
         )
+    }
+}
+
+@Composable
+private fun FindInNoteBar(
+    query: String,
+    currentIndex: Int,
+    matchCount: Int,
+    text: UiText,
+    findFocusRequester: FocusRequester,
+    onQueryChange: (String) -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onClearSearch: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("find_in_note_bar"),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            label = { Text(text.searchInNote) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    TextButton(onClick = { onQueryChange("") }) {
+                        Text(text.clear)
+                    }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(findFocusRequester)
+                .testTag("find_in_note_input"),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = formatFindMatchStatus(currentIndex, matchCount, text.noMatches),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("find_match_status"),
+            )
+            TextButton(
+                onClick = onPrevious,
+                enabled = matchCount > 0,
+                modifier = Modifier.testTag("previous_find_match_button"),
+            ) {
+                Text(text.previousMatch)
+            }
+            TextButton(
+                onClick = onNext,
+                enabled = matchCount > 0,
+                modifier = Modifier.testTag("next_find_match_button"),
+            ) {
+                Text(text.nextMatch)
+            }
+            TextButton(
+                onClick = onClearSearch,
+                modifier = Modifier.testTag("clear_find_in_note_button"),
+            ) {
+                Text(text.clearSearch)
+            }
+        }
     }
 }
 
@@ -2451,6 +2598,58 @@ fun String.highlightRanges(query: String): List<IntRange> {
         searchStart = index + query.length
     }
     return ranges
+}
+
+fun findInNoteMatches(content: String, query: String): List<IntRange> {
+    return content.highlightRanges(query.trim())
+}
+
+fun nextFindMatchIndex(currentIndex: Int, matchCount: Int): Int {
+    return (currentIndex + 1).normalizeFindMatchIndex(matchCount)
+}
+
+fun previousFindMatchIndex(currentIndex: Int, matchCount: Int): Int {
+    return (currentIndex - 1).normalizeFindMatchIndex(matchCount)
+}
+
+fun formatFindMatchStatus(currentIndex: Int, matchCount: Int, noMatchesLabel: String): String {
+    if (matchCount <= 0) return noMatchesLabel
+    return "${currentIndex.normalizeFindMatchIndex(matchCount) + 1}/$matchCount"
+}
+
+fun Int.normalizeFindMatchIndex(matchCount: Int): Int {
+    if (matchCount <= 0) return -1
+    return ((this % matchCount) + matchCount) % matchCount
+}
+
+private class FindInNoteVisualTransformation(
+    private val query: String,
+    private val activeMatchIndex: Int,
+    private val matchColor: Color,
+    private val activeMatchColor: Color,
+) : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val matches = findInNoteMatches(text.text, query)
+        if (matches.isEmpty()) {
+            return TransformedText(text, OffsetMapping.Identity)
+        }
+
+        val activeIndex = activeMatchIndex.normalizeFindMatchIndex(matches.size)
+        val annotated = buildAnnotatedString {
+            append(text.text)
+            matches.forEachIndexed { index, range ->
+                addStyle(
+                    SpanStyle(
+                        background = if (index == activeIndex) activeMatchColor else matchColor,
+                        fontWeight = if (index == activeIndex) FontWeight.Bold else null,
+                    ),
+                    start = range.first,
+                    end = range.last + 1,
+                )
+            }
+        }
+        return TransformedText(annotated, OffsetMapping.Identity)
+    }
 }
 
 private fun noteMetadata(

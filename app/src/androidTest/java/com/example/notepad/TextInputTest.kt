@@ -1,6 +1,7 @@
 package com.example.notepad
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -10,7 +11,11 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.notepad.ui.findInNoteMatches
+import com.example.notepad.ui.formatFindMatchStatus
 import com.example.notepad.ui.highlightRanges
+import com.example.notepad.ui.nextFindMatchIndex
+import com.example.notepad.ui.previousFindMatchIndex
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -40,6 +45,15 @@ class TextInputTest {
         composeRule.onNodeWithTag("set_reminder_button").assertIsDisplayed()
         composeRule.onNodeWithTag("share_text_note_button").assertIsDisplayed()
         composeRule.onNodeWithTag("export_text_note_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("find_in_note_button").performClick()
+        composeRule.onNodeWithTag("find_in_note_input")
+            .assertIsDisplayed()
+            .performTextInput("中文")
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/1")
+        composeRule.onNodeWithTag("next_find_match_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/1")
+        composeRule.onNodeWithTag("previous_find_match_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/1")
         composeRule.onNodeWithText("中文標題").assertIsDisplayed()
         composeRule.onNodeWithText("這是中文內容").assertIsDisplayed()
     }
@@ -158,5 +172,28 @@ class TextInputTest {
     fun highlightRangesAreCaseInsensitive() {
         assertEquals(listOf(0..4, 11..15), "Alpha note alpha".highlightRanges("alpha"))
         assertEquals(listOf(0..1, 4..5), "中文內容中文".highlightRanges("中文"))
+    }
+
+    @Test
+    fun findInNoteMatchesAreCaseInsensitiveAndSupportChinese() {
+        assertEquals(listOf(0..4, 11..15), findInNoteMatches("Alpha note alpha", "ALPHA"))
+        assertEquals(listOf(0..1, 4..5), findInNoteMatches("中文內容中文", "中文"))
+    }
+
+    @Test
+    fun findInNoteNavigationWrapsAround() {
+        assertEquals(0, nextFindMatchIndex(4, 5))
+        assertEquals(4, previousFindMatchIndex(0, 5))
+        assertEquals(2, nextFindMatchIndex(1, 5))
+        assertEquals(1, previousFindMatchIndex(2, 5))
+    }
+
+    @Test
+    fun findInNoteNoMatchesAndEmptyQueryAreHandled() {
+        assertEquals(emptyList<IntRange>(), findInNoteMatches("Alpha note", "missing"))
+        assertEquals(emptyList<IntRange>(), findInNoteMatches("Alpha note", ""))
+        assertEquals(-1, nextFindMatchIndex(0, 0))
+        assertEquals(-1, previousFindMatchIndex(0, 0))
+        assertEquals("No matches", formatFindMatchStatus(0, 0, "No matches"))
     }
 }
