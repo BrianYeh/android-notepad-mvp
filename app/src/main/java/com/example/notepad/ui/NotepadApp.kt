@@ -63,12 +63,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -93,6 +97,7 @@ import com.example.notepad.data.DEFAULT_DRAWING_STROKE_WIDTH
 import com.example.notepad.data.DrawingJson
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
+import com.example.notepad.data.DrawingTools
 import com.example.notepad.data.EditorFontSize
 import com.example.notepad.data.FolderEntity
 import com.example.notepad.data.NoteEntity
@@ -1563,12 +1568,8 @@ private fun DrawingEditorScreen(
         viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(updatedStrokes))
     }
 
-    fun activeBrushColor(): Int {
-        return if (selectedTool == DrawingTool.Eraser) {
-            android.graphics.Color.WHITE
-        } else {
-            selectedColor.colorArgb
-        }
+    fun activeStrokeTool(): String {
+        return if (selectedTool == DrawingTool.Eraser) DrawingTools.ERASER else DrawingTools.PEN
     }
 
     BackHandler(onBack = ::saveAndBack)
@@ -1655,8 +1656,9 @@ private fun DrawingEditorScreen(
                     strokes = strokes,
                     onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
                     onStrokeFinished = ::finishStroke,
-                    brushColorArgb = activeBrushColor(),
+                    brushColorArgb = selectedColor.colorArgb,
                     brushWidthPx = selectedBrushSize.widthPx,
+                    strokeTool = activeStrokeTool(),
                     onCanvasSizeChange = { canvasSize = it },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1769,18 +1771,26 @@ private fun DrawingToolBar(
             }
         }
 
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DrawingColorOption.entries.forEach { color ->
-                item {
-                    FilterChip(
-                        selected = selectedColor == color,
-                        onClick = { onColorChange(color) },
-                        enabled = selectedTool == DrawingTool.Pen,
-                        label = { Text(color.label(text)) },
-                        modifier = Modifier.testTag("drawing_color_${color.name}"),
-                    )
+        if (selectedTool == DrawingTool.Pen) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DrawingColorOption.entries.forEach { color ->
+                    item {
+                        FilterChip(
+                            selected = selectedColor == color,
+                            onClick = { onColorChange(color) },
+                            label = { Text(color.label(text)) },
+                            modifier = Modifier.testTag("drawing_color_${color.name}"),
+                        )
+                    }
                 }
             }
+        } else {
+            Text(
+                text = text.eraserSizeHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("drawing_eraser_hint"),
+            )
         }
     }
 }
@@ -1792,6 +1802,7 @@ private fun DrawingCanvas(
     onStrokeFinished: (List<DrawingStroke>) -> Unit,
     brushColorArgb: Int,
     brushWidthPx: Float,
+    strokeTool: String,
     onCanvasSizeChange: (IntSize) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1800,6 +1811,7 @@ private fun DrawingCanvas(
     val latestOnStrokeFinished by rememberUpdatedState(onStrokeFinished)
     val latestBrushColorArgb by rememberUpdatedState(brushColorArgb)
     val latestBrushWidthPx by rememberUpdatedState(brushWidthPx)
+    val latestStrokeTool by rememberUpdatedState(strokeTool)
 
     Canvas(
         modifier = modifier
@@ -1819,6 +1831,7 @@ private fun DrawingCanvas(
                             points = activePoints,
                             colorArgb = latestBrushColorArgb,
                             widthPx = latestBrushWidthPx,
+                            tool = latestStrokeTool,
                         )
                         latestOnStrokesChange(baseStrokes + activeStroke)
                     },
@@ -1837,29 +1850,49 @@ private fun DrawingCanvas(
                 )
             },
     ) {
-        strokes.forEach { stroke ->
-            val points = stroke.points
-            if (points.size == 1) {
-                drawCircle(
-                    color = Color(stroke.colorArgb),
-                    radius = stroke.widthPx / 2f,
-                    center = Offset(points.first().x, points.first().y),
-                )
-            } else if (points.size > 1) {
-                val path = Path().apply {
-                    moveTo(points.first().x, points.first().y)
-                    points.drop(1).forEach { point ->
-                        lineTo(point.x, point.y)
-                    }
-                }
-                drawPath(
-                    path = path,
-                    color = Color(stroke.colorArgb),
-                    style = Stroke(width = stroke.widthPx, cap = StrokeCap.Round, join = StrokeJoin.Round),
-                )
-            }
+        drawDrawingStrokes(strokes)
+    }
+}
+
+private fun DrawScope.drawDrawingStrokes(strokes: List<DrawingStroke>) {
+    drawRect(Color.White)
+    drawContext.canvas.saveLayer(Rect(Offset.Zero, size), Paint())
+    strokes.forEach { stroke ->
+        drawDrawingStroke(stroke)
+    }
+    drawContext.canvas.restore()
+}
+
+private fun DrawScope.drawDrawingStroke(stroke: DrawingStroke) {
+    val points = stroke.points
+    if (points.isEmpty()) return
+
+    val isEraser = stroke.tool == DrawingTools.ERASER
+    val blendMode = if (isEraser) BlendMode.Clear else BlendMode.SrcOver
+    val color = if (isEraser) Color.Transparent else Color(stroke.colorArgb)
+
+    if (points.size == 1) {
+        drawCircle(
+            color = color,
+            radius = stroke.widthPx / 2f,
+            center = Offset(points.first().x, points.first().y),
+            blendMode = blendMode,
+        )
+        return
+    }
+
+    val path = Path().apply {
+        moveTo(points.first().x, points.first().y)
+        points.drop(1).forEach { point ->
+            lineTo(point.x, point.y)
         }
     }
+    drawPath(
+        path = path,
+        color = color,
+        style = Stroke(width = stroke.widthPx, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        blendMode = blendMode,
+    )
 }
 
 @Composable

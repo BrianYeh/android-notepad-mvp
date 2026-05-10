@@ -71,6 +71,8 @@ class TextInputTest {
         composeRule.onNodeWithTag("drawing_tool_Eraser").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("drawing_brush_Thin").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("drawing_color_Red").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_tool_Eraser").performScrollTo().performClick()
+        composeRule.onNodeWithTag("drawing_eraser_hint").assertIsDisplayed()
         composeRule.onNodeWithTag("share_drawing_png_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("export_drawing_png_button").performScrollTo().assertIsDisplayed()
     }

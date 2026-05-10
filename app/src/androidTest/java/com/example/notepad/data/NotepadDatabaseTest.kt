@@ -1,5 +1,7 @@
 package com.example.notepad.data
 
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -70,6 +72,15 @@ class NotepadDatabaseTest {
                 ),
                 colorArgb = 0xFFE53935.toInt(),
                 widthPx = 10f,
+                tool = DrawingTools.PEN,
+            ),
+            DrawingStroke(
+                points = listOf(
+                    DrawingPoint(8f, 9f),
+                    DrawingPoint(10f, 11f),
+                ),
+                widthPx = 12f,
+                tool = DrawingTools.ERASER,
             ),
         )
 
@@ -93,25 +104,35 @@ class NotepadDatabaseTest {
 
         assertEquals(DEFAULT_DRAWING_COLOR_ARGB, stroke.colorArgb)
         assertEquals(DEFAULT_DRAWING_STROKE_WIDTH, stroke.widthPx, 0.01f)
+        assertEquals(DrawingTools.PEN, stroke.tool)
     }
 
     @Test
-    fun drawingPngRendersBlankCanvasAndStyledStrokes() {
+    fun drawingPngRendersBlankCanvasStyledStrokesAndEraserStrokes() {
         val blankPng = renderDrawingPng(emptyList(), width = 120, height = 80)
         val styledPng = renderDrawingPng(
             strokes = listOf(
                 DrawingStroke(
-                    points = listOf(DrawingPoint(4f, 4f), DrawingPoint(40f, 40f)),
-                    colorArgb = 0xFF1E88E5.toInt(),
-                    widthPx = 8f,
+                    points = listOf(DrawingPoint(10f, 40f), DrawingPoint(70f, 40f)),
+                    colorArgb = Color.BLACK,
+                    widthPx = 16f,
+                    tool = DrawingTools.PEN,
+                ),
+                DrawingStroke(
+                    points = listOf(DrawingPoint(40f, 10f), DrawingPoint(40f, 70f)),
+                    widthPx = 18f,
+                    tool = DrawingTools.ERASER,
                 ),
             ),
-            width = 120,
+            width = 80,
             height = 80,
         )
+        val bitmap = BitmapFactory.decodeByteArray(styledPng, 0, styledPng.size)
 
         assertEquals(0x89.toByte(), blankPng.first())
         assertEquals(0x89.toByte(), styledPng.first())
+        assertEquals(Color.WHITE, bitmap.getPixel(40, 40))
+        assertEquals(Color.BLACK, bitmap.getPixel(20, 40))
     }
 
     @Test

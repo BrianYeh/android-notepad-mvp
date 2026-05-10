@@ -2,9 +2,15 @@ package com.example.notepad.data
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 const val DEFAULT_DRAWING_COLOR_ARGB = -0x1000000
 const val DEFAULT_DRAWING_STROKE_WIDTH = 5f
+
+object DrawingTools {
+    const val PEN = "PEN"
+    const val ERASER = "ERASER"
+}
 
 data class DrawingPoint(
     val x: Float,
@@ -15,6 +21,7 @@ data class DrawingStroke(
     val points: List<DrawingPoint>,
     val colorArgb: Int = DEFAULT_DRAWING_COLOR_ARGB,
     val widthPx: Float = DEFAULT_DRAWING_STROKE_WIDTH,
+    val tool: String = DrawingTools.PEN,
 )
 
 object DrawingJson {
@@ -33,7 +40,8 @@ object DrawingJson {
                 JSONObject()
                     .put("points", pointArray)
                     .put("colorArgb", stroke.colorArgb)
-                    .put("widthPx", stroke.widthPx.toDouble()),
+                    .put("widthPx", stroke.widthPx.toDouble())
+                    .put("tool", stroke.tool),
             )
         }
         return strokeArray.toString()
@@ -69,11 +77,21 @@ object DrawingJson {
                                     .toFloat()
                                     .takeIf { it > 0f }
                                     ?: DEFAULT_DRAWING_STROKE_WIDTH,
+                                tool = strokeObject
+                                    .optString("tool", strokeObject.optString("type", DrawingTools.PEN))
+                                    .normalizedDrawingTool(),
                             ),
                         )
                     }
                 }
             }
         }.getOrDefault(emptyList())
+    }
+}
+
+private fun String.normalizedDrawingTool(): String {
+    return when (uppercase(Locale.US)) {
+        DrawingTools.ERASER -> DrawingTools.ERASER
+        else -> DrawingTools.PEN
     }
 }
