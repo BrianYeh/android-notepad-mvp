@@ -77,6 +77,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -114,6 +115,9 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.ceil
+import kotlin.math.hypot
+import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -140,10 +144,13 @@ private enum class DrawingTool {
     Eraser,
 }
 
-private enum class DrawingBrushSize(val widthPx: Float) {
-    Thin(3f),
-    Medium(DEFAULT_DRAWING_STROKE_WIDTH),
-    Thick(10f),
+private enum class DrawingBrushSize(
+    val penWidthPx: Float,
+    val eraserSizeDp: Float,
+) {
+    Thin(3f, 24f),
+    Medium(DEFAULT_DRAWING_STROKE_WIDTH, 48f),
+    Thick(10f, 80f),
 }
 
 private enum class DrawingColorOption(val colorArgb: Int) {
@@ -1421,6 +1428,7 @@ private fun DrawingEditorScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var pendingPngBytes by remember { mutableStateOf<ByteArray?>(null) }
     val context = LocalContext.current
+    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -1572,6 +1580,14 @@ private fun DrawingEditorScreen(
         return if (selectedTool == DrawingTool.Eraser) DrawingTools.ERASER else DrawingTools.PEN
     }
 
+    fun activeStrokeWidth(): Float {
+        return if (selectedTool == DrawingTool.Eraser) {
+            with(density) { selectedBrushSize.eraserSizeDp.dp.toPx() }
+        } else {
+            selectedBrushSize.penWidthPx
+        }
+    }
+
     BackHandler(onBack = ::saveAndBack)
 
     Scaffold(
@@ -1657,7 +1673,7 @@ private fun DrawingEditorScreen(
                     onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
                     onStrokeFinished = ::finishStroke,
                     brushColorArgb = selectedColor.colorArgb,
-                    brushWidthPx = selectedBrushSize.widthPx,
+                    brushWidthPx = activeStrokeWidth(),
                     strokeTool = activeStrokeTool(),
                     onCanvasSizeChange = { canvasSize = it },
                     modifier = Modifier
@@ -1761,10 +1777,11 @@ private fun DrawingToolBar(
             }
             DrawingBrushSize.entries.forEach { size ->
                 item {
+                    val sizeLabel = if (selectedTool == DrawingTool.Eraser) text.eraserSize else text.penSize
                     FilterChip(
                         selected = selectedBrushSize == size,
                         onClick = { onBrushSizeChange(size) },
-                        label = { Text("${text.brushSize}: ${size.label(text)}") },
+                        label = { Text("$sizeLabel: ${size.label(text, selectedTool)}") },
                         modifier = Modifier.testTag("drawing_brush_${size.name}"),
                     )
                 }
@@ -1812,6 +1829,7 @@ private fun DrawingCanvas(
     val latestBrushColorArgb by rememberUpdatedState(brushColorArgb)
     val latestBrushWidthPx by rememberUpdatedState(brushWidthPx)
     val latestStrokeTool by rememberUpdatedState(strokeTool)
+    var activeEraserPreview by remember { mutableStateOf<Offset?>(null) }
 
     Canvas(
         modifier = modifier
@@ -1827,6 +1845,7 @@ private fun DrawingCanvas(
                     onDragStart = { offset ->
                         baseStrokes = latestStrokes
                         activePoints = listOf(DrawingPoint(offset.x, offset.y))
+                        activeEraserPreview = offset.takeIf { latestStrokeTool == DrawingTools.ERASER }
                         activeStroke = DrawingStroke(
                             points = activePoints,
                             colorArgb = latestBrushColorArgb,
@@ -1838,19 +1857,27 @@ private fun DrawingCanvas(
                     onDrag = { change, _ ->
                         change.consume()
                         activePoints = activePoints + DrawingPoint(change.position.x, change.position.y)
+                        activeEraserPreview = change.position.takeIf { latestStrokeTool == DrawingTools.ERASER }
                         activeStroke = activeStroke.copy(points = activePoints)
                         latestOnStrokesChange(baseStrokes + activeStroke)
                     },
                     onDragEnd = {
                         latestOnStrokeFinished(baseStrokes + activeStroke)
+                        activeEraserPreview = null
                     },
                     onDragCancel = {
                         latestOnStrokeFinished(baseStrokes + activeStroke)
+                        activeEraserPreview = null
                     },
                 )
             },
     ) {
         drawDrawingStrokes(strokes)
+        activeEraserPreview?.let { center ->
+            if (strokeTool == DrawingTools.ERASER) {
+                drawEraserPreview(center, brushWidthPx)
+            }
+        }
     }
 }
 
@@ -1868,15 +1895,16 @@ private fun DrawScope.drawDrawingStroke(stroke: DrawingStroke) {
     if (points.isEmpty()) return
 
     val isEraser = stroke.tool == DrawingTools.ERASER
-    val blendMode = if (isEraser) BlendMode.Clear else BlendMode.SrcOver
-    val color = if (isEraser) Color.Transparent else Color(stroke.colorArgb)
+    if (isEraser) {
+        drawEraserStroke(stroke)
+        return
+    }
 
     if (points.size == 1) {
         drawCircle(
-            color = color,
+            color = Color(stroke.colorArgb),
             radius = stroke.widthPx / 2f,
             center = Offset(points.first().x, points.first().y),
-            blendMode = blendMode,
         )
         return
     }
@@ -1889,10 +1917,75 @@ private fun DrawScope.drawDrawingStroke(stroke: DrawingStroke) {
     }
     drawPath(
         path = path,
-        color = color,
+        color = Color(stroke.colorArgb),
         style = Stroke(width = stroke.widthPx, cap = StrokeCap.Round, join = StrokeJoin.Round),
+    )
+}
+
+private fun DrawScope.drawEraserStroke(stroke: DrawingStroke) {
+    sampleStrokeCenters(stroke).forEach { center ->
+        drawEraserSquare(center, stroke.widthPx, BlendMode.Clear)
+    }
+}
+
+private fun DrawScope.drawEraserSquare(
+    center: Offset,
+    sizePx: Float,
+    blendMode: BlendMode,
+) {
+    val half = sizePx / 2f
+    drawRect(
+        color = Color.Transparent,
+        topLeft = Offset(center.x - half, center.y - half),
+        size = androidx.compose.ui.geometry.Size(sizePx, sizePx),
         blendMode = blendMode,
     )
+}
+
+private fun DrawScope.drawEraserPreview(center: Offset, sizePx: Float) {
+    val half = sizePx / 2f
+    val topLeft = Offset(center.x - half, center.y - half)
+    val previewSize = androidx.compose.ui.geometry.Size(sizePx, sizePx)
+    drawRect(
+        color = Color(0xFF9E9E9E).copy(alpha = 0.24f),
+        topLeft = topLeft,
+        size = previewSize,
+    )
+    drawRect(
+        color = Color(0xFF424242).copy(alpha = 0.85f),
+        topLeft = topLeft,
+        size = previewSize,
+        style = Stroke(width = 2f),
+    )
+}
+
+private fun sampleStrokeCenters(stroke: DrawingStroke): List<Offset> {
+    val points = stroke.points
+    if (points.isEmpty()) return emptyList()
+    if (points.size == 1) return listOf(points.first().toOffset())
+
+    val stepPx = max(stroke.widthPx / 3f, 1f)
+    return buildList {
+        points.zipWithNext().forEach { (start, end) ->
+            val dx = end.x - start.x
+            val dy = end.y - start.y
+            val distance = hypot(dx.toDouble(), dy.toDouble()).toFloat()
+            val steps = max(1, ceil(distance / stepPx).toInt())
+            for (step in 0..steps) {
+                val fraction = step / steps.toFloat()
+                add(
+                    Offset(
+                        x = start.x + dx * fraction,
+                        y = start.y + dy * fraction,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+private fun DrawingPoint.toOffset(): Offset {
+    return Offset(x, y)
 }
 
 @Composable
@@ -2248,11 +2341,19 @@ private fun DrawingTool.label(text: UiText): String {
     }
 }
 
-private fun DrawingBrushSize.label(text: UiText): String {
-    return when (this) {
-        DrawingBrushSize.Thin -> text.thin
-        DrawingBrushSize.Medium -> text.medium
-        DrawingBrushSize.Thick -> text.thick
+private fun DrawingBrushSize.label(text: UiText, tool: DrawingTool): String {
+    return if (tool == DrawingTool.Eraser) {
+        when (this) {
+            DrawingBrushSize.Thin -> text.smallSize
+            DrawingBrushSize.Medium -> text.medium
+            DrawingBrushSize.Thick -> text.largeSize
+        }
+    } else {
+        when (this) {
+            DrawingBrushSize.Thin -> text.thin
+            DrawingBrushSize.Medium -> text.medium
+            DrawingBrushSize.Thick -> text.thick
+        }
     }
 }
 

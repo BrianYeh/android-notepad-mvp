@@ -8,6 +8,8 @@ import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import java.io.ByteArrayOutputStream
+import kotlin.math.ceil
+import kotlin.math.hypot
 import kotlin.math.max
 
 private const val MIN_EXPORT_SIZE_PX = 1
@@ -35,14 +37,14 @@ fun renderDrawingPng(
         val points = stroke.points
         if (points.isEmpty()) return@forEach
 
-        paint.color = if (stroke.tool == DrawingTools.ERASER) Color.TRANSPARENT else stroke.colorArgb
         paint.strokeWidth = stroke.widthPx
-        paint.xfermode = if (stroke.tool == DrawingTools.ERASER) {
-            PorterDuffXfermode(PorterDuff.Mode.CLEAR)
-        } else {
-            null
+        if (stroke.tool == DrawingTools.ERASER) {
+            drawEraserStroke(canvas, paint, stroke)
+            return@forEach
         }
 
+        paint.color = stroke.colorArgb
+        paint.xfermode = null
         if (points.size == 1) {
             paint.style = Paint.Style.FILL
             canvas.drawCircle(
@@ -69,5 +71,50 @@ fun renderDrawingPng(
     return ByteArrayOutputStream().use { outputStream ->
         bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
         outputStream.toByteArray()
+    }
+}
+
+private fun drawEraserStroke(
+    canvas: Canvas,
+    paint: Paint,
+    stroke: DrawingStroke,
+) {
+    paint.color = Color.TRANSPARENT
+    paint.style = Paint.Style.FILL
+    paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+    sampleStrokeCenters(stroke).forEach { point ->
+        val half = stroke.widthPx / 2f
+        canvas.drawRect(
+            point.x - half,
+            point.y - half,
+            point.x + half,
+            point.y + half,
+            paint,
+        )
+    }
+}
+
+private fun sampleStrokeCenters(stroke: DrawingStroke): List<DrawingPoint> {
+    val points = stroke.points
+    if (points.isEmpty()) return emptyList()
+    if (points.size == 1) return listOf(points.first())
+
+    val stepPx = max(stroke.widthPx / 3f, 1f)
+    return buildList {
+        points.zipWithNext().forEach { (start, end) ->
+            val dx = end.x - start.x
+            val dy = end.y - start.y
+            val distance = hypot(dx.toDouble(), dy.toDouble()).toFloat()
+            val steps = max(1, ceil(distance / stepPx).toInt())
+            for (step in 0..steps) {
+                val fraction = step / steps.toFloat()
+                add(
+                    DrawingPoint(
+                        x = start.x + dx * fraction,
+                        y = start.y + dy * fraction,
+                    ),
+                )
+            }
+        }
     }
 }

@@ -12,7 +12,7 @@ Native Android notepad MVP built with Kotlin, Jetpack Compose, Room, and MVVM.
 - Long-form text editor with save status, last updated time, and configurable editor font size
 - Search notes by title and text note content
 - Create, draw, clear, undo, redo, pixel-erase, move, pin, soft-delete, restore, permanently delete, save, and reload drawing notes
-- Drawing notes support adjustable pen/eraser size and black, red, blue, and green pen colors
+- Drawing notes support separate pen sizes, larger eraser sizes, square eraser preview, and black, red, blue, and green pen colors
 - Trash view for deleted notes
 - Sort notes by updated time, created time, or title
 - Filter notes by all types, text notes, or drawing notes
@@ -83,6 +83,6 @@ Note reminders are scheduled locally with Android `AlarmManager` and fire once. 
 
 Open a text note and tap `Share` to send the title, folder, reminder time when set, last updated time, and body text through the Android share sheet. Tap `Export .txt` to choose a destination such as Downloads or Google Drive with the Android file picker.
 
-Open a drawing note and use the drawing toolbar to choose pen or pixel-style eraser, size, and pen color. The eraser stores real `ERASER` strokes and clears previous pixels during editing and PNG rendering; it is not a white pen. Undo and redo work at the stroke level, including eraser strokes. Tap `Share PNG` to send a PNG image through the Android share sheet, or `Export PNG` to save a PNG image to a destination such as Downloads or Google Drive. Drawing stroke JSON stays inside the app and is not included in shared content.
+Open a drawing note and use the drawing toolbar to choose pen or pixel-style eraser, size, and pen color. Pen sizes stay tuned for drawing lines; eraser sizes are much larger and show a square preview while pressing or dragging. The eraser stores real `ERASER` strokes and clears previous pixels during editing and PNG rendering; it is not a white pen. Undo and redo work at the stroke level, including eraser strokes. Tap `Share PNG` to send a PNG image through the Android share sheet, or `Export PNG` to save a PNG image to a destination such as Downloads or Google Drive. Drawing stroke JSON stays inside the app and is not included in shared content.
 
 From another Android app, share plain text to `Local Notepad`. The app creates a new text note in `Uncategorized` using the shared subject when available, otherwise a preview of the shared text.

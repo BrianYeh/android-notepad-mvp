@@ -108,6 +108,27 @@ class NotepadDatabaseTest {
     }
 
     @Test
+    fun drawingJsonDecodesLegacyTypeFieldAndPreservesEraserWidth() {
+        val legacyTypeJson = """
+            [
+              {
+                "type": "ERASER",
+                "widthPx": 48.0,
+                "points": [
+                  { "x": 10.0, "y": 20.0 },
+                  { "x": 30.0, "y": 40.0 }
+                ]
+              }
+            ]
+        """.trimIndent()
+
+        val stroke = DrawingJson.decode(legacyTypeJson).single()
+
+        assertEquals(DrawingTools.ERASER, stroke.tool)
+        assertEquals(48f, stroke.widthPx, 0.01f)
+    }
+
+    @Test
     fun drawingPngRendersBlankCanvasStyledStrokesAndEraserStrokes() {
         val blankPng = renderDrawingPng(emptyList(), width = 120, height = 80)
         val styledPng = renderDrawingPng(
