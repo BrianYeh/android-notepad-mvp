@@ -4,6 +4,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -13,6 +15,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.notepad.ui.findMatchScrollTarget
 import com.example.notepad.ui.findInNoteMatches
 import com.example.notepad.ui.formatFindMatchStatus
 import com.example.notepad.ui.highlightRanges
@@ -34,10 +37,23 @@ class TextInputTest {
         }
     }
 
+    private fun verticalScrollValue(tag: String): Float {
+        val range = composeRule.onNodeWithTag(tag)
+            .fetchSemanticsNode()
+            .config
+            .getOrNull(SemanticsProperties.VerticalScrollAxisRange)
+        return range?.value?.invoke() ?: 0f
+    }
+
+    private fun openAddMenuItem(menuItemTag: String) {
+        composeRule.onNodeWithTag("add_note_button").performClick()
+        waitForTag(menuItemTag)
+        composeRule.onNodeWithTag(menuItemTag).performClick()
+    }
+
     @Test
     fun textNoteTitleAndContentAcceptInput() {
-        composeRule.onNodeWithTag("add_note_button").performClick()
-        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_title")
 
         composeRule.onNodeWithTag("text_note_title")
@@ -82,8 +98,7 @@ class TextInputTest {
         val title = "Friendly read title $suffix"
         val body = "Friendly read body $suffix"
 
-        composeRule.onNodeWithTag("add_note_button").performClick()
-        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_title")
         composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().performTextInput(body)
@@ -114,8 +129,7 @@ class TextInputTest {
         val secondTitle = "Persist updated title $suffix"
         val secondContent = "Persist updated content after system back $suffix"
 
-        composeRule.onNodeWithTag("add_note_button").performClick()
-        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_title")
         composeRule.onNodeWithTag("text_note_title").performTextInput(firstTitle)
         composeRule.onNodeWithTag("text_note_content").performTextInput(firstContent)
@@ -158,8 +172,7 @@ class TextInputTest {
         val title = "Find flow title $suffix"
         val body = "banana alpha banana beta banana"
 
-        composeRule.onNodeWithTag("add_note_button").performClick()
-        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_title")
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextInput(body)
@@ -178,6 +191,58 @@ class TextInputTest {
         composeRule.onNodeWithTag("find_in_note_input").assertIsDisplayed()
         composeRule.onNodeWithTag("next_find_match_button").performClick()
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("2/3")
+    }
+
+    @Test
+    fun findInNoteNextScrollsReadAndEditViewports() {
+        val suffix = System.currentTimeMillis()
+        val title = "Find scroll title $suffix"
+        val filler = (1..45).joinToString(separator = "\n") { index ->
+            "filler line $index keeps the next match below the visible area"
+        }
+        val body = "needle top\n$filler\nneedle bottom"
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_title")
+        composeRule.onNodeWithTag("text_note_title").performTextInput(title)
+        composeRule.onNodeWithTag("text_note_content").performTextReplacement(body)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("find_in_note_button").performClick()
+        composeRule.onNodeWithTag("find_in_note_input").performTextInput("needle")
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/2")
+        val initialReadScroll = verticalScrollValue("text_note_read_mode")
+
+        composeRule.onNodeWithTag("next_find_match_button").performClick()
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("2/2")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            verticalScrollValue("text_note_read_mode") > initialReadScroll + 20f
+        }
+
+        composeRule.onNodeWithTag("edit_note_button").performClick()
+        waitForTag("text_note_content_scroll")
+        composeRule.onNodeWithTag("previous_find_match_button").performClick()
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/2")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            verticalScrollValue("text_note_content_scroll") < 20f
+        }
+        val initialEditScroll = verticalScrollValue("text_note_content_scroll")
+
+        composeRule.onNodeWithTag("next_find_match_button").performClick()
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("2/2")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            verticalScrollValue("text_note_content_scroll") > initialEditScroll + 20f
+        }
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("add_note_button").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.waitForIdle()
     }
 
     @Test
@@ -201,14 +266,14 @@ class TextInputTest {
     @Test
     fun addMenuShowsOcrFromImageAction() {
         composeRule.onNodeWithTag("add_note_button").performClick()
+        waitForTag("ocr_from_image_menu_item")
 
         composeRule.onNodeWithTag("ocr_from_image_menu_item").assertIsDisplayed()
     }
 
     @Test
     fun drawingEditorShowsUpgradedDrawingTools() {
-        composeRule.onNodeWithTag("add_note_button").performClick()
-        composeRule.onNodeWithTag("new_drawing_note_menu_item").performClick()
+        openAddMenuItem("new_drawing_note_menu_item")
         waitForTag("drawing_undo_button")
 
         composeRule.onNodeWithTag("drawing_undo_button").performScrollTo().assertIsDisplayed()
@@ -228,8 +293,7 @@ class TextInputTest {
         val title = "Searchable test note"
         val contentNeedle = "content-needle-20260510"
 
-        composeRule.onNodeWithTag("add_note_button").performClick()
-        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_title")
 
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
@@ -260,8 +324,7 @@ class TextInputTest {
         val textBody = "personal knowledge alpha body"
         val drawingTitle = "Alpha sketch"
 
-        composeRule.onNodeWithTag("add_note_button").performClick()
-        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_title")
         composeRule.onNodeWithTag("text_note_title").performTextInput(textTitle)
         composeRule.onNodeWithTag("text_note_content").performTextInput(textBody)
@@ -271,8 +334,8 @@ class TextInputTest {
             composeRule.onAllNodesWithText(textTitle).fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.onNodeWithTag("add_note_button").performClick()
-        composeRule.onNodeWithTag("new_drawing_note_menu_item").performClick()
+        openAddMenuItem("new_drawing_note_menu_item")
+        waitForTag("drawing_note_title")
         composeRule.onNodeWithTag("drawing_note_title").performTextInput(drawingTitle)
         composeRule.onNodeWithTag("back_button").performClick()
 
@@ -313,6 +376,43 @@ class TextInputTest {
         assertEquals(4, previousFindMatchIndex(0, 5))
         assertEquals(2, nextFindMatchIndex(1, 5))
         assertEquals(1, previousFindMatchIndex(2, 5))
+    }
+
+    @Test
+    fun findMatchScrollTargetKeepsActiveMatchVisible() {
+        assertEquals(
+            676,
+            findMatchScrollTarget(
+                currentScroll = 0,
+                viewportHeight = 400,
+                matchTop = 950f,
+                matchBottom = 980f,
+                maxScroll = 2_000,
+                viewportPaddingPx = 96f,
+            ),
+        )
+        assertEquals(
+            104,
+            findMatchScrollTarget(
+                currentScroll = 800,
+                viewportHeight = 400,
+                matchTop = 200f,
+                matchBottom = 230f,
+                maxScroll = 2_000,
+                viewportPaddingPx = 96f,
+            ),
+        )
+        assertEquals(
+            null,
+            findMatchScrollTarget(
+                currentScroll = 500,
+                viewportHeight = 400,
+                matchTop = 650f,
+                matchBottom = 680f,
+                maxScroll = 2_000,
+                viewportPaddingPx = 96f,
+            ),
+        )
     }
 
     @Test

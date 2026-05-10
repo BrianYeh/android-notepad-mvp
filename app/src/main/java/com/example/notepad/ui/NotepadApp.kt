@@ -14,10 +14,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -76,12 +78,15 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -90,6 +95,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.OffsetMapping
@@ -137,6 +143,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1287,6 +1294,14 @@ private fun TextEditorScreen(
     val titleFocusRequester = remember(noteId) { FocusRequester() }
     val contentFocusRequester = remember(noteId) { FocusRequester() }
     val findFocusRequester = remember(noteId) { FocusRequester() }
+    val editContentScrollState = rememberScrollState()
+    val readScrollState = rememberScrollState()
+    var editContentLayout by remember(noteId) { mutableStateOf<TextLayoutResult?>(null) }
+    var editContentViewportHeight by remember(noteId) { mutableStateOf(0) }
+    var readContentLayout by remember(noteId) { mutableStateOf<TextLayoutResult?>(null) }
+    var readViewportHeight by remember(noteId) { mutableStateOf(0) }
+    var readViewportTopInRoot by remember(noteId) { mutableStateOf(0f) }
+    var readContentTopInScroll by remember(noteId) { mutableStateOf(0f) }
     val autoSaveVersion = remember(noteId) { AtomicLong(0L) }
     val keyboardController = LocalSoftwareKeyboardController.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1436,6 +1451,43 @@ private fun TextEditorScreen(
             )
             contentFocusRequester.requestFocus()
         }
+    }
+
+    LaunchedEffect(
+        isEditing,
+        isFindVisible,
+        currentFindIndex,
+        findMatches,
+        editContentLayout,
+        editContentViewportHeight,
+        editContentScrollState.maxValue,
+    ) {
+        if (!isEditing || !isFindVisible) return@LaunchedEffect
+        editContentScrollState.scrollMatchIntoView(
+            textLayoutResult = editContentLayout,
+            matchRange = findMatches.getOrNull(currentFindIndex),
+            viewportHeight = editContentViewportHeight,
+            contentTopPx = 0f,
+        )
+    }
+
+    LaunchedEffect(
+        isEditing,
+        isFindVisible,
+        currentFindIndex,
+        findMatches,
+        readContentLayout,
+        readViewportHeight,
+        readContentTopInScroll,
+        readScrollState.maxValue,
+    ) {
+        if (isEditing || !isFindVisible) return@LaunchedEffect
+        readScrollState.scrollMatchIntoView(
+            textLayoutResult = readContentLayout,
+            matchRange = findMatches.getOrNull(currentFindIndex),
+            viewportHeight = readViewportHeight,
+            contentTopPx = readContentTopInScroll,
+        )
     }
 
     fun saveCurrentTextNoteThen(onSaved: (NoteEntity) -> Unit) {
@@ -1766,31 +1818,58 @@ private fun TextEditorScreen(
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
-                OutlinedTextField(
-                    value = contentField,
-                    onValueChange = {
-                        autoSaveVersion.incrementAndGet()
-                        contentField = it
-                    },
-                    placeholder = { Text(text.content) },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = editorFontSize.fontSizeSp.sp,
-                        lineHeight = (editorFontSize.fontSizeSp + 8).sp,
-                    ),
-                    visualTransformation = FindInNoteVisualTransformation(
-                        query = findQuery,
-                        activeMatchIndex = currentFindIndex,
-                        matchColor = MaterialTheme.colorScheme.tertiaryContainer,
-                        activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
-                    ),
-                    minLines = 12,
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .focusRequester(contentFocusRequester)
-                        .testTag("text_note_content"),
-                )
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outline,
+                            shape = RoundedCornerShape(4.dp),
+                        )
+                        .background(NOTE_PAPER_SURFACE, RoundedCornerShape(4.dp))
+                        .onSizeChanged { editContentViewportHeight = it.height }
+                        .verticalScroll(editContentScrollState)
+                        .testTag("text_note_content_scroll"),
+                ) {
+                    if (contentField.text.isBlank()) {
+                        Text(
+                            text = text.content,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = editorFontSize.fontSizeSp.sp,
+                                lineHeight = (editorFontSize.fontSizeSp + 8).sp,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                    BasicTextField(
+                        value = contentField,
+                        onValueChange = {
+                            autoSaveVersion.incrementAndGet()
+                            contentField = it
+                        },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = editorFontSize.fontSizeSp.sp,
+                            lineHeight = (editorFontSize.fontSizeSp + 8).sp,
+                        ),
+                        visualTransformation = FindInNoteVisualTransformation(
+                            query = findQuery,
+                            activeMatchIndex = currentFindIndex,
+                            matchColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
+                        ),
+                        onTextLayout = { editContentLayout = it },
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                            .focusRequester(contentFocusRequester)
+                            .testTag("text_note_content"),
+                    )
+                }
             }
         } else {
             Column(
@@ -1799,7 +1878,9 @@ private fun TextEditorScreen(
                     .padding(padding)
                     .background(NOTE_PAPER_BACKGROUND)
                     .navigationBarsPadding()
-                    .verticalScroll(rememberScrollState())
+                    .onSizeChanged { readViewportHeight = it.height }
+                    .onGloballyPositioned { readViewportTopInRoot = it.positionInRoot().y }
+                    .verticalScroll(readScrollState)
                     .padding(horizontal = 20.dp, vertical = 18.dp)
                     .testTag("text_note_read_mode"),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -1903,7 +1984,15 @@ private fun TextEditorScreen(
                             } else {
                                 MaterialTheme.colorScheme.onSurface
                             },
-                            modifier = Modifier.testTag("text_note_read_content"),
+                            onTextLayout = { readContentLayout = it },
+                            modifier = Modifier
+                                .onGloballyPositioned { coordinates ->
+                                    readContentTopInScroll =
+                                        coordinates.positionInRoot().y -
+                                            readViewportTopInRoot +
+                                            readScrollState.value
+                                }
+                                .testTag("text_note_read_content"),
                         )
                     }
                 }
@@ -3001,6 +3090,49 @@ fun formatFindMatchStatus(currentIndex: Int, matchCount: Int, noMatchesLabel: St
 fun Int.normalizeFindMatchIndex(matchCount: Int): Int {
     if (matchCount <= 0) return -1
     return ((this % matchCount) + matchCount) % matchCount
+}
+
+fun findMatchScrollTarget(
+    currentScroll: Int,
+    viewportHeight: Int,
+    matchTop: Float,
+    matchBottom: Float,
+    maxScroll: Int,
+    viewportPaddingPx: Float = 96f,
+): Int? {
+    if (viewportHeight <= 0 || maxScroll <= 0) return null
+    val visibleTop = currentScroll + viewportPaddingPx
+    val visibleBottom = currentScroll + viewportHeight - viewportPaddingPx
+    val target = when {
+        matchTop < visibleTop -> matchTop - viewportPaddingPx
+        matchBottom > visibleBottom -> matchBottom - viewportHeight + viewportPaddingPx
+        else -> return null
+    }
+    return target.roundToInt().coerceIn(0, maxScroll)
+}
+
+private suspend fun ScrollState.scrollMatchIntoView(
+    textLayoutResult: TextLayoutResult?,
+    matchRange: IntRange?,
+    viewportHeight: Int,
+    contentTopPx: Float,
+) {
+    val layout = textLayoutResult ?: return
+    val range = matchRange ?: return
+    val textLength = layout.layoutInput.text.text.length
+    if (textLength <= 0) return
+    val startOffset = range.first.coerceIn(0, textLength - 1)
+    val endOffset = range.last.coerceIn(startOffset, textLength - 1)
+    val startBox = layout.getBoundingBox(startOffset)
+    val endBox = layout.getBoundingBox(endOffset)
+    val target = findMatchScrollTarget(
+        currentScroll = value,
+        viewportHeight = viewportHeight,
+        matchTop = contentTopPx + startBox.top,
+        matchBottom = contentTopPx + endBox.bottom,
+        maxScroll = maxValue,
+    ) ?: return
+    animateScrollTo(target)
 }
 
 private class FindInNoteVisualTransformation(
