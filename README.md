@@ -13,7 +13,8 @@ Native Android notepad MVP built with Kotlin, Jetpack Compose, Room, and MVVM.
 - Create, draw, clear, move, delete, save, and reload drawing notes
 - Drawing data is stored locally in Room as serialized JSON stroke data
 - In-app language selector for English and Traditional Chinese
-- No login, sync, sharing, image export, or cloud storage
+- Manual JSON backup and restore from Settings; choose Google Drive in the Android file picker to store a backup
+- No automatic sync, login system, sharing, image export, or app-managed cloud storage
 
 ## Requirements
 
@@ -60,4 +61,4 @@ $env:JAVA_HOME = "D:\android\Android Studio\jbr"
 
 ## Storage
 
-All notes and folders are stored only in the local Room database `local_notepad.db`. Android cloud backup is disabled for the app.
+All notes and folders are stored in the local Room database `local_notepad.db`. Android cloud backup is disabled for the app. Manual backups are user-created JSON exports saved to a location selected in the Android file picker.

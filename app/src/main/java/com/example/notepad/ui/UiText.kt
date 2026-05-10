@@ -4,6 +4,7 @@ import com.example.notepad.data.AppLanguage
 
 data class UiText(
     val appName: String,
+    val settings: String,
     val language: String,
     val allNotes: String,
     val uncategorized: String,
@@ -41,6 +42,13 @@ data class UiText(
     val folderAlreadyExists: String,
     val untitledDrawing: String,
     val untitledTextNote: String,
+    val googleDriveBackup: String,
+    val backupToGoogleDrive: String,
+    val restoreFromBackup: String,
+    val backupComplete: String,
+    val restoreComplete: String,
+    val backupFailed: String,
+    val restoreFailed: String,
 ) {
     fun deleteFolderBody(folderName: String): String {
         return if (this === TraditionalChineseText) {
@@ -53,6 +61,7 @@ data class UiText(
 
 val EnglishText = UiText(
     appName = "Local Notepad",
+    settings = "Settings",
     language = "Language",
     allNotes = "All Notes",
     uncategorized = "Uncategorized",
@@ -90,10 +99,18 @@ val EnglishText = UiText(
     folderAlreadyExists = "Folder already exists.",
     untitledDrawing = "Untitled drawing",
     untitledTextNote = "Untitled text note",
+    googleDriveBackup = "Google Drive Backup",
+    backupToGoogleDrive = "Back Up",
+    restoreFromBackup = "Restore",
+    backupComplete = "Backup saved.",
+    restoreComplete = "Backup restored.",
+    backupFailed = "Backup failed.",
+    restoreFailed = "Restore failed.",
 )
 
 val TraditionalChineseText = UiText(
     appName = "本機記事",
+    settings = "設定",
     language = "語言",
     allNotes = "全部記事",
     uncategorized = "未分類",
@@ -131,6 +148,13 @@ val TraditionalChineseText = UiText(
     folderAlreadyExists = "資料夾已存在。",
     untitledDrawing = "未命名繪圖",
     untitledTextNote = "未命名文字記事",
+    googleDriveBackup = "Google Drive 備份",
+    backupToGoogleDrive = "備份",
+    restoreFromBackup = "還原",
+    backupComplete = "備份已儲存。",
+    restoreComplete = "備份已還原。",
+    backupFailed = "備份失敗。",
+    restoreFailed = "還原失敗。",
 )
 
 fun uiTextFor(language: AppLanguage): UiText {

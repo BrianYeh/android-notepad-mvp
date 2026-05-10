@@ -25,6 +25,12 @@ abstract class NotepadDao {
     @Query("SELECT * FROM notes WHERE id = :noteId")
     abstract suspend fun getNote(noteId: Long): NoteEntity?
 
+    @Query("SELECT * FROM folders ORDER BY id ASC")
+    abstract suspend fun getAllFolders(): List<FolderEntity>
+
+    @Query("SELECT * FROM notes ORDER BY id ASC")
+    abstract suspend fun getAllNotes(): List<NoteEntity>
+
     @Query("SELECT * FROM folders WHERE id = :folderId")
     abstract suspend fun getFolder(folderId: Long): FolderEntity?
 
@@ -33,6 +39,12 @@ abstract class NotepadDao {
 
     @Insert
     abstract suspend fun insertNote(note: NoteEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun restoreFolders(folders: List<FolderEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun restoreNotes(notes: List<NoteEntity>)
 
     @Update
     abstract suspend fun updateNote(note: NoteEntity)
@@ -52,6 +64,12 @@ abstract class NotepadDao {
     @Query("DELETE FROM notes WHERE id = :noteId")
     abstract suspend fun deleteNote(noteId: Long)
 
+    @Query("DELETE FROM notes")
+    abstract suspend fun deleteAllNotes()
+
+    @Query("DELETE FROM folders")
+    abstract suspend fun deleteAllFolders()
+
     @Transaction
     open suspend fun ensureDefaultFolder(now: Long = System.currentTimeMillis()) {
         insertFolder(
@@ -70,5 +88,14 @@ abstract class NotepadDao {
         ensureDefaultFolder(now)
         moveNotesToFolder(folderId, DEFAULT_FOLDER_ID, now)
         deleteFolderById(folderId)
+    }
+
+    @Transaction
+    open suspend fun replaceAllData(backupData: BackupData) {
+        deleteAllNotes()
+        deleteAllFolders()
+        restoreFolders(backupData.folders)
+        restoreNotes(backupData.notes)
+        ensureDefaultFolder()
     }
 }

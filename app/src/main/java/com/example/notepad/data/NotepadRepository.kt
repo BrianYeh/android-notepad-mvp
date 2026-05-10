@@ -111,4 +111,16 @@ class NotepadRepository(
     suspend fun deleteNote(noteId: Long) {
         dao.deleteNote(noteId)
     }
+
+    suspend fun exportBackupJson(): String {
+        dao.ensureDefaultFolder()
+        return BackupJson.encode(
+            folders = dao.getAllFolders(),
+            notes = dao.getAllNotes(),
+        )
+    }
+
+    suspend fun importBackupJson(json: String) {
+        dao.replaceAllData(BackupJson.decode(json))
+    }
 }

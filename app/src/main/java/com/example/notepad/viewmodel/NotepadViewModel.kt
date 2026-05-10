@@ -134,6 +134,14 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             repository.deleteNote(noteId)
         }
     }
+
+    suspend fun exportBackupJson(): String {
+        return repository.exportBackupJson()
+    }
+
+    suspend fun importBackupJson(json: String) {
+        repository.importBackupJson(json)
+    }
 }
 
 private fun NoteEntity.matchesSearch(query: String): Boolean {

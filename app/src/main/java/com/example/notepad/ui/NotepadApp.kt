@@ -1,6 +1,11 @@
 package com.example.notepad.ui
 
+import android.content.Context
+import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,6 +50,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -58,6 +64,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -79,13 +86,19 @@ import com.example.notepad.viewmodel.NotepadViewModel
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private sealed interface AppScreen {
     data object Main : AppScreen
+    data object Settings : AppScreen
     data class TextEditor(val noteId: Long) : AppScreen
     data class DrawingEditor(val noteId: Long) : AppScreen
 }
+
+private const val BACKUP_FILE_NAME = "local-notepad-backup.json"
 
 @Composable
 fun LocalNotepadTheme(content: @Composable () -> Unit) {
@@ -125,6 +138,7 @@ fun NotepadApp(
             onSelectFolder = viewModel::selectFolder,
             onSearchQueryChange = viewModel::setSearchQuery,
             onSelectLanguage = viewModel::setLanguage,
+            onOpenSettings = { screen = AppScreen.Settings },
             onCreateFolder = viewModel::createFolder,
             onRenameFolder = viewModel::renameFolder,
             onDeleteFolder = viewModel::deleteFolder,
@@ -147,6 +161,12 @@ fun NotepadApp(
             },
             onMoveNote = viewModel::moveNote,
             onDeleteNote = viewModel::deleteNote,
+        )
+
+        AppScreen.Settings -> SettingsScreen(
+            text = text,
+            viewModel = viewModel,
+            onBack = { screen = AppScreen.Main },
         )
 
         is AppScreen.TextEditor -> TextEditorScreen(
@@ -181,6 +201,7 @@ private fun MainScreen(
     onSelectFolder: (Long?) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSelectLanguage: (AppLanguage) -> Unit,
+    onOpenSettings: () -> Unit,
     onCreateFolder: (String) -> Unit,
     onRenameFolder: (Long, String) -> Unit,
     onDeleteFolder: (Long) -> Unit,
@@ -203,6 +224,12 @@ private fun MainScreen(
             TopAppBar(
                 title = { Text(text.appName) },
                 actions = {
+                    TextButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.testTag("settings_button"),
+                    ) {
+                        Text(text.settings)
+                    }
                     LanguageSelector(
                         appLanguage = appLanguage,
                         text = text,
@@ -363,6 +390,114 @@ private fun MainScreen(
                 noteToDelete = null
             },
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsScreen(
+    text: UiText,
+    viewModel: NotepadViewModel,
+    onBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var pendingBackupJson by remember { mutableStateOf<String?>(null) }
+
+    val createBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        val backupJson = pendingBackupJson
+        pendingBackupJson = null
+        if (uri == null || backupJson == null) return@rememberLauncherForActivityResult
+
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    writeTextToUri(context, uri, backupJson)
+                }
+                Toast.makeText(context, text.backupComplete, Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {
+                Toast.makeText(context, text.backupFailed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val restoreBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+
+        scope.launch {
+            try {
+                val backupJson = withContext(Dispatchers.IO) {
+                    readTextFromUri(context, uri)
+                }
+                viewModel.importBackupJson(backupJson)
+                Toast.makeText(context, text.restoreComplete, Toast.LENGTH_SHORT).show()
+                onBack()
+            } catch (_: Exception) {
+                Toast.makeText(context, text.restoreFailed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    BackHandler(onBack = onBack)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(text.settings) },
+                navigationIcon = {
+                    TextButton(onClick = onBack) {
+                        Text(text.back)
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = text.googleDriveBackup,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Button(
+                onClick = {
+                    scope.launch {
+                        try {
+                            pendingBackupJson = viewModel.exportBackupJson()
+                            createBackupLauncher.launch(BACKUP_FILE_NAME)
+                        } catch (_: Exception) {
+                            Toast.makeText(context, text.backupFailed, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("backup_button"),
+            ) {
+                Text(text.backupToGoogleDrive)
+            }
+            Button(
+                onClick = {
+                    restoreBackupLauncher.launch(
+                        arrayOf("application/json", "text/plain", "*/*"),
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("restore_button"),
+            ) {
+                Text(text.restoreFromBackup)
+            }
+        }
     }
 }
 
@@ -1132,4 +1267,20 @@ private fun formatTime(timestamp: Long, language: AppLanguage): String {
     }
     return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale)
         .format(Date(timestamp))
+}
+
+private fun writeTextToUri(context: Context, uri: Uri, text: String) {
+    val outputStream = context.contentResolver.openOutputStream(uri)
+        ?: error("Unable to open backup output stream.")
+    outputStream.bufferedWriter(Charsets.UTF_8).use { writer ->
+        writer.write(text)
+    }
+}
+
+private fun readTextFromUri(context: Context, uri: Uri): String {
+    val inputStream = context.contentResolver.openInputStream(uri)
+        ?: error("Unable to open backup input stream.")
+    return inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+        reader.readText()
+    }
 }

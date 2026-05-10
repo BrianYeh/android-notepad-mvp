@@ -73,4 +73,54 @@ class NotepadDatabaseTest {
 
         assertEquals(strokes, DrawingJson.decode(DrawingJson.encode(strokes)))
     }
+
+    @Test
+    fun backupJsonRestoresFoldersAndNotes() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val folderId = dao.insertFolder(
+            FolderEntity(
+                name = "Projects",
+                createdAt = 2L,
+                updatedAt = 2L,
+            ),
+        )
+        val noteId = dao.insertNote(
+            NoteEntity(
+                folderId = folderId,
+                type = NoteTypes.TEXT,
+                title = "Backup note",
+                textContent = "Draft",
+                drawingData = null,
+                createdAt = 3L,
+                updatedAt = 3L,
+            ),
+        )
+        val backupJson = repository.exportBackupJson()
+
+        val extraFolderId = dao.insertFolder(
+            FolderEntity(
+                name = "Temporary",
+                createdAt = 4L,
+                updatedAt = 4L,
+            ),
+        )
+        dao.insertNote(
+            NoteEntity(
+                folderId = extraFolderId,
+                type = NoteTypes.TEXT,
+                title = "Should be replaced",
+                textContent = "Old",
+                drawingData = null,
+                createdAt = 5L,
+                updatedAt = 5L,
+            ),
+        )
+
+        repository.importBackupJson(backupJson)
+
+        assertEquals(listOf(DEFAULT_FOLDER_ID, folderId), dao.getAllFolders().map { it.id })
+        assertEquals(noteId, dao.getAllNotes().single().id)
+        assertEquals("Draft", dao.getAllNotes().single().textContent)
+    }
 }
