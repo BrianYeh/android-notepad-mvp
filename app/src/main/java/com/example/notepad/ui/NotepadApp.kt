@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -187,12 +188,32 @@ fun NotepadApp(
     reminderFilter: ReminderFilter,
     appLanguage: AppLanguage,
     editorFontSize: EditorFontSize,
+    isRecognizingText: Boolean,
     incomingTextShare: IncomingTextShare?,
     onIncomingTextShareHandled: (Long) -> Unit,
     viewModel: NotepadViewModel,
 ) {
     var screen: AppScreen by remember { mutableStateOf(AppScreen.Main) }
     val text = remember(appLanguage) { uiTextFor(appLanguage) }
+    val context = LocalContext.current
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        viewModel.createOcrTextNote(
+            imageUri = uri,
+            fallbackTitlePrefix = text.ocrNoteDefaultTitle,
+            onCreated = { noteId ->
+                screen = AppScreen.TextEditor(noteId)
+            },
+            onNoText = {
+                Toast.makeText(context, text.ocrNoText, Toast.LENGTH_SHORT).show()
+            },
+            onFailed = {
+                Toast.makeText(context, text.ocrFailed, Toast.LENGTH_SHORT).show()
+            },
+        )
+    }
 
     LaunchedEffect(incomingTextShare?.id) {
         val share = incomingTextShare ?: return@LaunchedEffect
@@ -239,6 +260,9 @@ fun NotepadApp(
                     screen = AppScreen.DrawingEditor(noteId)
                 }
             },
+            onCreateOcrNote = {
+                imagePickerLauncher.launch("image/*")
+            },
             onOpenNote = { note ->
                 screen = if (note.type == NoteTypes.DRAWING) {
                     AppScreen.DrawingEditor(note.id)
@@ -282,6 +306,29 @@ fun NotepadApp(
             onDeleted = { screen = AppScreen.Main },
         )
     }
+
+    if (isRecognizingText) {
+        OcrProgressDialog(text = text)
+    }
+}
+
+@Composable
+private fun OcrProgressDialog(text: UiText) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(text.recognizingText) },
+        text = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                Text(text.recognizingText)
+            }
+        },
+        confirmButton = {},
+        modifier = Modifier.testTag("ocr_progress_dialog"),
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -310,6 +357,7 @@ private fun MainScreen(
     onDeleteFolder: (Long) -> Unit,
     onCreateTextNote: () -> Unit,
     onCreateDrawingNote: () -> Unit,
+    onCreateOcrNote: () -> Unit,
     onOpenNote: (NoteEntity) -> Unit,
     onMoveNote: (Long, Long) -> Unit,
     onDeleteNote: (Long) -> Unit,
@@ -373,6 +421,14 @@ private fun MainScreen(
                             onClick = {
                                 addMenuExpanded = false
                                 onCreateDrawingNote()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(text.ocrFromImage) },
+                            modifier = Modifier.testTag("ocr_from_image_menu_item"),
+                            onClick = {
+                                addMenuExpanded = false
+                                onCreateOcrNote()
                             },
                         )
                         DropdownMenuItem(

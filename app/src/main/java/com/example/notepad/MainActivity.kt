@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
             val reminderFilter by viewModel.reminderFilter.collectAsStateWithLifecycle()
             val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
             val editorFontSize by viewModel.editorFontSize.collectAsStateWithLifecycle()
+            val isRecognizingText by viewModel.isRecognizingText.collectAsStateWithLifecycle()
             val sharedText by incomingTextShare.collectAsStateWithLifecycle()
 
             LocalNotepadTheme {
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity() {
                     reminderFilter = reminderFilter,
                     appLanguage = appLanguage,
                     editorFontSize = editorFontSize,
+                    isRecognizingText = isRecognizingText,
                     incomingTextShare = sharedText,
                     onIncomingTextShareHandled = { handledId ->
                         if (incomingTextShare.value?.id == handledId) {

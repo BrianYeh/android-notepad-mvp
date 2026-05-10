@@ -2,6 +2,7 @@ package com.example.notepad.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.notepad.data.AppLanguage
@@ -15,6 +16,9 @@ import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
 import com.example.notepad.data.ReminderFilter
 import com.example.notepad.data.buildSharedNoteTitle
+import com.example.notepad.ocr.MlKitOcrTextRecognizer
+import com.example.notepad.ocr.OcrNoteResult
+import com.example.notepad.ocr.OcrNoteUseCase
 import com.example.notepad.reminder.ReminderScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -27,6 +31,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     private val preferences = application.getSharedPreferences("ui_settings", Context.MODE_PRIVATE)
     private val repository = NotepadRepository(
         NotepadDatabase.getInstance(application).notepadDao(),
+    )
+    private val ocrNoteUseCase = OcrNoteUseCase(
+        recognizer = MlKitOcrTextRecognizer(application),
+        repository = repository,
     )
 
     private val _selectedFolderId = MutableStateFlow<Long?>(null)
@@ -49,6 +57,8 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         EditorFontSize.fromCode(preferences.getString("editor_font_size", EditorFontSize.Medium.code)),
     )
     val editorFontSize: StateFlow<EditorFontSize> = _editorFontSize
+    private val _isRecognizingText = MutableStateFlow(false)
+    val isRecognizingText: StateFlow<Boolean> = _isRecognizingText
 
     val folders = repository.folders.stateIn(
         scope = viewModelScope,
@@ -179,6 +189,32 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val title = buildSharedNoteTitle(subject, sharedText, defaultTitle)
             onCreated(repository.createSharedTextNote(title, sharedText))
+        }
+    }
+
+    fun createOcrTextNote(
+        imageUri: Uri,
+        fallbackTitlePrefix: String,
+        onCreated: (Long) -> Unit,
+        onNoText: () -> Unit,
+        onFailed: () -> Unit,
+    ) {
+        viewModelScope.launch {
+            _isRecognizingText.value = true
+            try {
+                when (
+                    val result = ocrNoteUseCase.createTextNoteFromImage(
+                        uri = imageUri,
+                        fallbackTitlePrefix = fallbackTitlePrefix,
+                    )
+                ) {
+                    is OcrNoteResult.Created -> onCreated(result.noteId)
+                    OcrNoteResult.NoText -> onNoText()
+                    OcrNoteResult.Failed -> onFailed()
+                }
+            } finally {
+                _isRecognizingText.value = false
+            }
         }
     }
 

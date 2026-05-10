@@ -61,6 +61,13 @@ class TextInputTest {
     }
 
     @Test
+    fun addMenuShowsOcrFromImageAction() {
+        composeRule.onNodeWithTag("add_note_button").performClick()
+
+        composeRule.onNodeWithTag("ocr_from_image_menu_item").assertIsDisplayed()
+    }
+
+    @Test
     fun drawingEditorShowsUpgradedDrawingTools() {
         composeRule.onNodeWithTag("add_note_button").performClick()
         composeRule.onNodeWithTag("new_drawing_note_menu_item").performClick()

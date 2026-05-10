@@ -2,9 +2,13 @@ package com.example.notepad.data
 
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.net.Uri
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.notepad.ocr.OcrNoteResult
+import com.example.notepad.ocr.OcrNoteUseCase
+import com.example.notepad.ocr.OcrTextRecognizer
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -284,5 +288,52 @@ class NotepadDatabaseTest {
                 defaultTitle = "Shared Note",
             ),
         )
+    }
+
+    @Test
+    fun ocrUseCaseCreatesSearchableTextNoteFromRecognizedText() = runTest {
+        val repository = NotepadRepository(dao)
+        val useCase = OcrNoteUseCase(
+            recognizer = FakeOcrTextRecognizer("Receipt Total\nMilk 80"),
+            repository = repository,
+            now = { 1_000L },
+        )
+
+        val result = useCase.createTextNoteFromImage(
+            uri = Uri.parse("content://test/receipt"),
+            fallbackTitlePrefix = "OCR Note",
+        )
+
+        val noteId = (result as OcrNoteResult.Created).noteId
+        val note = dao.getNote(noteId)
+        assertEquals(DEFAULT_FOLDER_ID, note?.folderId)
+        assertEquals(NoteTypes.TEXT, note?.type)
+        assertEquals("Receipt Total", note?.title)
+        assertEquals("Receipt Total\nMilk 80", note?.textContent)
+    }
+
+    @Test
+    fun ocrUseCaseDoesNotCreateNoteWhenNoTextRecognized() = runTest {
+        val repository = NotepadRepository(dao)
+        val useCase = OcrNoteUseCase(
+            recognizer = FakeOcrTextRecognizer("  \n  "),
+            repository = repository,
+        )
+
+        val result = useCase.createTextNoteFromImage(
+            uri = Uri.parse("content://test/blank"),
+            fallbackTitlePrefix = "OCR Note",
+        )
+
+        assertEquals(OcrNoteResult.NoText, result)
+        assertEquals(emptyList<NoteEntity>(), dao.getAllNotes())
+    }
+}
+
+private class FakeOcrTextRecognizer(
+    private val text: String,
+) : OcrTextRecognizer {
+    override suspend fun recognizeText(uri: Uri): String {
+        return text
     }
 }
