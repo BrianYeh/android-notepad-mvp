@@ -17,8 +17,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -151,6 +153,8 @@ private const val DEFAULT_DRAWING_EXPORT_HEIGHT = 1440
 private const val NOTE_PREVIEW_MAX_CHARS = 160
 private const val NOTE_PREVIEW_CONTEXT_BEFORE = 45
 private const val NOTE_PREVIEW_CONTEXT_AFTER = 110
+private val NOTE_PAPER_BACKGROUND = Color(0xFFFFF7D7)
+private val NOTE_PAPER_SURFACE = Color(0xFFFFFBEA)
 
 private enum class SaveStatus {
     Saving,
@@ -1264,7 +1268,10 @@ private fun TextEditorScreen(
     var title by remember(noteId) { mutableStateOf("") }
     var contentField by remember(noteId) { mutableStateOf(TextFieldValue("")) }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
+    var modeInitializedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
+    var isEditing by remember(noteId) { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var isMoreMenuExpanded by remember { mutableStateOf(false) }
     var isFindVisible by remember(noteId) { mutableStateOf(false) }
     var findQuery by remember(noteId) { mutableStateOf("") }
     var activeFindIndex by remember(noteId) { mutableStateOf(0) }
@@ -1272,6 +1279,7 @@ private fun TextEditorScreen(
     var isSavingAndLeaving by remember(noteId) { mutableStateOf(false) }
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
     var pendingExportText by remember { mutableStateOf<String?>(null) }
+    var pendingReminderAt by remember { mutableStateOf<Long?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
@@ -1283,6 +1291,14 @@ private fun TextEditorScreen(
     val content = contentField.text
     val findMatches = remember(content, findQuery) { findInNoteMatches(content, findQuery) }
     val currentFindIndex = activeFindIndex.coerceIn(0, (findMatches.size - 1).coerceAtLeast(0))
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { _ ->
+        pendingReminderAt?.let { reminderAt ->
+            viewModel.setNoteReminder(noteId, reminderAt)
+        }
+        pendingReminderAt = null
+    }
     val exportTextLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain"),
     ) { uri ->
@@ -1309,6 +1325,10 @@ private fun TextEditorScreen(
         loadedNoteId = loaded.id
         lastSavedAt = loaded.updatedAt
         saveStatus = SaveStatus.Saved
+        if (modeInitializedNoteId != loaded.id) {
+            isEditing = loaded.title.isBlank() && loaded.textContent.orEmpty().isBlank()
+            modeInitializedNoteId = loaded.id
+        }
     }
 
     LaunchedEffect(note?.updatedAt) {
@@ -1319,7 +1339,7 @@ private fun TextEditorScreen(
     }
 
     LaunchedEffect(loadedNoteId) {
-        if (loadedNoteId == noteId) {
+        if (loadedNoteId == noteId && isEditing) {
             titleFocusRequester.requestFocus()
             keyboardController?.show()
         }
@@ -1408,10 +1428,12 @@ private fun TextEditorScreen(
         if (nextIndex < 0) return
         val range = findMatches[nextIndex]
         activeFindIndex = nextIndex
-        contentField = contentField.copy(
-            selection = TextRange(range.first, range.last + 1),
-        )
-        contentFocusRequester.requestFocus()
+        if (isEditing) {
+            contentField = contentField.copy(
+                selection = TextRange(range.first, range.last + 1),
+            )
+            contentFocusRequester.requestFocus()
+        }
     }
 
     fun saveCurrentTextNoteThen(onSaved: (NoteEntity) -> Unit) {
@@ -1455,12 +1477,80 @@ private fun TextEditorScreen(
         }
     }
 
+    fun submitReminder(reminderAt: Long) {
+        if (reminderAt <= System.currentTimeMillis()) {
+            Toast.makeText(context, text.reminderMustBeFuture, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingReminderAt = reminderAt
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            viewModel.setNoteReminder(noteId, reminderAt)
+        }
+    }
+
+    fun openDateTimePicker(currentReminderAt: Long?) {
+        val calendar = Calendar.getInstance()
+        val initialReminderAt = currentReminderAt?.takeIf { it > System.currentTimeMillis() }
+        if (initialReminderAt == null) {
+            calendar.add(Calendar.HOUR_OF_DAY, 1)
+        } else {
+            calendar.timeInMillis = initialReminderAt
+        }
+
+        DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                TimePickerDialog(
+                    context,
+                    { _, hourOfDay, minute ->
+                        val selected = Calendar.getInstance().apply {
+                            set(Calendar.YEAR, year)
+                            set(Calendar.MONTH, month)
+                            set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                            set(Calendar.HOUR_OF_DAY, hourOfDay)
+                            set(Calendar.MINUTE, minute)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }
+                        submitReminder(selected.timeInMillis)
+                    },
+                    calendar.get(Calendar.HOUR_OF_DAY),
+                    calendar.get(Calendar.MINUTE),
+                    true,
+                ).show()
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH),
+        ).show()
+    }
+
+    LaunchedEffect(isEditing) {
+        if (isEditing && loadedNoteId == noteId) {
+            titleFocusRequester.requestFocus()
+        }
+    }
+
+    val currentNote = note
+
     BackHandler(onBack = ::saveAndBack)
 
     Scaffold(
+        containerColor = NOTE_PAPER_BACKGROUND,
         topBar = {
             TopAppBar(
-                title = { Text(text.textNote) },
+                title = {
+                    Text(
+                        if (isEditing) text.textEditor else text.textNote,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
                 navigationIcon = {
                     TextButton(
                         onClick = ::saveAndBack,
@@ -1470,32 +1560,90 @@ private fun TextEditorScreen(
                     }
                 },
                 actions = {
+                    if (currentNote != null && !isEditing) {
+                        TextButton(
+                            onClick = { isEditing = true },
+                            modifier = Modifier.testTag("edit_note_button"),
+                        ) {
+                            Text(text.edit)
+                        }
+                    }
                     TextButton(
                         onClick = { isFindVisible = true },
                         modifier = Modifier.testTag("find_in_note_button"),
                     ) {
-                        Text(text.findInNote)
+                        Text(text.search)
                     }
-                    TextButton(
-                        onClick = ::shareCurrentTextNote,
-                        modifier = Modifier.testTag("share_text_note_button"),
-                    ) {
-                        Text(text.share)
-                    }
-                    TextButton(
-                        onClick = ::exportCurrentTextNote,
-                        modifier = Modifier.testTag("export_text_note_button"),
-                    ) {
-                        Text(text.exportTxt)
-                    }
-                    TextButton(onClick = { showDeleteDialog = true }) {
-                        Text(text.delete)
+                    Box {
+                        TextButton(
+                            onClick = { isMoreMenuExpanded = true },
+                            modifier = Modifier.testTag("more_note_button"),
+                        ) {
+                            Text(text.more)
+                        }
+                        DropdownMenu(
+                            expanded = isMoreMenuExpanded,
+                            onDismissRequest = { isMoreMenuExpanded = false },
+                            modifier = Modifier.testTag("text_note_overflow_menu"),
+                        ) {
+                            currentNote?.let { loaded ->
+                                DropdownMenuItem(
+                                    text = { Text(text.share) },
+                                    modifier = Modifier.testTag("share_text_note_menu_item"),
+                                    onClick = {
+                                        isMoreMenuExpanded = false
+                                        shareCurrentTextNote()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(text.exportTxt) },
+                                    modifier = Modifier.testTag("export_text_note_menu_item"),
+                                    onClick = {
+                                        isMoreMenuExpanded = false
+                                        exportCurrentTextNote()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(text.setReminder) },
+                                    modifier = Modifier.testTag("set_reminder_menu_item"),
+                                    onClick = {
+                                        isMoreMenuExpanded = false
+                                        openDateTimePicker(loaded.reminderAt)
+                                    },
+                                )
+                                if (loaded.reminderAt != null) {
+                                    DropdownMenuItem(
+                                        text = { Text(text.clearReminder) },
+                                        modifier = Modifier.testTag("clear_reminder_menu_item"),
+                                        onClick = {
+                                            isMoreMenuExpanded = false
+                                            viewModel.setNoteReminder(noteId, null)
+                                        },
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text(if (loaded.isPinned) text.unpin else text.pin) },
+                                    modifier = Modifier.testTag("toggle_pin_menu_item"),
+                                    onClick = {
+                                        isMoreMenuExpanded = false
+                                        viewModel.setNotePinned(noteId, !loaded.isPinned)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(text.delete) },
+                                    modifier = Modifier.testTag("delete_text_note_menu_item"),
+                                    onClick = {
+                                        isMoreMenuExpanded = false
+                                        showDeleteDialog = true
+                                    },
+                                )
+                            }
+                        }
                     }
                 },
             )
         },
     ) { padding ->
-        val currentNote = note
         if (currentNote == null) {
             Box(
                 modifier = Modifier
@@ -1505,14 +1653,39 @@ private fun TextEditorScreen(
             ) {
                 Text(text.noteNotFound)
             }
-        } else {
+        } else if (isEditing) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
+                    .background(NOTE_PAPER_BACKGROUND)
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                if (isFindVisible) {
+                    FindInNoteBar(
+                        query = findQuery,
+                        currentIndex = currentFindIndex,
+                        matchCount = findMatches.size,
+                        text = text,
+                        findFocusRequester = findFocusRequester,
+                        onQueryChange = {
+                            findQuery = it
+                            activeFindIndex = 0
+                        },
+                        onPrevious = {
+                            selectFindMatch(previousFindMatchIndex(currentFindIndex, findMatches.size))
+                        },
+                        onNext = {
+                            selectFindMatch(nextFindMatchIndex(currentFindIndex, findMatches.size))
+                        },
+                        onClearSearch = {
+                            isFindVisible = false
+                            findQuery = ""
+                            activeFindIndex = 0
+                        },
+                    )
+                }
                 Text(
                     text = text.title,
                     style = MaterialTheme.typography.labelLarge,
@@ -1563,35 +1736,22 @@ private fun TextEditorScreen(
                         )
                     }
                 }
-                ReminderControls(
-                    note = currentNote,
-                    text = text,
-                    appLanguage = appLanguage,
-                    onSetReminder = { reminderAt -> viewModel.setNoteReminder(noteId, reminderAt) },
-                    onClearReminder = { viewModel.setNoteReminder(noteId, null) },
+                Text(
+                    text = reminderStatus(currentNote.reminderAt, text, appLanguage),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (currentNote.reminderAt != null && currentNote.reminderAt <= System.currentTimeMillis()) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.testTag("note_reminder_status"),
                 )
-                if (isFindVisible) {
-                    FindInNoteBar(
-                        query = findQuery,
-                        currentIndex = currentFindIndex,
-                        matchCount = findMatches.size,
-                        text = text,
-                        findFocusRequester = findFocusRequester,
-                        onQueryChange = {
-                            findQuery = it
-                            activeFindIndex = 0
-                        },
-                        onPrevious = {
-                            selectFindMatch(previousFindMatchIndex(currentFindIndex, findMatches.size))
-                        },
-                        onNext = {
-                            selectFindMatch(nextFindMatchIndex(currentFindIndex, findMatches.size))
-                        },
-                        onClearSearch = {
-                            isFindVisible = false
-                            findQuery = ""
-                            activeFindIndex = 0
-                        },
+                if (currentNote.isPinned) {
+                    Text(
+                        text = "★ ${text.pinned}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.testTag("text_note_pinned_indicator"),
                     )
                 }
                 Text(
@@ -1625,6 +1785,121 @@ private fun TextEditorScreen(
                         .testTag("text_note_content"),
                 )
             }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .background(NOTE_PAPER_BACKGROUND)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 18.dp)
+                    .testTag("text_note_read_mode"),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                if (isFindVisible) {
+                    FindInNoteBar(
+                        query = findQuery,
+                        currentIndex = currentFindIndex,
+                        matchCount = findMatches.size,
+                        text = text,
+                        findFocusRequester = findFocusRequester,
+                        onQueryChange = {
+                            findQuery = it
+                            activeFindIndex = 0
+                        },
+                        onPrevious = {
+                            selectFindMatch(previousFindMatchIndex(currentFindIndex, findMatches.size))
+                        },
+                        onNext = {
+                            selectFindMatch(nextFindMatchIndex(currentFindIndex, findMatches.size))
+                        },
+                        onClearSearch = {
+                            isFindVisible = false
+                            findQuery = ""
+                            activeFindIndex = 0
+                        },
+                    )
+                }
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(NOTE_PAPER_SURFACE)
+                            .padding(horizontal = 20.dp, vertical = 18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            text = title.ifBlank { text.untitledTextNote },
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.testTag("text_note_read_title"),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = folderDisplayNameById(currentNote.folderId, folders, text),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (currentNote.isPinned) {
+                                Text(
+                                    text = "★ ${text.pinned}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.testTag("text_note_pinned_indicator"),
+                                )
+                            }
+                        }
+                        Text(
+                            text = "${text.lastUpdated}: ${formatTime(lastSavedAt ?: currentNote.updatedAt, appLanguage)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = reminderStatus(currentNote.reminderAt, text, appLanguage),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (currentNote.reminderAt != null && currentNote.reminderAt <= System.currentTimeMillis()) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.testTag("note_reminder_status"),
+                        )
+                        HorizontalDivider()
+                        Text(
+                            text = findHighlightedText(
+                                value = content.ifBlank { text.content },
+                                query = findQuery,
+                                activeMatchIndex = currentFindIndex,
+                                matchColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
+                            ),
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = editorFontSize.fontSizeSp.sp,
+                                lineHeight = (editorFontSize.fontSizeSp + 10).sp,
+                            ),
+                            color = if (content.isBlank()) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            modifier = Modifier.testTag("text_note_read_content"),
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -1656,11 +1931,19 @@ private fun FindInNoteBar(
     onNext: () -> Unit,
     onClearSearch: () -> Unit,
 ) {
+    val statusText = when {
+        query.isBlank() -> text.findHint
+        matchCount <= 0 -> text.noMatches
+        else -> formatFindMatchStatus(currentIndex, matchCount, text.noMatches)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .background(NOTE_PAPER_SURFACE, RoundedCornerShape(8.dp))
+            .padding(10.dp)
             .testTag("find_in_note_bar"),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         OutlinedTextField(
             value = query,
@@ -1680,38 +1963,45 @@ private fun FindInNoteBar(
                 .focusRequester(findFocusRequester)
                 .testTag("find_in_note_input"),
         )
+        Text(
+            text = statusText,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("find_match_status"),
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = formatFindMatchStatus(currentIndex, matchCount, text.noMatches),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("find_match_status"),
-            )
             TextButton(
                 onClick = onPrevious,
-                enabled = matchCount > 0,
-                modifier = Modifier.testTag("previous_find_match_button"),
+                enabled = query.isNotBlank() && matchCount > 0,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("previous_find_match_button"),
             ) {
-                Text(text.previousMatch)
+                Text(text.previousMatch, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             TextButton(
                 onClick = onNext,
-                enabled = matchCount > 0,
-                modifier = Modifier.testTag("next_find_match_button"),
+                enabled = query.isNotBlank() && matchCount > 0,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("next_find_match_button"),
             ) {
-                Text(text.nextMatch)
+                Text(text.nextMatch, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             TextButton(
                 onClick = onClearSearch,
                 modifier = Modifier.testTag("clear_find_in_note_button"),
             ) {
-                Text(text.clearSearch)
+                Text(text.clearSearch, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -2637,6 +2927,32 @@ fun highlightedText(
         value.highlightRanges(trimmedQuery).forEach { range ->
             addStyle(
                 SpanStyle(background = highlightColor),
+                start = range.first,
+                end = range.last + 1,
+            )
+        }
+    }
+}
+
+fun findHighlightedText(
+    value: String,
+    query: String,
+    activeMatchIndex: Int,
+    matchColor: Color,
+    activeMatchColor: Color,
+): AnnotatedString {
+    val matches = findInNoteMatches(value, query)
+    if (matches.isEmpty()) return AnnotatedString(value)
+
+    val activeIndex = activeMatchIndex.normalizeFindMatchIndex(matches.size)
+    return buildAnnotatedString {
+        append(value)
+        matches.forEachIndexed { index, range ->
+            addStyle(
+                SpanStyle(
+                    background = if (index == activeIndex) activeMatchColor else matchColor,
+                    fontWeight = if (index == activeIndex) FontWeight.Bold else null,
+                ),
                 start = range.first,
                 end = range.last + 1,
             )

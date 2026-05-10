@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -43,9 +44,6 @@ class TextInputTest {
         composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_updated_time").assertIsDisplayed()
         composeRule.onNodeWithTag("note_reminder_status").assertIsDisplayed()
-        composeRule.onNodeWithTag("set_reminder_button").assertIsDisplayed()
-        composeRule.onNodeWithTag("share_text_note_button").assertIsDisplayed()
-        composeRule.onNodeWithTag("export_text_note_button").assertIsDisplayed()
         composeRule.onNodeWithTag("find_in_note_button").performClick()
         composeRule.onNodeWithTag("find_in_note_input")
             .assertIsDisplayed()
@@ -55,8 +53,49 @@ class TextInputTest {
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/1")
         composeRule.onNodeWithTag("previous_find_match_button").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/1")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("share_text_note_button").fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("export_text_note_button").fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag("more_note_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("share_text_note_menu_item").assertIsDisplayed()
+        composeRule.onNodeWithTag("export_text_note_menu_item").assertIsDisplayed()
+        composeRule.onNodeWithTag("set_reminder_menu_item").assertIsDisplayed()
+        composeRule.onNodeWithTag("toggle_pin_menu_item").assertIsDisplayed()
+        composeRule.onNodeWithTag("delete_text_note_menu_item").assertIsDisplayed()
         composeRule.onNodeWithText("中文標題").assertIsDisplayed()
         composeRule.onNodeWithText("這是中文內容").assertIsDisplayed()
+    }
+
+    @Test
+    fun newTextNoteStartsInEditModeAndExistingNoteStartsInReadMode() {
+        val suffix = System.currentTimeMillis()
+        val title = "Friendly read title $suffix"
+        val body = "Friendly read body $suffix"
+
+        composeRule.onNodeWithTag("add_note_button").performClick()
+        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().performTextInput(title)
+        composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().performTextInput(body)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("text_note_read_mode").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_read_title").assertTextContains(title)
+        composeRule.onNodeWithTag("text_note_read_content").assertTextContains(body)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("text_note_title").fetchSemanticsNodes().isEmpty()
+        }
+
+        composeRule.onNodeWithTag("edit_note_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().assertTextContains(title)
+        composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().assertTextContains(body)
     }
 
     @Test
@@ -78,6 +117,10 @@ class TextInputTest {
         }
 
         composeRule.onNodeWithText(firstTitle).performClick()
+        composeRule.onNodeWithTag("text_note_read_mode").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_read_title").assertTextContains(firstTitle)
+        composeRule.onNodeWithTag("text_note_read_content").assertTextContains(firstContent)
+        composeRule.onNodeWithTag("edit_note_button").performClick()
         composeRule.onNodeWithTag("text_note_title").assertTextContains(firstTitle)
         composeRule.onNodeWithTag("text_note_content").assertTextContains(firstContent)
 
@@ -92,8 +135,39 @@ class TextInputTest {
         }
 
         composeRule.onNodeWithText(secondTitle).performClick()
+        composeRule.onNodeWithTag("text_note_read_mode").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_read_title").assertTextContains(secondTitle)
+        composeRule.onNodeWithTag("text_note_read_content").assertTextContains(secondContent)
+        composeRule.onNodeWithTag("edit_note_button").performClick()
         composeRule.onNodeWithTag("text_note_title").assertTextContains(secondTitle)
         composeRule.onNodeWithTag("text_note_content").assertTextContains(secondContent)
+    }
+
+    @Test
+    fun findInNoteOpensFromReadModeAndEditMode() {
+        val suffix = System.currentTimeMillis()
+        val title = "Find flow title $suffix"
+        val body = "banana alpha banana beta banana"
+
+        composeRule.onNodeWithTag("add_note_button").performClick()
+        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        composeRule.onNodeWithTag("text_note_title").performTextInput(title)
+        composeRule.onNodeWithTag("text_note_content").performTextInput(body)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("find_in_note_button").performClick()
+        composeRule.onNodeWithTag("find_in_note_input").assertIsDisplayed().performTextInput("banana")
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/3")
+
+        composeRule.onNodeWithTag("edit_note_button").performClick()
+        composeRule.onNodeWithTag("find_in_note_input").assertIsDisplayed()
+        composeRule.onNodeWithTag("next_find_match_button").performClick()
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("2/3")
     }
 
     @Test
@@ -163,7 +237,9 @@ class TextInputTest {
         composeRule.onNodeWithTag("note_search_input")
             .performTextReplacement(contentNeedle)
         composeRule.onNodeWithText(title).assertIsDisplayed()
-        composeRule.onNodeWithText(contentNeedle).assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(contentNeedle).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     @Test
