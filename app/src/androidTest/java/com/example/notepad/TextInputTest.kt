@@ -28,10 +28,17 @@ class TextInputTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
+    private fun waitForTag(tag: String) {
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
     @Test
     fun textNoteTitleAndContentAcceptInput() {
         composeRule.onNodeWithTag("add_note_button").performClick()
         composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        waitForTag("text_note_title")
 
         composeRule.onNodeWithTag("text_note_title")
             .assertIsDisplayed()
@@ -77,6 +84,7 @@ class TextInputTest {
 
         composeRule.onNodeWithTag("add_note_button").performClick()
         composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        waitForTag("text_note_title")
         composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().performTextInput(body)
         composeRule.onNodeWithTag("back_button").performClick()
@@ -108,6 +116,7 @@ class TextInputTest {
 
         composeRule.onNodeWithTag("add_note_button").performClick()
         composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        waitForTag("text_note_title")
         composeRule.onNodeWithTag("text_note_title").performTextInput(firstTitle)
         composeRule.onNodeWithTag("text_note_content").performTextInput(firstContent)
         composeRule.onNodeWithTag("back_button").performClick()
@@ -151,6 +160,7 @@ class TextInputTest {
 
         composeRule.onNodeWithTag("add_note_button").performClick()
         composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        waitForTag("text_note_title")
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextInput(body)
         composeRule.onNodeWithTag("back_button").performClick()
@@ -199,6 +209,7 @@ class TextInputTest {
     fun drawingEditorShowsUpgradedDrawingTools() {
         composeRule.onNodeWithTag("add_note_button").performClick()
         composeRule.onNodeWithTag("new_drawing_note_menu_item").performClick()
+        waitForTag("drawing_undo_button")
 
         composeRule.onNodeWithTag("drawing_undo_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("drawing_redo_button").performScrollTo().assertIsDisplayed()
@@ -219,6 +230,7 @@ class TextInputTest {
 
         composeRule.onNodeWithTag("add_note_button").performClick()
         composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        waitForTag("text_note_title")
 
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextInput(contentNeedle)
@@ -250,6 +262,7 @@ class TextInputTest {
 
         composeRule.onNodeWithTag("add_note_button").performClick()
         composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        waitForTag("text_note_title")
         composeRule.onNodeWithTag("text_note_title").performTextInput(textTitle)
         composeRule.onNodeWithTag("text_note_content").performTextInput(textBody)
         composeRule.onNodeWithTag("back_button").performClick()

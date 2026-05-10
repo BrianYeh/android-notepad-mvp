@@ -1,10 +1,14 @@
 package com.example.notepad
 
 import android.content.Intent
+import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.notepad.ui.LocalNotepadTheme
@@ -18,6 +22,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureSystemBars()
         handleIncomingShareIntent(intent)
 
         setContent {
@@ -60,6 +65,20 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                 )
             }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun configureSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        window.statusBarColor = Color.rgb(255, 251, 254)
+        window.navigationBarColor = Color.rgb(255, 247, 215)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
         }
     }
 

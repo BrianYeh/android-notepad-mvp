@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1576,7 +1578,10 @@ private fun TextEditorScreen(
                     }
                     Box {
                         TextButton(
-                            onClick = { isMoreMenuExpanded = true },
+                            onClick = {
+                                keyboardController?.hide()
+                                isMoreMenuExpanded = true
+                            },
                             modifier = Modifier.testTag("more_note_button"),
                         ) {
                             Text(text.more)
@@ -1659,10 +1664,12 @@ private fun TextEditorScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .background(NOTE_PAPER_BACKGROUND)
+                    .navigationBarsPadding()
+                    .imePadding()
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                if (isFindVisible) {
+                if (isFindVisible && !isMoreMenuExpanded) {
                     FindInNoteBar(
                         query = findQuery,
                         currentIndex = currentFindIndex,
@@ -1791,12 +1798,13 @@ private fun TextEditorScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .background(NOTE_PAPER_BACKGROUND)
+                    .navigationBarsPadding()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 18.dp)
                     .testTag("text_note_read_mode"),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                if (isFindVisible) {
+                if (isFindVisible && !isMoreMenuExpanded) {
                     FindInNoteBar(
                         query = findQuery,
                         currentIndex = currentFindIndex,
