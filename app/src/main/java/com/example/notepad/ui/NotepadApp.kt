@@ -54,6 +54,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -96,6 +97,9 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notepad.IncomingTextShare
 import com.example.notepad.data.ALL_NOTES_FILTER_NAME
@@ -125,6 +129,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
@@ -1264,6 +1269,7 @@ private fun TextEditorScreen(
     var findQuery by remember(noteId) { mutableStateOf("") }
     var activeFindIndex by remember(noteId) { mutableStateOf(0) }
     var saveStatus by remember(noteId) { mutableStateOf(SaveStatus.Saved) }
+    var isSavingAndLeaving by remember(noteId) { mutableStateOf(false) }
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
     var pendingExportText by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
@@ -1271,7 +1277,9 @@ private fun TextEditorScreen(
     val titleFocusRequester = remember(noteId) { FocusRequester() }
     val contentFocusRequester = remember(noteId) { FocusRequester() }
     val findFocusRequester = remember(noteId) { FocusRequester() }
+    val autoSaveVersion = remember(noteId) { AtomicLong(0L) }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val content = contentField.text
     val findMatches = remember(content, findQuery) { findInNoteMatches(content, findQuery) }
     val currentFindIndex = activeFindIndex.coerceIn(0, (findMatches.size - 1).coerceAtLeast(0))
@@ -1339,17 +1347,57 @@ private fun TextEditorScreen(
                 saveStatus = SaveStatus.Saved
                 return@LaunchedEffect
             }
+            val pendingVersion = autoSaveVersion.get()
             saveStatus = SaveStatus.Saving
             delay(500)
+            if (pendingVersion != autoSaveVersion.get()) return@LaunchedEffect
             lastSavedAt = viewModel.saveTextNoteNow(noteId, title, content) ?: System.currentTimeMillis()
             saveStatus = SaveStatus.Saved
         }
     }
 
+    fun hasUnsavedTextNote(
+        currentNote: NoteEntity? = note,
+        titleValue: String = title,
+        contentValue: String = content,
+        loadedId: Long? = loadedNoteId,
+    ): Boolean {
+        val current = currentNote ?: return false
+        return loadedId == noteId &&
+            (titleValue != current.title || contentValue != current.textContent.orEmpty())
+    }
+
+    fun savePendingTextNote() {
+        val titleToSave = title
+        val contentToSave = contentField.text
+        if (hasUnsavedTextNote(note, titleToSave, contentToSave, loadedNoteId)) {
+            viewModel.saveTextNote(noteId, titleToSave, contentToSave)
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, noteId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                savePendingTextNote()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            savePendingTextNote()
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     fun saveAndBack() {
+        if (isSavingAndLeaving) return
+        isSavingAndLeaving = true
+        autoSaveVersion.incrementAndGet()
+        val titleToSave = title
+        val contentToSave = contentField.text
+        keyboardController?.hide()
         scope.launch {
             saveStatus = SaveStatus.Saving
-            lastSavedAt = viewModel.saveTextNoteNow(noteId, title, content) ?: lastSavedAt
+            lastSavedAt = viewModel.saveTextNoteNow(noteId, titleToSave, contentToSave) ?: lastSavedAt
             saveStatus = SaveStatus.Saved
             onBack()
         }
@@ -1368,15 +1416,18 @@ private fun TextEditorScreen(
 
     fun saveCurrentTextNoteThen(onSaved: (NoteEntity) -> Unit) {
         val currentNote = note ?: return
+        val titleToSave = title
+        val contentToSave = contentField.text
+        autoSaveVersion.incrementAndGet()
         scope.launch {
             saveStatus = SaveStatus.Saving
-            val savedAt = viewModel.saveTextNoteNow(noteId, title, content) ?: currentNote.updatedAt
+            val savedAt = viewModel.saveTextNoteNow(noteId, titleToSave, contentToSave) ?: currentNote.updatedAt
             lastSavedAt = savedAt
             saveStatus = SaveStatus.Saved
             onSaved(
                 currentNote.copy(
-                    title = title,
-                    textContent = content,
+                    title = titleToSave,
+                    textContent = contentToSave,
                     drawingData = null,
                     updatedAt = savedAt,
                 ),
@@ -1469,7 +1520,10 @@ private fun TextEditorScreen(
                 )
                 OutlinedTextField(
                     value = title,
-                    onValueChange = { title = it },
+                    onValueChange = {
+                        autoSaveVersion.incrementAndGet()
+                        title = it
+                    },
                     placeholder = { Text(text.title) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -1547,7 +1601,10 @@ private fun TextEditorScreen(
                 )
                 OutlinedTextField(
                     value = contentField,
-                    onValueChange = { contentField = it },
+                    onValueChange = {
+                        autoSaveVersion.incrementAndGet()
+                        contentField = it
+                    },
                     placeholder = { Text(text.content) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(

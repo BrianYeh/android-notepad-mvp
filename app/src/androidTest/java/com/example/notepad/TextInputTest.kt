@@ -2,6 +2,7 @@ package com.example.notepad
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -56,6 +57,43 @@ class TextInputTest {
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/1")
         composeRule.onNodeWithText("中文標題").assertIsDisplayed()
         composeRule.onNodeWithText("這是中文內容").assertIsDisplayed()
+    }
+
+    @Test
+    fun textNoteEditsPersistAfterAppBackAndSystemBack() {
+        val suffix = System.currentTimeMillis()
+        val firstTitle = "Persist title $suffix"
+        val firstContent = "Persist content before back $suffix"
+        val secondTitle = "Persist updated title $suffix"
+        val secondContent = "Persist updated content after system back $suffix"
+
+        composeRule.onNodeWithTag("add_note_button").performClick()
+        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        composeRule.onNodeWithTag("text_note_title").performTextInput(firstTitle)
+        composeRule.onNodeWithTag("text_note_content").performTextInput(firstContent)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(firstTitle).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(firstTitle).performClick()
+        composeRule.onNodeWithTag("text_note_title").assertTextContains(firstTitle)
+        composeRule.onNodeWithTag("text_note_content").assertTextContains(firstContent)
+
+        composeRule.onNodeWithTag("text_note_title").performTextReplacement(secondTitle)
+        composeRule.onNodeWithTag("text_note_content").performTextReplacement(secondContent)
+        composeRule.runOnUiThread {
+            composeRule.activity.onBackPressedDispatcher.onBackPressed()
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(secondTitle).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(secondTitle).performClick()
+        composeRule.onNodeWithTag("text_note_title").assertTextContains(secondTitle)
+        composeRule.onNodeWithTag("text_note_content").assertTextContains(secondContent)
     }
 
     @Test
