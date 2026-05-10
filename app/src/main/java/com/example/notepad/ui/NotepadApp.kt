@@ -107,6 +107,7 @@ fun NotepadApp(
     folders: List<FolderEntity>,
     notes: List<NoteEntity>,
     selectedFolderId: Long?,
+    searchQuery: String,
     appLanguage: AppLanguage,
     viewModel: NotepadViewModel,
 ) {
@@ -118,9 +119,11 @@ fun NotepadApp(
             folders = folders,
             notes = notes,
             selectedFolderId = selectedFolderId,
+            searchQuery = searchQuery,
             appLanguage = appLanguage,
             text = text,
             onSelectFolder = viewModel::selectFolder,
+            onSearchQueryChange = viewModel::setSearchQuery,
             onSelectLanguage = viewModel::setLanguage,
             onCreateFolder = viewModel::createFolder,
             onRenameFolder = viewModel::renameFolder,
@@ -172,9 +175,11 @@ private fun MainScreen(
     folders: List<FolderEntity>,
     notes: List<NoteEntity>,
     selectedFolderId: Long?,
+    searchQuery: String,
     appLanguage: AppLanguage,
     text: UiText,
     onSelectFolder: (Long?) -> Unit,
+    onSearchQueryChange: (String) -> Unit,
     onSelectLanguage: (AppLanguage) -> Unit,
     onCreateFolder: (String) -> Unit,
     onRenameFolder: (Long, String) -> Unit,
@@ -267,12 +272,19 @@ private fun MainScreen(
                 )
             }
 
+            SearchBar(
+                searchQuery = searchQuery,
+                text = text,
+                onSearchQueryChange = onSearchQueryChange,
+            )
+
             HorizontalDivider()
 
             NoteList(
                 notes = notes,
                 folders = folders,
                 text = text,
+                searchQuery = searchQuery,
                 appLanguage = appLanguage,
                 onOpenNote = onOpenNote,
                 onMoveNote = { noteToMove = it },
@@ -352,6 +364,38 @@ private fun MainScreen(
             },
         )
     }
+}
+
+@Composable
+private fun SearchBar(
+    searchQuery: String,
+    text: UiText,
+    onSearchQueryChange: (String) -> Unit,
+) {
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    OutlinedTextField(
+        value = searchQuery,
+        onValueChange = onSearchQueryChange,
+        label = { Text(text.search) },
+        placeholder = { Text(text.searchPlaceholder) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(
+            onSearch = { keyboardController?.hide() },
+        ),
+        trailingIcon = {
+            if (searchQuery.isNotEmpty()) {
+                TextButton(onClick = { onSearchQueryChange("") }) {
+                    Text(text.clear)
+                }
+            }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .testTag("note_search_input"),
+    )
 }
 
 @Composable
@@ -457,6 +501,7 @@ private fun NoteList(
     notes: List<NoteEntity>,
     folders: List<FolderEntity>,
     text: UiText,
+    searchQuery: String,
     appLanguage: AppLanguage,
     onOpenNote: (NoteEntity) -> Unit,
     onMoveNote: (NoteEntity) -> Unit,
@@ -468,7 +513,7 @@ private fun NoteList(
             modifier = modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center,
         ) {
-            Text(text.noNotes)
+            Text(if (searchQuery.isBlank()) text.noNotes else text.noSearchResults)
         }
         return
     }
@@ -598,7 +643,10 @@ private fun TextEditorScreen(
             TopAppBar(
                 title = { Text(text.textNote) },
                 navigationIcon = {
-                    TextButton(onClick = ::saveAndBack) {
+                    TextButton(
+                        onClick = ::saveAndBack,
+                        modifier = Modifier.testTag("back_button"),
+                    ) {
                         Text(text.back)
                     }
                 },
@@ -730,7 +778,10 @@ private fun DrawingEditorScreen(
             TopAppBar(
                 title = { Text(text.drawingNote) },
                 navigationIcon = {
-                    TextButton(onClick = ::saveAndBack) {
+                    TextButton(
+                        onClick = ::saveAndBack,
+                        modifier = Modifier.testTag("back_button"),
+                    ) {
                         Text(text.back)
                     }
                 },
