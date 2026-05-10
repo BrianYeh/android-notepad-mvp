@@ -81,6 +81,9 @@ import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
 import com.example.notepad.data.FolderEntity
 import com.example.notepad.data.NoteEntity
+import com.example.notepad.data.NoteListMode
+import com.example.notepad.data.NoteSortOption
+import com.example.notepad.data.NoteTypeFilter
 import com.example.notepad.data.NoteTypes
 import com.example.notepad.viewmodel.NotepadViewModel
 import java.text.DateFormat
@@ -121,6 +124,9 @@ fun NotepadApp(
     notes: List<NoteEntity>,
     selectedFolderId: Long?,
     searchQuery: String,
+    listMode: NoteListMode,
+    sortOption: NoteSortOption,
+    typeFilter: NoteTypeFilter,
     appLanguage: AppLanguage,
     viewModel: NotepadViewModel,
 ) {
@@ -133,10 +139,16 @@ fun NotepadApp(
             notes = notes,
             selectedFolderId = selectedFolderId,
             searchQuery = searchQuery,
+            listMode = listMode,
+            sortOption = sortOption,
+            typeFilter = typeFilter,
             appLanguage = appLanguage,
             text = text,
             onSelectFolder = viewModel::selectFolder,
             onSearchQueryChange = viewModel::setSearchQuery,
+            onListModeChange = viewModel::setListMode,
+            onSortOptionChange = viewModel::setSortOption,
+            onTypeFilterChange = viewModel::setTypeFilter,
             onSelectLanguage = viewModel::setLanguage,
             onOpenSettings = { screen = AppScreen.Settings },
             onCreateFolder = viewModel::createFolder,
@@ -161,6 +173,9 @@ fun NotepadApp(
             },
             onMoveNote = viewModel::moveNote,
             onDeleteNote = viewModel::deleteNote,
+            onRestoreNote = viewModel::restoreNote,
+            onPermanentlyDeleteNote = viewModel::permanentlyDeleteNote,
+            onTogglePinned = { note -> viewModel.setNotePinned(note.id, !note.isPinned) },
         )
 
         AppScreen.Settings -> SettingsScreen(
@@ -196,10 +211,16 @@ private fun MainScreen(
     notes: List<NoteEntity>,
     selectedFolderId: Long?,
     searchQuery: String,
+    listMode: NoteListMode,
+    sortOption: NoteSortOption,
+    typeFilter: NoteTypeFilter,
     appLanguage: AppLanguage,
     text: UiText,
     onSelectFolder: (Long?) -> Unit,
     onSearchQueryChange: (String) -> Unit,
+    onListModeChange: (NoteListMode) -> Unit,
+    onSortOptionChange: (NoteSortOption) -> Unit,
+    onTypeFilterChange: (NoteTypeFilter) -> Unit,
     onSelectLanguage: (AppLanguage) -> Unit,
     onOpenSettings: () -> Unit,
     onCreateFolder: (String) -> Unit,
@@ -210,6 +231,9 @@ private fun MainScreen(
     onOpenNote: (NoteEntity) -> Unit,
     onMoveNote: (Long, Long) -> Unit,
     onDeleteNote: (Long) -> Unit,
+    onRestoreNote: (Long) -> Unit,
+    onPermanentlyDeleteNote: (Long) -> Unit,
+    onTogglePinned: (NoteEntity) -> Unit,
 ) {
     var addMenuExpanded by remember { mutableStateOf(false) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
@@ -217,7 +241,9 @@ private fun MainScreen(
     var folderToDelete by remember { mutableStateOf<FolderEntity?>(null) }
     var noteToMove by remember { mutableStateOf<NoteEntity?>(null) }
     var noteToDelete by remember { mutableStateOf<NoteEntity?>(null) }
+    var noteToPermanentlyDelete by remember { mutableStateOf<NoteEntity?>(null) }
     val selectedFolder = folders.firstOrNull { it.id == selectedFolderId }
+    val isTrash = listMode == NoteListMode.Trash
 
     Scaffold(
         topBar = {
@@ -239,41 +265,43 @@ private fun MainScreen(
             )
         },
         floatingActionButton = {
-            Box {
-                FloatingActionButton(
-                    onClick = { addMenuExpanded = true },
-                    modifier = Modifier.testTag("add_note_button"),
-                ) {
-                    Text("+", style = MaterialTheme.typography.headlineSmall)
-                }
-                DropdownMenu(
-                    expanded = addMenuExpanded,
-                    onDismissRequest = { addMenuExpanded = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(text.newTextNote) },
-                        modifier = Modifier.testTag("new_text_note_menu_item"),
-                        onClick = {
-                            addMenuExpanded = false
-                            onCreateTextNote()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(text.newDrawingNote) },
-                        modifier = Modifier.testTag("new_drawing_note_menu_item"),
-                        onClick = {
-                            addMenuExpanded = false
-                            onCreateDrawingNote()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(text.newFolder) },
-                        modifier = Modifier.testTag("new_folder_menu_item"),
-                        onClick = {
-                            addMenuExpanded = false
-                            showCreateFolderDialog = true
-                        },
-                    )
+            if (!isTrash) {
+                Box {
+                    FloatingActionButton(
+                        onClick = { addMenuExpanded = true },
+                        modifier = Modifier.testTag("add_note_button"),
+                    ) {
+                        Text("+", style = MaterialTheme.typography.headlineSmall)
+                    }
+                    DropdownMenu(
+                        expanded = addMenuExpanded,
+                        onDismissRequest = { addMenuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(text.newTextNote) },
+                            modifier = Modifier.testTag("new_text_note_menu_item"),
+                            onClick = {
+                                addMenuExpanded = false
+                                onCreateTextNote()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(text.newDrawingNote) },
+                            modifier = Modifier.testTag("new_drawing_note_menu_item"),
+                            onClick = {
+                                addMenuExpanded = false
+                                onCreateDrawingNote()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(text.newFolder) },
+                            modifier = Modifier.testTag("new_folder_menu_item"),
+                            onClick = {
+                                addMenuExpanded = false
+                                showCreateFolderDialog = true
+                            },
+                        )
+                    }
                 }
             }
         },
@@ -283,6 +311,12 @@ private fun MainScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            ListModeRow(
+                listMode = listMode,
+                text = text,
+                onListModeChange = onListModeChange,
+            )
+
             FolderFilterRow(
                 folders = folders,
                 selectedFolderId = selectedFolderId,
@@ -305,6 +339,14 @@ private fun MainScreen(
                 onSearchQueryChange = onSearchQueryChange,
             )
 
+            NoteFilterRow(
+                sortOption = sortOption,
+                typeFilter = typeFilter,
+                text = text,
+                onSortOptionChange = onSortOptionChange,
+                onTypeFilterChange = onTypeFilterChange,
+            )
+
             HorizontalDivider()
 
             NoteList(
@@ -312,10 +354,14 @@ private fun MainScreen(
                 folders = folders,
                 text = text,
                 searchQuery = searchQuery,
+                listMode = listMode,
                 appLanguage = appLanguage,
                 onOpenNote = onOpenNote,
                 onMoveNote = { noteToMove = it },
                 onDeleteNote = { noteToDelete = it },
+                onRestoreNote = { note -> onRestoreNote(note.id) },
+                onPermanentlyDeleteNote = { noteToPermanentlyDelete = it },
+                onTogglePinned = onTogglePinned,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -388,6 +434,20 @@ private fun MainScreen(
             onConfirm = {
                 onDeleteNote(note.id)
                 noteToDelete = null
+            },
+        )
+    }
+
+    noteToPermanentlyDelete?.let { note ->
+        ConfirmDialog(
+            title = text.permanentlyDeleteNote,
+            body = text.permanentlyDeleteNoteBody,
+            confirmText = text.permanentlyDelete,
+            cancelText = text.cancel,
+            onDismiss = { noteToPermanentlyDelete = null },
+            onConfirm = {
+                onPermanentlyDeleteNote(note.id)
+                noteToPermanentlyDelete = null
             },
         )
     }
@@ -496,6 +556,141 @@ private fun SettingsScreen(
                     .testTag("restore_button"),
             ) {
                 Text(text.restoreFromBackup)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ListModeRow(
+    listMode: NoteListMode,
+    text: UiText,
+    onListModeChange: (NoteListMode) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            FilterChip(
+                selected = listMode == NoteListMode.Active,
+                onClick = { onListModeChange(NoteListMode.Active) },
+                label = { Text(text.activeNotes) },
+                modifier = Modifier.testTag("active_notes_filter"),
+            )
+        }
+        item {
+            FilterChip(
+                selected = listMode == NoteListMode.Trash,
+                onClick = { onListModeChange(NoteListMode.Trash) },
+                label = { Text(text.trash) },
+                modifier = Modifier.testTag("trash_filter"),
+            )
+        }
+    }
+}
+
+@Composable
+private fun NoteFilterRow(
+    sortOption: NoteSortOption,
+    typeFilter: NoteTypeFilter,
+    text: UiText,
+    onSortOptionChange: (NoteSortOption) -> Unit,
+    onTypeFilterChange: (NoteTypeFilter) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SortSelector(
+            sortOption = sortOption,
+            text = text,
+            onSortOptionChange = onSortOptionChange,
+            modifier = Modifier.weight(1f),
+        )
+        TypeFilterSelector(
+            typeFilter = typeFilter,
+            text = text,
+            onTypeFilterChange = onTypeFilterChange,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun SortSelector(
+    sortOption: NoteSortOption,
+    text: UiText,
+    onSortOptionChange: (NoteSortOption) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = modifier) {
+        Button(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                "${text.sortBy}: ${sortOption.label(text)}",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            NoteSortOption.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.label(text)) },
+                    modifier = Modifier.testTag("sort_${option.name}"),
+                    onClick = {
+                        expanded = false
+                        onSortOptionChange(option)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TypeFilterSelector(
+    typeFilter: NoteTypeFilter,
+    text: UiText,
+    onTypeFilterChange: (NoteTypeFilter) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = modifier) {
+        Button(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                "${text.noteType}: ${typeFilter.label(text)}",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            NoteTypeFilter.entries.forEach { filter ->
+                DropdownMenuItem(
+                    text = { Text(filter.label(text)) },
+                    modifier = Modifier.testTag("type_${filter.name}"),
+                    onClick = {
+                        expanded = false
+                        onTypeFilterChange(filter)
+                    },
+                )
             }
         }
     }
@@ -637,10 +832,14 @@ private fun NoteList(
     folders: List<FolderEntity>,
     text: UiText,
     searchQuery: String,
+    listMode: NoteListMode,
     appLanguage: AppLanguage,
     onOpenNote: (NoteEntity) -> Unit,
     onMoveNote: (NoteEntity) -> Unit,
     onDeleteNote: (NoteEntity) -> Unit,
+    onRestoreNote: (NoteEntity) -> Unit,
+    onPermanentlyDeleteNote: (NoteEntity) -> Unit,
+    onTogglePinned: (NoteEntity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (notes.isEmpty()) {
@@ -648,7 +847,13 @@ private fun NoteList(
             modifier = modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center,
         ) {
-            Text(if (searchQuery.isBlank()) text.noNotes else text.noSearchResults)
+            Text(
+                when {
+                    searchQuery.isNotBlank() -> text.noSearchResults
+                    listMode == NoteListMode.Trash -> text.noDeletedNotes
+                    else -> text.noNotes
+                },
+            )
         }
         return
     }
@@ -667,6 +872,9 @@ private fun NoteList(
                 onOpen = { onOpenNote(note) },
                 onMove = { onMoveNote(note) },
                 onDelete = { onDeleteNote(note) },
+                onRestore = { onRestoreNote(note) },
+                onPermanentlyDelete = { onPermanentlyDeleteNote(note) },
+                onTogglePinned = { onTogglePinned(note) },
             )
         }
     }
@@ -681,14 +889,24 @@ private fun NoteRow(
     onOpen: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
+    onRestore: () -> Unit,
+    onPermanentlyDelete: () -> Unit,
+    onTogglePinned: () -> Unit,
 ) {
     Card(
-        onClick = onOpen,
+        onClick = { if (!note.isDeleted) onOpen() },
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (note.isPinned && !note.isDeleted) {
+                    Text(
+                        text = "★ ",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
                 Text(
                     text = noteTitle(note, text),
                     style = MaterialTheme.typography.titleMedium,
@@ -705,7 +923,7 @@ private fun NoteRow(
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "$folderName • ${text.updated} ${formatTime(note.updatedAt, appLanguage)}",
+                text = noteMetadata(note, folderName, text, appLanguage),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -715,11 +933,26 @@ private fun NoteRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
-                TextButton(onClick = onMove) {
-                    Text(text.move)
-                }
-                TextButton(onClick = onDelete) {
-                    Text(text.delete)
+                if (note.isDeleted) {
+                    TextButton(onClick = onRestore) {
+                        Text(text.restore)
+                    }
+                    TextButton(onClick = onPermanentlyDelete) {
+                        Text(text.permanentlyDelete)
+                    }
+                } else {
+                    TextButton(
+                        onClick = onTogglePinned,
+                        modifier = Modifier.testTag("pin_note_${note.id}"),
+                    ) {
+                        Text(if (note.isPinned) text.unpin else text.pin)
+                    }
+                    TextButton(onClick = onMove) {
+                        Text(text.move)
+                    }
+                    TextButton(onClick = onDelete) {
+                        Text(text.delete)
+                    }
                 }
             }
         }
@@ -1257,6 +1490,34 @@ private fun folderDisplayNameById(
 private fun noteTitle(note: NoteEntity, text: UiText): String {
     return note.title.ifBlank {
         if (note.type == NoteTypes.DRAWING) text.untitledDrawing else text.untitledTextNote
+    }
+}
+
+private fun noteMetadata(
+    note: NoteEntity,
+    folderName: String,
+    text: UiText,
+    appLanguage: AppLanguage,
+): String {
+    val timestamps = "${text.updated} ${formatTime(note.updatedAt, appLanguage)} • " +
+        "${text.created} ${formatTime(note.createdAt, appLanguage)}"
+    val pinned = if (note.isPinned && !note.isDeleted) " • ${text.pinned}" else ""
+    return "$folderName • $timestamps$pinned"
+}
+
+private fun NoteSortOption.label(text: UiText): String {
+    return when (this) {
+        NoteSortOption.UpdatedAt -> text.sortUpdated
+        NoteSortOption.CreatedAt -> text.sortCreated
+        NoteSortOption.Title -> text.sortTitle
+    }
+}
+
+private fun NoteTypeFilter.label(text: UiText): String {
+    return when (this) {
+        NoteTypeFilter.All -> text.allTypes
+        NoteTypeFilter.Text -> text.textNotes
+        NoteTypeFilter.Drawing -> text.drawingNotes
     }
 }
 

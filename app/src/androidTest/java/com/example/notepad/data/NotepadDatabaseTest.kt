@@ -123,4 +123,38 @@ class NotepadDatabaseTest {
         assertEquals(noteId, dao.getAllNotes().single().id)
         assertEquals("Draft", dao.getAllNotes().single().textContent)
     }
+
+    @Test
+    fun softDeletedNoteCanBeRestoredOrPermanentlyDeleted() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+
+        repository.deleteNote(noteId)
+
+        val deletedNote = dao.getNote(noteId)
+        assertEquals(true, deletedNote?.isDeleted)
+
+        repository.restoreNote(noteId)
+
+        val restoredNote = dao.getNote(noteId)
+        assertEquals(false, restoredNote?.isDeleted)
+        assertNull(restoredNote?.deletedAt)
+
+        repository.deleteNote(noteId)
+        repository.permanentlyDeleteNote(noteId)
+
+        assertNull(dao.getNote(noteId))
+    }
+
+    @Test
+    fun notePinnedStatePersists() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+
+        repository.setNotePinned(noteId, true)
+
+        assertEquals(true, dao.getNote(noteId)?.isPinned)
+    }
 }

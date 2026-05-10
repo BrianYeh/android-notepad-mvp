@@ -9,7 +9,7 @@ data class BackupData(
 )
 
 object BackupJson {
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     fun encode(folders: List<FolderEntity>, notes: List<NoteEntity>): String {
         return JSONObject()
@@ -37,7 +37,10 @@ object BackupJson {
                             .putNullable("textContent", note.textContent)
                             .putNullable("drawingData", note.drawingData)
                             .put("createdAt", note.createdAt)
-                            .put("updatedAt", note.updatedAt),
+                            .put("updatedAt", note.updatedAt)
+                            .put("isDeleted", note.isDeleted)
+                            .putNullableLong("deletedAt", note.deletedAt)
+                            .put("isPinned", note.isPinned),
                     )
                 }
             })
@@ -106,6 +109,9 @@ object BackupJson {
                 },
                 createdAt = noteJson.optLong("createdAt", now),
                 updatedAt = noteJson.optLong("updatedAt", now),
+                isDeleted = noteJson.optBoolean("isDeleted", false),
+                deletedAt = noteJson.optionalLong("deletedAt"),
+                isPinned = noteJson.optBoolean("isPinned", false),
             )
         }
 
@@ -123,6 +129,14 @@ private fun JSONObject.putNullable(name: String, value: String?): JSONObject {
     return put(name, value ?: JSONObject.NULL)
 }
 
+private fun JSONObject.putNullableLong(name: String, value: Long?): JSONObject {
+    return put(name, value ?: JSONObject.NULL)
+}
+
 private fun JSONObject.optionalString(name: String): String? {
     return if (has(name) && !isNull(name)) getString(name) else null
+}
+
+private fun JSONObject.optionalLong(name: String): Long? {
+    return if (has(name) && !isNull(name)) getLong(name) else null
 }

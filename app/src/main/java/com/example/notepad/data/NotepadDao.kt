@@ -61,6 +61,15 @@ abstract class NotepadDao {
     @Query("UPDATE notes SET folderId = :folderId, updatedAt = :updatedAt WHERE id = :noteId")
     abstract suspend fun moveNote(noteId: Long, folderId: Long, updatedAt: Long)
 
+    @Query("UPDATE notes SET isDeleted = 1, deletedAt = :deletedAt, updatedAt = :deletedAt WHERE id = :noteId")
+    abstract suspend fun softDeleteNote(noteId: Long, deletedAt: Long)
+
+    @Query("UPDATE notes SET isDeleted = 0, deletedAt = NULL, updatedAt = :updatedAt WHERE id = :noteId")
+    abstract suspend fun restoreNote(noteId: Long, updatedAt: Long)
+
+    @Query("UPDATE notes SET isPinned = :isPinned, updatedAt = :updatedAt WHERE id = :noteId")
+    abstract suspend fun setNotePinned(noteId: Long, isPinned: Boolean, updatedAt: Long)
+
     @Query("DELETE FROM notes WHERE id = :noteId")
     abstract suspend fun deleteNote(noteId: Long)
 

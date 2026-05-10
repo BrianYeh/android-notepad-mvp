@@ -6,14 +6,16 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.notepad.data.AppLanguage
 import com.example.notepad.data.NoteEntity
+import com.example.notepad.data.NoteListMode
+import com.example.notepad.data.NoteSortOption
+import com.example.notepad.data.NoteTypeFilter
+import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -27,6 +29,12 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     val selectedFolderId: StateFlow<Long?> = _selectedFolderId
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery
+    private val _listMode = MutableStateFlow(NoteListMode.Active)
+    val listMode: StateFlow<NoteListMode> = _listMode
+    private val _sortOption = MutableStateFlow(NoteSortOption.UpdatedAt)
+    val sortOption: StateFlow<NoteSortOption> = _sortOption
+    private val _typeFilter = MutableStateFlow(NoteTypeFilter.All)
+    val typeFilter: StateFlow<NoteTypeFilter> = _typeFilter
     private val _appLanguage = MutableStateFlow(
         AppLanguage.fromCode(preferences.getString("app_language", AppLanguage.English.code)),
     )
@@ -38,16 +46,32 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         initialValue = emptyList(),
     )
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val notes = selectedFolderId
-        .flatMapLatest { folderId -> repository.notes(folderId) }
-        .combine(searchQuery) { notes, query ->
-            val trimmedQuery = query.trim()
-            if (trimmedQuery.isBlank()) {
-                notes
-            } else {
-                notes.filter { note -> note.matchesSearch(trimmedQuery) }
-            }
+    private val noteFilters = combine(
+        selectedFolderId,
+        searchQuery,
+        listMode,
+        sortOption,
+        typeFilter,
+    ) { folderId, query, mode, sort, type ->
+        NoteListFilters(
+            selectedFolderId = folderId,
+            searchQuery = query.trim(),
+            listMode = mode,
+            sortOption = sort,
+            typeFilter = type,
+        )
+    }
+
+    val notes = repository.allNotes
+        .combine(noteFilters) { notes, filters ->
+            notes
+                .asSequence()
+                .filter { note -> note.isDeleted == (filters.listMode == NoteListMode.Trash) }
+                .filter { note -> filters.selectedFolderId == null || note.folderId == filters.selectedFolderId }
+                .filter { note -> note.matchesType(filters.typeFilter) }
+                .filter { note -> filters.searchQuery.isBlank() || note.matchesSearch(filters.searchQuery) }
+                .toList()
+                .sortedFor(filters)
         }
         .stateIn(
             scope = viewModelScope,
@@ -69,6 +93,18 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
+    }
+
+    fun setListMode(mode: NoteListMode) {
+        _listMode.value = mode
+    }
+
+    fun setSortOption(option: NoteSortOption) {
+        _sortOption.value = option
+    }
+
+    fun setTypeFilter(filter: NoteTypeFilter) {
+        _typeFilter.value = filter
     }
 
     fun setLanguage(language: AppLanguage) {
@@ -135,6 +171,24 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun restoreNote(noteId: Long) {
+        viewModelScope.launch {
+            repository.restoreNote(noteId)
+        }
+    }
+
+    fun permanentlyDeleteNote(noteId: Long) {
+        viewModelScope.launch {
+            repository.permanentlyDeleteNote(noteId)
+        }
+    }
+
+    fun setNotePinned(noteId: Long, isPinned: Boolean) {
+        viewModelScope.launch {
+            repository.setNotePinned(noteId, isPinned)
+        }
+    }
+
     suspend fun exportBackupJson(): String {
         return repository.exportBackupJson()
     }
@@ -144,7 +198,40 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     }
 }
 
+private data class NoteListFilters(
+    val selectedFolderId: Long?,
+    val searchQuery: String,
+    val listMode: NoteListMode,
+    val sortOption: NoteSortOption,
+    val typeFilter: NoteTypeFilter,
+)
+
 private fun NoteEntity.matchesSearch(query: String): Boolean {
     return title.contains(query, ignoreCase = true) ||
         textContent.orEmpty().contains(query, ignoreCase = true)
+}
+
+private fun NoteEntity.matchesType(typeFilter: NoteTypeFilter): Boolean {
+    return when (typeFilter) {
+        NoteTypeFilter.All -> true
+        NoteTypeFilter.Text -> type == NoteTypes.TEXT
+        NoteTypeFilter.Drawing -> type == NoteTypes.DRAWING
+    }
+}
+
+private fun List<NoteEntity>.sortedFor(filters: NoteListFilters): List<NoteEntity> {
+    val sorted = when (filters.sortOption) {
+        NoteSortOption.UpdatedAt -> sortedByDescending { it.updatedAt }
+        NoteSortOption.CreatedAt -> sortedByDescending { it.createdAt }
+        NoteSortOption.Title -> sortedWith(
+            compareBy<NoteEntity> { it.title.lowercase() }
+                .thenByDescending { it.updatedAt },
+        )
+    }
+
+    return if (filters.listMode == NoteListMode.Active) {
+        sorted.sortedByDescending { it.isPinned }
+    } else {
+        sorted
+    }
 }

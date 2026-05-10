@@ -8,9 +8,12 @@ Native Android notepad MVP built with Kotlin, Jetpack Compose, Room, and MVVM.
 - `All Notes` is a UI filter only
 - Create, rename, and delete folders
 - Deleting a folder moves its notes to `Uncategorized`
-- Create, edit, move, and delete text notes
+- Create, edit, move, pin, soft-delete, restore, and permanently delete text notes
 - Search notes by title and text note content
-- Create, draw, clear, move, delete, save, and reload drawing notes
+- Create, draw, clear, move, pin, soft-delete, restore, permanently delete, save, and reload drawing notes
+- Trash view for deleted notes
+- Sort notes by updated time, created time, or title
+- Filter notes by all types, text notes, or drawing notes
 - Drawing data is stored locally in Room as serialized JSON stroke data
 - In-app language selector for English and Traditional Chinese
 - Manual JSON backup and restore from Settings; choose Google Drive in the Android file picker to store a backup
@@ -61,4 +64,4 @@ $env:JAVA_HOME = "D:\android\Android Studio\jbr"
 
 ## Storage
 
-All notes and folders are stored in the local Room database `local_notepad.db`. Android cloud backup is disabled for the app. Manual backups are user-created JSON exports saved to a location selected in the Android file picker.
+All notes and folders are stored in the local Room database `local_notepad.db`. Deleted notes stay in the local database until permanently deleted from Trash. Android cloud backup is disabled for the app. Manual backups are user-created JSON exports saved to a location selected in the Android file picker.

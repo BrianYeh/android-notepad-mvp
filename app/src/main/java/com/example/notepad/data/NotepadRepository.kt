@@ -6,6 +6,7 @@ class NotepadRepository(
     private val dao: NotepadDao,
 ) {
     val folders: Flow<List<FolderEntity>> = dao.observeFolders()
+    val allNotes: Flow<List<NoteEntity>> = dao.observeAllNotes()
 
     fun notes(folderId: Long?): Flow<List<NoteEntity>> {
         return if (folderId == null) {
@@ -109,7 +110,19 @@ class NotepadRepository(
     }
 
     suspend fun deleteNote(noteId: Long) {
+        dao.softDeleteNote(noteId, System.currentTimeMillis())
+    }
+
+    suspend fun restoreNote(noteId: Long) {
+        dao.restoreNote(noteId, System.currentTimeMillis())
+    }
+
+    suspend fun permanentlyDeleteNote(noteId: Long) {
         dao.deleteNote(noteId)
+    }
+
+    suspend fun setNotePinned(noteId: Long, isPinned: Boolean) {
+        dao.setNotePinned(noteId, isPinned, System.currentTimeMillis())
     }
 
     suspend fun exportBackupJson(): String {

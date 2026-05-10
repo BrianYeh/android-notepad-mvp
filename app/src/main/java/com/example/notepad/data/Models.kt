@@ -14,6 +14,23 @@ object NoteTypes {
     const val DRAWING = "DRAWING"
 }
 
+enum class NoteListMode {
+    Active,
+    Trash,
+}
+
+enum class NoteSortOption {
+    UpdatedAt,
+    CreatedAt,
+    Title,
+}
+
+enum class NoteTypeFilter {
+    All,
+    Text,
+    Drawing,
+}
+
 @Entity(tableName = "folders")
 data class FolderEntity(
     @PrimaryKey(autoGenerate = true)
@@ -45,4 +62,7 @@ data class NoteEntity(
     val drawingData: String?,
     val createdAt: Long,
     val updatedAt: Long,
+    val isDeleted: Boolean = false,
+    val deletedAt: Long? = null,
+    val isPinned: Boolean = false,
 )
