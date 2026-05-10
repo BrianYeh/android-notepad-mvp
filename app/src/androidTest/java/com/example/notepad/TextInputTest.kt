@@ -31,6 +31,8 @@ class TextInputTest {
             .assertIsDisplayed()
             .performTextInput("這是中文內容")
 
+        composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_updated_time").assertIsDisplayed()
         composeRule.onNodeWithText("中文標題").assertIsDisplayed()
         composeRule.onNodeWithText("這是中文內容").assertIsDisplayed()
     }
@@ -42,6 +44,15 @@ class TextInputTest {
 
         composeRule.onNodeWithText("本機記事").assertIsDisplayed()
         composeRule.onNodeWithText("全部記事").assertIsDisplayed()
+    }
+
+    @Test
+    fun settingsExposeEditorFontSizeChoices() {
+        composeRule.onNodeWithTag("settings_button").performClick()
+
+        composeRule.onNodeWithTag("font_size_Large")
+            .assertIsDisplayed()
+            .performClick()
     }
 
     @Test

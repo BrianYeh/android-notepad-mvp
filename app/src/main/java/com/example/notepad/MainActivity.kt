@@ -23,6 +23,7 @@ class MainActivity : ComponentActivity() {
             val sortOption by viewModel.sortOption.collectAsStateWithLifecycle()
             val typeFilter by viewModel.typeFilter.collectAsStateWithLifecycle()
             val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
+            val editorFontSize by viewModel.editorFontSize.collectAsStateWithLifecycle()
 
             LocalNotepadTheme {
                 NotepadApp(
@@ -34,6 +35,7 @@ class MainActivity : ComponentActivity() {
                     sortOption = sortOption,
                     typeFilter = typeFilter,
                     appLanguage = appLanguage,
+                    editorFontSize = editorFontSize,
                     viewModel = viewModel,
                 )
             }

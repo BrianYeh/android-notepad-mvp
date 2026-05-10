@@ -75,18 +75,20 @@ class NotepadRepository(
         )
     }
 
-    suspend fun saveTextNote(noteId: Long, title: String, content: String) {
-        val current = dao.getNote(noteId) ?: return
-        if (current.title == title && current.textContent == content) return
+    suspend fun saveTextNote(noteId: Long, title: String, content: String): Long? {
+        val current = dao.getNote(noteId) ?: return null
+        if (current.title == title && current.textContent == content) return current.updatedAt
+        val now = System.currentTimeMillis()
 
         dao.updateNote(
             current.copy(
                 title = title,
                 textContent = content,
                 drawingData = null,
-                updatedAt = System.currentTimeMillis(),
+                updatedAt = now,
             ),
         )
+        return now
     }
 
     suspend fun saveDrawingNote(noteId: Long, title: String, drawingData: String) {

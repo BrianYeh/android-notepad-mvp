@@ -71,6 +71,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notepad.data.ALL_NOTES_FILTER_NAME
 import com.example.notepad.data.AppLanguage
@@ -79,6 +80,7 @@ import com.example.notepad.data.DEFAULT_FOLDER_NAME
 import com.example.notepad.data.DrawingJson
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
+import com.example.notepad.data.EditorFontSize
 import com.example.notepad.data.FolderEntity
 import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NoteListMode
@@ -102,6 +104,11 @@ private sealed interface AppScreen {
 }
 
 private const val BACKUP_FILE_NAME = "local-notepad-backup.json"
+
+private enum class SaveStatus {
+    Saving,
+    Saved,
+}
 
 @Composable
 fun LocalNotepadTheme(content: @Composable () -> Unit) {
@@ -128,6 +135,7 @@ fun NotepadApp(
     sortOption: NoteSortOption,
     typeFilter: NoteTypeFilter,
     appLanguage: AppLanguage,
+    editorFontSize: EditorFontSize,
     viewModel: NotepadViewModel,
 ) {
     var screen: AppScreen by remember { mutableStateOf(AppScreen.Main) }
@@ -180,7 +188,9 @@ fun NotepadApp(
 
         AppScreen.Settings -> SettingsScreen(
             text = text,
+            editorFontSize = editorFontSize,
             viewModel = viewModel,
+            onEditorFontSizeChange = viewModel::setEditorFontSize,
             onBack = { screen = AppScreen.Main },
         )
 
@@ -188,6 +198,8 @@ fun NotepadApp(
             noteId = currentScreen.noteId,
             folders = folders,
             text = text,
+            editorFontSize = editorFontSize,
+            appLanguage = appLanguage,
             viewModel = viewModel,
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
@@ -457,7 +469,9 @@ private fun MainScreen(
 @Composable
 private fun SettingsScreen(
     text: UiText,
+    editorFontSize: EditorFontSize,
     viewModel: NotepadViewModel,
+    onEditorFontSizeChange: (EditorFontSize) -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -524,6 +538,22 @@ private fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
+                text = text.textEditor,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = text.editorFontSize,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            EditorFontSizeRow(
+                editorFontSize = editorFontSize,
+                text = text,
+                onEditorFontSizeChange = onEditorFontSizeChange,
+            )
+            HorizontalDivider()
+            Text(
                 text = text.googleDriveBackup,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
@@ -556,6 +586,29 @@ private fun SettingsScreen(
                     .testTag("restore_button"),
             ) {
                 Text(text.restoreFromBackup)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditorFontSizeRow(
+    editorFontSize: EditorFontSize,
+    text: UiText,
+    onEditorFontSizeChange: (EditorFontSize) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        EditorFontSize.entries.forEach { size ->
+            item {
+                FilterChip(
+                    selected = editorFontSize == size,
+                    onClick = { onEditorFontSizeChange(size) },
+                    label = { Text(size.label(text)) },
+                    modifier = Modifier.testTag("font_size_${size.name}"),
+                )
             }
         }
     }
@@ -965,6 +1018,8 @@ private fun TextEditorScreen(
     noteId: Long,
     folders: List<FolderEntity>,
     text: UiText,
+    editorFontSize: EditorFontSize,
+    appLanguage: AppLanguage,
     viewModel: NotepadViewModel,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
@@ -974,6 +1029,9 @@ private fun TextEditorScreen(
     var content by remember(noteId) { mutableStateOf("") }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var saveStatus by remember(noteId) { mutableStateOf(SaveStatus.Saved) }
+    var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
+    val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
     val contentFocusRequester = remember(noteId) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -983,6 +1041,15 @@ private fun TextEditorScreen(
         title = loaded.title
         content = loaded.textContent.orEmpty()
         loadedNoteId = loaded.id
+        lastSavedAt = loaded.updatedAt
+        saveStatus = SaveStatus.Saved
+    }
+
+    LaunchedEffect(note?.updatedAt) {
+        val loaded = note ?: return@LaunchedEffect
+        if (loaded.id == noteId) {
+            lastSavedAt = loaded.updatedAt
+        }
     }
 
     LaunchedEffect(loadedNoteId) {
@@ -994,14 +1061,25 @@ private fun TextEditorScreen(
 
     LaunchedEffect(noteId, loadedNoteId, title, content) {
         if (loadedNoteId == noteId) {
+            val current = note ?: return@LaunchedEffect
+            if (title == current.title && content == current.textContent.orEmpty()) {
+                saveStatus = SaveStatus.Saved
+                return@LaunchedEffect
+            }
+            saveStatus = SaveStatus.Saving
             delay(500)
-            viewModel.saveTextNote(noteId, title, content)
+            lastSavedAt = viewModel.saveTextNoteNow(noteId, title, content) ?: System.currentTimeMillis()
+            saveStatus = SaveStatus.Saved
         }
     }
 
     fun saveAndBack() {
-        viewModel.saveTextNote(noteId, title, content)
-        onBack()
+        scope.launch {
+            saveStatus = SaveStatus.Saving
+            lastSavedAt = viewModel.saveTextNoteNow(noteId, title, content) ?: lastSavedAt
+            saveStatus = SaveStatus.Saved
+            onBack()
+        }
     }
 
     BackHandler(onBack = ::saveAndBack)
@@ -1042,12 +1120,17 @@ private fun TextEditorScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                Text(
+                    text = text.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text(text.title) },
+                    placeholder = { Text(text.title) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     keyboardActions = KeyboardActions(
@@ -1058,17 +1141,49 @@ private fun TextEditorScreen(
                         .focusRequester(titleFocusRequester)
                         .testTag("text_note_title"),
                 )
-                NoteFolderSelector(
-                    folders = folders,
-                    text = text,
-                    currentFolderId = currentNote.folderId,
-                    onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    NoteFolderSelector(
+                        folders = folders,
+                        text = text,
+                        currentFolderId = currentNote.folderId,
+                        onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = saveStatus.label(text),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.testTag("text_note_save_status"),
+                        )
+                        Text(
+                            text = "${text.lastUpdated}: ${formatTime(lastSavedAt ?: currentNote.updatedAt, appLanguage)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("text_note_updated_time"),
+                        )
+                    }
+                }
+                Text(
+                    text = text.content,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
                 )
                 OutlinedTextField(
                     value = content,
                     onValueChange = { content = it },
-                    label = { Text(text.content) },
+                    placeholder = { Text(text.content) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = editorFontSize.fontSizeSp.sp,
+                        lineHeight = (editorFontSize.fontSizeSp + 8).sp,
+                    ),
+                    minLines = 12,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -1518,6 +1633,21 @@ private fun NoteTypeFilter.label(text: UiText): String {
         NoteTypeFilter.All -> text.allTypes
         NoteTypeFilter.Text -> text.textNotes
         NoteTypeFilter.Drawing -> text.drawingNotes
+    }
+}
+
+private fun EditorFontSize.label(text: UiText): String {
+    return when (this) {
+        EditorFontSize.Small -> text.fontSmall
+        EditorFontSize.Medium -> text.fontMedium
+        EditorFontSize.Large -> text.fontLarge
+    }
+}
+
+private fun SaveStatus.label(text: UiText): String {
+    return when (this) {
+        SaveStatus.Saving -> text.saving
+        SaveStatus.Saved -> text.saved
     }
 }
 

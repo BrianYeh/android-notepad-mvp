@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.notepad.data.AppLanguage
+import com.example.notepad.data.EditorFontSize
 import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NoteListMode
 import com.example.notepad.data.NoteSortOption
@@ -39,6 +40,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         AppLanguage.fromCode(preferences.getString("app_language", AppLanguage.English.code)),
     )
     val appLanguage: StateFlow<AppLanguage> = _appLanguage
+    private val _editorFontSize = MutableStateFlow(
+        EditorFontSize.fromCode(preferences.getString("editor_font_size", EditorFontSize.Medium.code)),
+    )
+    val editorFontSize: StateFlow<EditorFontSize> = _editorFontSize
 
     val folders = repository.folders.stateIn(
         scope = viewModelScope,
@@ -114,6 +119,13 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             .apply()
     }
 
+    fun setEditorFontSize(fontSize: EditorFontSize) {
+        _editorFontSize.value = fontSize
+        preferences.edit()
+            .putString("editor_font_size", fontSize.code)
+            .apply()
+    }
+
     fun createFolder(name: String) {
         viewModelScope.launch {
             repository.createFolder(name)
@@ -151,6 +163,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.saveTextNote(noteId, title, content)
         }
+    }
+
+    suspend fun saveTextNoteNow(noteId: Long, title: String, content: String): Long? {
+        return repository.saveTextNote(noteId, title, content)
     }
 
     fun saveDrawingNote(noteId: Long, title: String, drawingData: String) {
