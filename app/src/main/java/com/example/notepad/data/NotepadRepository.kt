@@ -59,6 +59,22 @@ class NotepadRepository(
         )
     }
 
+    suspend fun createSharedTextNote(title: String, content: String): Long {
+        dao.ensureDefaultFolder()
+        val now = System.currentTimeMillis()
+        return dao.insertNote(
+            NoteEntity(
+                folderId = DEFAULT_FOLDER_ID,
+                type = NoteTypes.TEXT,
+                title = title,
+                textContent = content,
+                drawingData = null,
+                createdAt = now,
+                updatedAt = now,
+            ),
+        )
+    }
+
     suspend fun createDrawingNote(folderId: Long?): Long {
         dao.ensureDefaultFolder()
         val now = System.currentTimeMillis()
@@ -91,18 +107,20 @@ class NotepadRepository(
         return now
     }
 
-    suspend fun saveDrawingNote(noteId: Long, title: String, drawingData: String) {
-        val current = dao.getNote(noteId) ?: return
-        if (current.title == title && current.drawingData == drawingData) return
+    suspend fun saveDrawingNote(noteId: Long, title: String, drawingData: String): Long? {
+        val current = dao.getNote(noteId) ?: return null
+        if (current.title == title && current.drawingData == drawingData) return current.updatedAt
+        val now = System.currentTimeMillis()
 
         dao.updateNote(
             current.copy(
                 title = title,
                 textContent = null,
                 drawingData = drawingData,
-                updatedAt = System.currentTimeMillis(),
+                updatedAt = now,
             ),
         )
+        return now
     }
 
     suspend fun moveNote(noteId: Long, folderId: Long) {

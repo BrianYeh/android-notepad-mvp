@@ -14,6 +14,7 @@ import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
 import com.example.notepad.data.ReminderFilter
+import com.example.notepad.data.buildSharedNoteTitle
 import com.example.notepad.reminder.ReminderScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -169,6 +170,18 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun createSharedTextNote(
+        subject: String?,
+        sharedText: String,
+        defaultTitle: String,
+        onCreated: (Long) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val title = buildSharedNoteTitle(subject, sharedText, defaultTitle)
+            onCreated(repository.createSharedTextNote(title, sharedText))
+        }
+    }
+
     fun createDrawingNote(onCreated: (Long) -> Unit) {
         viewModelScope.launch {
             onCreated(repository.createDrawingNote(_selectedFolderId.value))
@@ -189,6 +202,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.saveDrawingNote(noteId, title, drawingData)
         }
+    }
+
+    suspend fun saveDrawingNoteNow(noteId: Long, title: String, drawingData: String): Long? {
+        return repository.saveDrawingNote(noteId, title, drawingData)
     }
 
     fun moveNote(noteId: Long, folderId: Long) {

@@ -4,6 +4,7 @@ import android.content.Context
 import android.Manifest
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -78,6 +79,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.notepad.IncomingTextShare
 import com.example.notepad.data.ALL_NOTES_FILTER_NAME
 import com.example.notepad.data.AppLanguage
 import com.example.notepad.data.DEFAULT_FOLDER_ID
@@ -95,6 +97,7 @@ import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.ReminderFilter
 import com.example.notepad.viewmodel.NotepadViewModel
 import java.text.DateFormat
+import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -144,10 +147,24 @@ fun NotepadApp(
     reminderFilter: ReminderFilter,
     appLanguage: AppLanguage,
     editorFontSize: EditorFontSize,
+    incomingTextShare: IncomingTextShare?,
+    onIncomingTextShareHandled: (Long) -> Unit,
     viewModel: NotepadViewModel,
 ) {
     var screen: AppScreen by remember { mutableStateOf(AppScreen.Main) }
     val text = remember(appLanguage) { uiTextFor(appLanguage) }
+
+    LaunchedEffect(incomingTextShare?.id) {
+        val share = incomingTextShare ?: return@LaunchedEffect
+        viewModel.createSharedTextNote(
+            subject = share.subject,
+            sharedText = share.text,
+            defaultTitle = text.sharedNoteDefaultTitle,
+        ) { noteId ->
+            screen = AppScreen.TextEditor(noteId)
+            onIncomingTextShareHandled(share.id)
+        }
+    }
 
     when (val currentScreen = screen) {
         AppScreen.Main -> MainScreen(
@@ -209,9 +226,9 @@ fun NotepadApp(
             folders = folders,
             text = text,
             editorFontSize = editorFontSize,
-    appLanguage = appLanguage,
-    viewModel = viewModel,
-    onBack = { screen = AppScreen.Main },
+            appLanguage = appLanguage,
+            viewModel = viewModel,
+            onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
         )
 
@@ -1092,10 +1109,30 @@ private fun TextEditorScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var saveStatus by remember(noteId) { mutableStateOf(SaveStatus.Saved) }
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
+    var pendingExportText by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
     val contentFocusRequester = remember(noteId) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val exportTextLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        val exportText = pendingExportText
+        pendingExportText = null
+        if (uri == null || exportText == null) return@rememberLauncherForActivityResult
+
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    writeTextToUri(context, uri, exportText)
+                }
+                Toast.makeText(context, text.exportComplete, Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {
+                Toast.makeText(context, text.exportFailed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     LaunchedEffect(note?.id) {
         val loaded = note ?: return@LaunchedEffect
@@ -1143,6 +1180,44 @@ private fun TextEditorScreen(
         }
     }
 
+    fun saveCurrentTextNoteThen(onSaved: (NoteEntity) -> Unit) {
+        val currentNote = note ?: return
+        scope.launch {
+            saveStatus = SaveStatus.Saving
+            val savedAt = viewModel.saveTextNoteNow(noteId, title, content) ?: currentNote.updatedAt
+            lastSavedAt = savedAt
+            saveStatus = SaveStatus.Saved
+            onSaved(
+                currentNote.copy(
+                    title = title,
+                    textContent = content,
+                    drawingData = null,
+                    updatedAt = savedAt,
+                ),
+            )
+        }
+    }
+
+    fun shareCurrentTextNote() {
+        saveCurrentTextNoteThen { savedNote ->
+            val folderName = folderDisplayNameById(savedNote.folderId, folders, text)
+            sharePlainText(
+                context = context,
+                subject = noteTitle(savedNote, text),
+                body = buildTextNoteDocumentText(savedNote, folderName, text, appLanguage),
+                chooserTitle = text.shareChooserTitle,
+            )
+        }
+    }
+
+    fun exportCurrentTextNote() {
+        saveCurrentTextNoteThen { savedNote ->
+            val folderName = folderDisplayNameById(savedNote.folderId, folders, text)
+            pendingExportText = buildTextNoteDocumentText(savedNote, folderName, text, appLanguage)
+            exportTextLauncher.launch(defaultTextExportFileName(savedNote, text))
+        }
+    }
+
     BackHandler(onBack = ::saveAndBack)
 
     Scaffold(
@@ -1158,6 +1233,18 @@ private fun TextEditorScreen(
                     }
                 },
                 actions = {
+                    TextButton(
+                        onClick = ::shareCurrentTextNote,
+                        modifier = Modifier.testTag("share_text_note_button"),
+                    ) {
+                        Text(text.share)
+                    }
+                    TextButton(
+                        onClick = ::exportCurrentTextNote,
+                        modifier = Modifier.testTag("export_text_note_button"),
+                    ) {
+                        Text(text.exportTxt)
+                    }
                     TextButton(onClick = { showDeleteDialog = true }) {
                         Text(text.delete)
                     }
@@ -1294,8 +1381,29 @@ private fun DrawingEditorScreen(
     var strokes by remember(noteId) { mutableStateOf<List<DrawingStroke>>(emptyList()) }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var pendingExportText by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val exportTextLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        val exportText = pendingExportText
+        pendingExportText = null
+        if (uri == null || exportText == null) return@rememberLauncherForActivityResult
+
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    writeTextToUri(context, uri, exportText)
+                }
+                Toast.makeText(context, text.exportComplete, Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {
+                Toast.makeText(context, text.exportFailed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     LaunchedEffect(note?.id) {
         val loaded = note ?: return@LaunchedEffect
@@ -1323,6 +1431,44 @@ private fun DrawingEditorScreen(
         onBack()
     }
 
+    fun shareCurrentDrawingNote() {
+        val currentNote = note ?: return
+        val drawingData = DrawingJson.encode(strokes)
+        scope.launch {
+            val savedAt = viewModel.saveDrawingNoteNow(noteId, title, drawingData) ?: currentNote.updatedAt
+            val savedNote = currentNote.copy(
+                title = title,
+                textContent = null,
+                drawingData = drawingData,
+                updatedAt = savedAt,
+            )
+            val folderName = folderDisplayNameById(savedNote.folderId, folders, text)
+            sharePlainText(
+                context = context,
+                subject = noteTitle(savedNote, text),
+                body = buildDrawingNoteShareText(savedNote, folderName, text, appLanguage),
+                chooserTitle = text.shareChooserTitle,
+            )
+        }
+    }
+
+    fun exportCurrentDrawingNote() {
+        val currentNote = note ?: return
+        val drawingData = DrawingJson.encode(strokes)
+        scope.launch {
+            val savedAt = viewModel.saveDrawingNoteNow(noteId, title, drawingData) ?: currentNote.updatedAt
+            val savedNote = currentNote.copy(
+                title = title,
+                textContent = null,
+                drawingData = drawingData,
+                updatedAt = savedAt,
+            )
+            val folderName = folderDisplayNameById(savedNote.folderId, folders, text)
+            pendingExportText = buildDrawingNoteShareText(savedNote, folderName, text, appLanguage)
+            exportTextLauncher.launch(defaultTextExportFileName(savedNote, text))
+        }
+    }
+
     BackHandler(onBack = ::saveAndBack)
 
     Scaffold(
@@ -1338,6 +1484,18 @@ private fun DrawingEditorScreen(
                     }
                 },
                 actions = {
+                    TextButton(
+                        onClick = ::shareCurrentDrawingNote,
+                        modifier = Modifier.testTag("share_drawing_note_button"),
+                    ) {
+                        Text(text.share)
+                    }
+                    TextButton(
+                        onClick = ::exportCurrentDrawingNote,
+                        modifier = Modifier.testTag("export_drawing_note_button"),
+                    ) {
+                        Text(text.exportTxt)
+                    }
                     TextButton(
                         onClick = {
                             strokes = emptyList()
@@ -1866,6 +2024,69 @@ private fun formatTime(timestamp: Long, language: AppLanguage): String {
     }
     return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale)
         .format(Date(timestamp))
+}
+
+private fun buildTextNoteDocumentText(
+    note: NoteEntity,
+    folderName: String,
+    text: UiText,
+    appLanguage: AppLanguage,
+): String {
+    return buildString {
+        appendLine("${text.title}: ${noteTitle(note, text)}")
+        appendLine("${text.folder}: $folderName")
+        note.reminderAt?.let { appendLine(reminderStatus(it, text, appLanguage)) }
+        appendLine("${text.lastUpdated}: ${formatTime(note.updatedAt, appLanguage)}")
+        appendLine()
+        appendLine(text.content)
+        appendLine(note.textContent.orEmpty())
+    }.trimEnd()
+}
+
+private fun buildDrawingNoteShareText(
+    note: NoteEntity,
+    folderName: String,
+    text: UiText,
+    appLanguage: AppLanguage,
+): String {
+    return buildString {
+        appendLine("${text.title}: ${noteTitle(note, text)}")
+        appendLine("${text.folder}: $folderName")
+        note.reminderAt?.let { appendLine(reminderStatus(it, text, appLanguage)) }
+        appendLine("${text.lastUpdated}: ${formatTime(note.updatedAt, appLanguage)}")
+        appendLine()
+        appendLine(text.drawingNoteDataNotice)
+    }.trimEnd()
+}
+
+private fun defaultTextExportFileName(note: NoteEntity, text: UiText): String {
+    val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+    val title = safeFileNameBase(noteTitle(note, text))
+    return "$title $date.txt"
+}
+
+private fun safeFileNameBase(title: String): String {
+    return title
+        .replace(Regex("""[\\/:*?"<>|\p{Cntrl}]"""), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .take(80)
+        .trim()
+        .ifBlank { "Note" }
+}
+
+private fun sharePlainText(
+    context: Context,
+    subject: String,
+    body: String,
+    chooserTitle: String,
+) {
+    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, subject)
+        putExtra(Intent.EXTRA_TEXT, body)
+    }
+    context.startActivity(Intent.createChooser(sendIntent, chooserTitle))
 }
 
 private fun writeTextToUri(context: Context, uri: Uri, text: String) {

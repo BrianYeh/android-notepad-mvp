@@ -17,10 +17,14 @@ Native Android notepad MVP built with Kotlin, Jetpack Compose, Room, and MVVM.
 - Filter notes by all types, text notes, or drawing notes
 - One-time local reminders for text and drawing notes
 - Reminder filters for all, with reminder, overdue, and upcoming notes
+- Share a single text note through the Android share sheet
+- Share drawing-note metadata without exporting internal drawing JSON
+- Export a text note as a human-readable `.txt` file through the Android system file picker
+- Receive `text/plain` shares from other apps and create a new text note in `Uncategorized`
 - Drawing data is stored locally in Room as serialized JSON stroke data
 - In-app language selector for English and Traditional Chinese
 - Manual JSON backup and restore from Settings; choose Google Drive in the Android file picker to store a backup
-- No automatic sync, login system, sharing, image export, or app-managed cloud storage
+- No automatic sync, login system, image export, or app-managed cloud storage
 
 ## Requirements
 
@@ -72,3 +76,11 @@ All notes and folders are stored in the local Room database `local_notepad.db`. 
 ## Notifications
 
 Note reminders are scheduled locally with Android `AlarmManager` and fire once. Android 13 and newer require notification permission; the app requests it when setting a reminder. Future reminders are rescheduled when the app starts, after device reboot, and after restoring a backup.
+
+## Sharing And Export
+
+Open a text note and tap `Share` to send the title, folder, reminder time when set, last updated time, and body text through the Android share sheet. Tap `Export .txt` to choose a destination such as Downloads or Google Drive with the Android file picker.
+
+Open a drawing note and tap `Share` to send readable metadata. Drawing stroke JSON stays inside the app and is not included in shared text.
+
+From another Android app, share plain text to `Local Notepad`. The app creates a new text note in `Uncategorized` using the shared subject when available, otherwise a preview of the shared text.

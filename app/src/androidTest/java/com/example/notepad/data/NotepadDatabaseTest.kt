@@ -174,4 +174,33 @@ class NotepadDatabaseTest {
 
         assertNull(dao.getNote(noteId)?.reminderAt)
     }
+
+    @Test
+    fun sharedTextNoteUsesSubjectAndUncategorizedFolder() = runTest {
+        val repository = NotepadRepository(dao)
+        val title = buildSharedNoteTitle(
+            subject = "Shared subject",
+            sharedText = "Shared body",
+            defaultTitle = "Shared Note",
+        )
+
+        val noteId = repository.createSharedTextNote(title, "Shared body")
+
+        val note = dao.getNote(noteId)
+        assertEquals(DEFAULT_FOLDER_ID, note?.folderId)
+        assertEquals("Shared subject", note?.title)
+        assertEquals("Shared body", note?.textContent)
+    }
+
+    @Test
+    fun sharedTextTitleFallsBackToBodyPreview() {
+        assertEquals(
+            "Body preview",
+            buildSharedNoteTitle(
+                subject = null,
+                sharedText = "\n Body preview\nSecond line",
+                defaultTitle = "Shared Note",
+            ),
+        )
+    }
 }
