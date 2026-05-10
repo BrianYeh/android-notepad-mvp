@@ -1,7 +1,12 @@
 package com.example.notepad.ui
 
 import android.content.Context
+import android.Manifest
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -87,8 +92,10 @@ import com.example.notepad.data.NoteListMode
 import com.example.notepad.data.NoteSortOption
 import com.example.notepad.data.NoteTypeFilter
 import com.example.notepad.data.NoteTypes
+import com.example.notepad.data.ReminderFilter
 import com.example.notepad.viewmodel.NotepadViewModel
 import java.text.DateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -134,6 +141,7 @@ fun NotepadApp(
     listMode: NoteListMode,
     sortOption: NoteSortOption,
     typeFilter: NoteTypeFilter,
+    reminderFilter: ReminderFilter,
     appLanguage: AppLanguage,
     editorFontSize: EditorFontSize,
     viewModel: NotepadViewModel,
@@ -150,6 +158,7 @@ fun NotepadApp(
             listMode = listMode,
             sortOption = sortOption,
             typeFilter = typeFilter,
+            reminderFilter = reminderFilter,
             appLanguage = appLanguage,
             text = text,
             onSelectFolder = viewModel::selectFolder,
@@ -157,6 +166,7 @@ fun NotepadApp(
             onListModeChange = viewModel::setListMode,
             onSortOptionChange = viewModel::setSortOption,
             onTypeFilterChange = viewModel::setTypeFilter,
+            onReminderFilterChange = viewModel::setReminderFilter,
             onSelectLanguage = viewModel::setLanguage,
             onOpenSettings = { screen = AppScreen.Settings },
             onCreateFolder = viewModel::createFolder,
@@ -199,9 +209,9 @@ fun NotepadApp(
             folders = folders,
             text = text,
             editorFontSize = editorFontSize,
-            appLanguage = appLanguage,
-            viewModel = viewModel,
-            onBack = { screen = AppScreen.Main },
+    appLanguage = appLanguage,
+    viewModel = viewModel,
+    onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
         )
 
@@ -209,6 +219,7 @@ fun NotepadApp(
             noteId = currentScreen.noteId,
             folders = folders,
             text = text,
+            appLanguage = appLanguage,
             viewModel = viewModel,
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
@@ -226,6 +237,7 @@ private fun MainScreen(
     listMode: NoteListMode,
     sortOption: NoteSortOption,
     typeFilter: NoteTypeFilter,
+    reminderFilter: ReminderFilter,
     appLanguage: AppLanguage,
     text: UiText,
     onSelectFolder: (Long?) -> Unit,
@@ -233,6 +245,7 @@ private fun MainScreen(
     onListModeChange: (NoteListMode) -> Unit,
     onSortOptionChange: (NoteSortOption) -> Unit,
     onTypeFilterChange: (NoteTypeFilter) -> Unit,
+    onReminderFilterChange: (ReminderFilter) -> Unit,
     onSelectLanguage: (AppLanguage) -> Unit,
     onOpenSettings: () -> Unit,
     onCreateFolder: (String) -> Unit,
@@ -354,9 +367,11 @@ private fun MainScreen(
             NoteFilterRow(
                 sortOption = sortOption,
                 typeFilter = typeFilter,
+                reminderFilter = reminderFilter,
                 text = text,
                 onSortOptionChange = onSortOptionChange,
                 onTypeFilterChange = onTypeFilterChange,
+                onReminderFilterChange = onReminderFilterChange,
             )
 
             HorizontalDivider()
@@ -648,27 +663,36 @@ private fun ListModeRow(
 private fun NoteFilterRow(
     sortOption: NoteSortOption,
     typeFilter: NoteTypeFilter,
+    reminderFilter: ReminderFilter,
     text: UiText,
     onSortOptionChange: (NoteSortOption) -> Unit,
     onTypeFilterChange: (NoteTypeFilter) -> Unit,
+    onReminderFilterChange: (ReminderFilter) -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        SortSelector(
-            sortOption = sortOption,
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SortSelector(
+                sortOption = sortOption,
+                text = text,
+                onSortOptionChange = onSortOptionChange,
+                modifier = Modifier.weight(1f),
+            )
+            TypeFilterSelector(
+                typeFilter = typeFilter,
+                text = text,
+                onTypeFilterChange = onTypeFilterChange,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        ReminderFilterSelector(
+            reminderFilter = reminderFilter,
             text = text,
-            onSortOptionChange = onSortOptionChange,
-            modifier = Modifier.weight(1f),
-        )
-        TypeFilterSelector(
-            typeFilter = typeFilter,
-            text = text,
-            onTypeFilterChange = onTypeFilterChange,
-            modifier = Modifier.weight(1f),
+            onReminderFilterChange = onReminderFilterChange,
         )
     }
 }
@@ -742,6 +766,43 @@ private fun TypeFilterSelector(
                     onClick = {
                         expanded = false
                         onTypeFilterChange(filter)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReminderFilterSelector(
+    reminderFilter: ReminderFilter,
+    text: UiText,
+    onReminderFilterChange: (ReminderFilter) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box {
+        Button(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                "${text.reminderFilter}: ${reminderFilter.label(text)}",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            ReminderFilter.entries.forEach { filter ->
+                DropdownMenuItem(
+                    text = { Text(filter.label(text)) },
+                    modifier = Modifier.testTag("reminder_${filter.name}"),
+                    onClick = {
+                        expanded = false
+                        onReminderFilterChange(filter)
                     },
                 )
             }
@@ -1169,6 +1230,13 @@ private fun TextEditorScreen(
                         )
                     }
                 }
+                ReminderControls(
+                    note = currentNote,
+                    text = text,
+                    appLanguage = appLanguage,
+                    onSetReminder = { reminderAt -> viewModel.setNoteReminder(noteId, reminderAt) },
+                    onClearReminder = { viewModel.setNoteReminder(noteId, null) },
+                )
                 Text(
                     text = text.content,
                     style = MaterialTheme.typography.labelLarge,
@@ -1216,6 +1284,7 @@ private fun DrawingEditorScreen(
     noteId: Long,
     folders: List<FolderEntity>,
     text: UiText,
+    appLanguage: AppLanguage,
     viewModel: NotepadViewModel,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
@@ -1319,6 +1388,13 @@ private fun DrawingEditorScreen(
                     currentFolderId = currentNote.folderId,
                     onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
                 )
+                ReminderControls(
+                    note = currentNote,
+                    text = text,
+                    appLanguage = appLanguage,
+                    onSetReminder = { reminderAt -> viewModel.setNoteReminder(noteId, reminderAt) },
+                    onClearReminder = { viewModel.setNoteReminder(noteId, null) },
+                )
                 DrawingCanvas(
                     strokes = strokes,
                     onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
@@ -1408,6 +1484,111 @@ private fun DrawingCanvas(
                     color = Color.Black,
                     style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReminderControls(
+    note: NoteEntity,
+    text: UiText,
+    appLanguage: AppLanguage,
+    onSetReminder: (Long) -> Unit,
+    onClearReminder: () -> Unit,
+) {
+    val context = LocalContext.current
+    var pendingReminderAt by remember { mutableStateOf<Long?>(null) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { _ ->
+        pendingReminderAt?.let(onSetReminder)
+        pendingReminderAt = null
+    }
+
+    fun submitReminder(reminderAt: Long) {
+        if (reminderAt <= System.currentTimeMillis()) {
+            Toast.makeText(context, text.reminderMustBeFuture, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingReminderAt = reminderAt
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            onSetReminder(reminderAt)
+        }
+    }
+
+    fun openDateTimePicker() {
+        val calendar = Calendar.getInstance()
+        val initialReminderAt = note.reminderAt?.takeIf { it > System.currentTimeMillis() }
+        if (initialReminderAt == null) {
+            calendar.add(Calendar.HOUR_OF_DAY, 1)
+        } else {
+            calendar.timeInMillis = initialReminderAt
+        }
+
+        DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                TimePickerDialog(
+                    context,
+                    { _, hourOfDay, minute ->
+                        val selected = Calendar.getInstance().apply {
+                            set(Calendar.YEAR, year)
+                            set(Calendar.MONTH, month)
+                            set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                            set(Calendar.HOUR_OF_DAY, hourOfDay)
+                            set(Calendar.MINUTE, minute)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }
+                        submitReminder(selected.timeInMillis)
+                    },
+                    calendar.get(Calendar.HOUR_OF_DAY),
+                    calendar.get(Calendar.MINUTE),
+                    true,
+                ).show()
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH),
+        ).show()
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = reminderStatus(note.reminderAt, text, appLanguage),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (note.reminderAt != null && note.reminderAt <= System.currentTimeMillis()) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.testTag("note_reminder_status"),
+        )
+        Text(
+            text = text.notificationPermissionHint,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = ::openDateTimePicker,
+                modifier = Modifier.testTag("set_reminder_button"),
+            ) {
+                Text(text.setReminder)
+            }
+            if (note.reminderAt != null) {
+                TextButton(
+                    onClick = onClearReminder,
+                    modifier = Modifier.testTag("clear_reminder_button"),
+                ) {
+                    Text(text.clearReminder)
+                }
             }
         }
     }
@@ -1617,7 +1798,8 @@ private fun noteMetadata(
     val timestamps = "${text.updated} ${formatTime(note.updatedAt, appLanguage)} • " +
         "${text.created} ${formatTime(note.createdAt, appLanguage)}"
     val pinned = if (note.isPinned && !note.isDeleted) " • ${text.pinned}" else ""
-    return "$folderName • $timestamps$pinned"
+    val reminder = note.reminderAt?.let { " • ${reminderStatus(it, text, appLanguage)}" }.orEmpty()
+    return "$folderName • $timestamps$pinned$reminder"
 }
 
 private fun NoteSortOption.label(text: UiText): String {
@@ -1636,6 +1818,15 @@ private fun NoteTypeFilter.label(text: UiText): String {
     }
 }
 
+private fun ReminderFilter.label(text: UiText): String {
+    return when (this) {
+        ReminderFilter.All -> text.allReminders
+        ReminderFilter.WithReminder -> text.withReminder
+        ReminderFilter.Overdue -> text.overdueReminders
+        ReminderFilter.Upcoming -> text.upcomingReminders
+    }
+}
+
 private fun EditorFontSize.label(text: UiText): String {
     return when (this) {
         EditorFontSize.Small -> text.fontSmall
@@ -1648,6 +1839,23 @@ private fun SaveStatus.label(text: UiText): String {
     return when (this) {
         SaveStatus.Saving -> text.saving
         SaveStatus.Saved -> text.saved
+    }
+}
+
+private fun reminderStatus(
+    reminderAt: Long?,
+    text: UiText,
+    appLanguage: AppLanguage,
+): String {
+    return if (reminderAt == null) {
+        "${text.reminder}: ${text.noReminder}"
+    } else {
+        val status = if (reminderAt <= System.currentTimeMillis()) {
+            text.reminderOverdue
+        } else {
+            text.reminderUpcoming
+        }
+        "${text.reminder}: ${formatTime(reminderAt, appLanguage)} ($status)"
     }
 }
 

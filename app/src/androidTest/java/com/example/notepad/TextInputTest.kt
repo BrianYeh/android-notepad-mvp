@@ -33,6 +33,8 @@ class TextInputTest {
 
         composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_updated_time").assertIsDisplayed()
+        composeRule.onNodeWithTag("note_reminder_status").assertIsDisplayed()
+        composeRule.onNodeWithTag("set_reminder_button").assertIsDisplayed()
         composeRule.onNodeWithText("中文標題").assertIsDisplayed()
         composeRule.onNodeWithText("這是中文內容").assertIsDisplayed()
     }

@@ -9,7 +9,7 @@ data class BackupData(
 )
 
 object BackupJson {
-    private const val VERSION = 2
+    private const val VERSION = 3
 
     fun encode(folders: List<FolderEntity>, notes: List<NoteEntity>): String {
         return JSONObject()
@@ -40,7 +40,8 @@ object BackupJson {
                             .put("updatedAt", note.updatedAt)
                             .put("isDeleted", note.isDeleted)
                             .putNullableLong("deletedAt", note.deletedAt)
-                            .put("isPinned", note.isPinned),
+                            .put("isPinned", note.isPinned)
+                            .putNullableLong("reminderAt", note.reminderAt),
                     )
                 }
             })
@@ -112,6 +113,7 @@ object BackupJson {
                 isDeleted = noteJson.optBoolean("isDeleted", false),
                 deletedAt = noteJson.optionalLong("deletedAt"),
                 isPinned = noteJson.optBoolean("isPinned", false),
+                reminderAt = noteJson.optionalLong("reminderAt"),
             )
         }
 

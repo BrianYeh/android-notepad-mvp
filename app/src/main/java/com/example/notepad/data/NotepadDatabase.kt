@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [FolderEntity::class, NoteEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class NotepadDatabase : RoomDatabase() {
@@ -26,7 +26,7 @@ abstract class NotepadDatabase : RoomDatabase() {
                     NotepadDatabase::class.java,
                     "local_notepad.db",
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { instance = it }
             }
@@ -37,6 +37,12 @@ abstract class NotepadDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE notes ADD COLUMN isDeleted INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE notes ADD COLUMN deletedAt INTEGER")
                 db.execSQL("ALTER TABLE notes ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE notes ADD COLUMN reminderAt INTEGER")
             }
         }
     }

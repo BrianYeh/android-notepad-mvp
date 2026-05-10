@@ -31,6 +31,13 @@ enum class NoteTypeFilter {
     Drawing,
 }
 
+enum class ReminderFilter {
+    All,
+    WithReminder,
+    Overdue,
+    Upcoming,
+}
+
 @Entity(tableName = "folders")
 data class FolderEntity(
     @PrimaryKey(autoGenerate = true)
@@ -65,4 +72,5 @@ data class NoteEntity(
     val isDeleted: Boolean = false,
     val deletedAt: Long? = null,
     val isPinned: Boolean = false,
+    val reminderAt: Long? = null,
 )

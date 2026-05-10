@@ -115,8 +115,9 @@ class NotepadRepository(
         dao.softDeleteNote(noteId, System.currentTimeMillis())
     }
 
-    suspend fun restoreNote(noteId: Long) {
+    suspend fun restoreNote(noteId: Long): NoteEntity? {
         dao.restoreNote(noteId, System.currentTimeMillis())
+        return dao.getNote(noteId)
     }
 
     suspend fun permanentlyDeleteNote(noteId: Long) {
@@ -125,6 +126,15 @@ class NotepadRepository(
 
     suspend fun setNotePinned(noteId: Long, isPinned: Boolean) {
         dao.setNotePinned(noteId, isPinned, System.currentTimeMillis())
+    }
+
+    suspend fun setNoteReminder(noteId: Long, reminderAt: Long?): NoteEntity? {
+        dao.setNoteReminder(noteId, reminderAt, System.currentTimeMillis())
+        return dao.getNote(noteId)
+    }
+
+    suspend fun getFutureReminderNotes(): List<NoteEntity> {
+        return dao.getFutureReminderNotes(System.currentTimeMillis())
     }
 
     suspend fun exportBackupJson(): String {

@@ -94,6 +94,7 @@ class NotepadDatabaseTest {
                 drawingData = null,
                 createdAt = 3L,
                 updatedAt = 3L,
+                reminderAt = 10_000L,
             ),
         )
         val backupJson = repository.exportBackupJson()
@@ -122,6 +123,7 @@ class NotepadDatabaseTest {
         assertEquals(listOf(DEFAULT_FOLDER_ID, folderId), dao.getAllFolders().map { it.id })
         assertEquals(noteId, dao.getAllNotes().single().id)
         assertEquals("Draft", dao.getAllNotes().single().textContent)
+        assertEquals(10_000L, dao.getAllNotes().single().reminderAt)
     }
 
     @Test
@@ -156,5 +158,20 @@ class NotepadDatabaseTest {
         repository.setNotePinned(noteId, true)
 
         assertEquals(true, dao.getNote(noteId)?.isPinned)
+    }
+
+    @Test
+    fun noteReminderCanBeSetAndCleared() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+
+        repository.setNoteReminder(noteId, 10_000L)
+
+        assertEquals(10_000L, dao.getNote(noteId)?.reminderAt)
+
+        repository.setNoteReminder(noteId, null)
+
+        assertNull(dao.getNote(noteId)?.reminderAt)
     }
 }

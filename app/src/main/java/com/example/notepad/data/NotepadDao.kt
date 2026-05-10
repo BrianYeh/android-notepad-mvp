@@ -31,6 +31,9 @@ abstract class NotepadDao {
     @Query("SELECT * FROM notes ORDER BY id ASC")
     abstract suspend fun getAllNotes(): List<NoteEntity>
 
+    @Query("SELECT * FROM notes WHERE isDeleted = 0 AND reminderAt IS NOT NULL AND reminderAt > :now ORDER BY reminderAt ASC")
+    abstract suspend fun getFutureReminderNotes(now: Long): List<NoteEntity>
+
     @Query("SELECT * FROM folders WHERE id = :folderId")
     abstract suspend fun getFolder(folderId: Long): FolderEntity?
 
@@ -69,6 +72,9 @@ abstract class NotepadDao {
 
     @Query("UPDATE notes SET isPinned = :isPinned, updatedAt = :updatedAt WHERE id = :noteId")
     abstract suspend fun setNotePinned(noteId: Long, isPinned: Boolean, updatedAt: Long)
+
+    @Query("UPDATE notes SET reminderAt = :reminderAt, updatedAt = :updatedAt WHERE id = :noteId")
+    abstract suspend fun setNoteReminder(noteId: Long, reminderAt: Long?, updatedAt: Long)
 
     @Query("DELETE FROM notes WHERE id = :noteId")
     abstract suspend fun deleteNote(noteId: Long)

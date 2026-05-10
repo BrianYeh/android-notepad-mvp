@@ -13,6 +13,8 @@ import com.example.notepad.data.NoteTypeFilter
 import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
+import com.example.notepad.data.ReminderFilter
+import com.example.notepad.reminder.ReminderScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +38,8 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     val sortOption: StateFlow<NoteSortOption> = _sortOption
     private val _typeFilter = MutableStateFlow(NoteTypeFilter.All)
     val typeFilter: StateFlow<NoteTypeFilter> = _typeFilter
+    private val _reminderFilter = MutableStateFlow(ReminderFilter.All)
+    val reminderFilter: StateFlow<ReminderFilter> = _reminderFilter
     private val _appLanguage = MutableStateFlow(
         AppLanguage.fromCode(preferences.getString("app_language", AppLanguage.English.code)),
     )
@@ -51,7 +55,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         initialValue = emptyList(),
     )
 
-    private val noteFilters = combine(
+    private val baseNoteFilters = combine(
         selectedFolderId,
         searchQuery,
         listMode,
@@ -64,8 +68,14 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             listMode = mode,
             sortOption = sort,
             typeFilter = type,
+            reminderFilter = ReminderFilter.All,
         )
     }
+
+    private val noteFilters = baseNoteFilters
+        .combine(reminderFilter) { filters, reminder ->
+            filters.copy(reminderFilter = reminder)
+        }
 
     val notes = repository.allNotes
         .combine(noteFilters) { notes, filters ->
@@ -74,6 +84,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
                 .filter { note -> note.isDeleted == (filters.listMode == NoteListMode.Trash) }
                 .filter { note -> filters.selectedFolderId == null || note.folderId == filters.selectedFolderId }
                 .filter { note -> note.matchesType(filters.typeFilter) }
+                .filter { note -> note.matchesReminder(filters.reminderFilter) }
                 .filter { note -> filters.searchQuery.isBlank() || note.matchesSearch(filters.searchQuery) }
                 .toList()
                 .sortedFor(filters)
@@ -87,6 +98,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     init {
         viewModelScope.launch {
             repository.ensureDefaultFolder()
+            ReminderScheduler.rescheduleFutureReminders(application)
         }
     }
 
@@ -110,6 +122,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun setTypeFilter(filter: NoteTypeFilter) {
         _typeFilter.value = filter
+    }
+
+    fun setReminderFilter(filter: ReminderFilter) {
+        _reminderFilter.value = filter
     }
 
     fun setLanguage(language: AppLanguage) {
@@ -184,17 +200,21 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     fun deleteNote(noteId: Long) {
         viewModelScope.launch {
             repository.deleteNote(noteId)
+            ReminderScheduler.cancel(getApplication(), noteId)
         }
     }
 
     fun restoreNote(noteId: Long) {
         viewModelScope.launch {
-            repository.restoreNote(noteId)
+            repository.restoreNote(noteId)?.let { note ->
+                ReminderScheduler.schedule(getApplication(), note)
+            }
         }
     }
 
     fun permanentlyDeleteNote(noteId: Long) {
         viewModelScope.launch {
+            ReminderScheduler.cancel(getApplication(), noteId)
             repository.permanentlyDeleteNote(noteId)
         }
     }
@@ -205,12 +225,24 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun setNoteReminder(noteId: Long, reminderAt: Long?) {
+        viewModelScope.launch {
+            val note = repository.setNoteReminder(noteId, reminderAt)
+            if (note == null || reminderAt == null) {
+                ReminderScheduler.cancel(getApplication(), noteId)
+            } else {
+                ReminderScheduler.schedule(getApplication(), note)
+            }
+        }
+    }
+
     suspend fun exportBackupJson(): String {
         return repository.exportBackupJson()
     }
 
     suspend fun importBackupJson(json: String) {
         repository.importBackupJson(json)
+        ReminderScheduler.rescheduleFutureReminders(getApplication())
     }
 }
 
@@ -220,6 +252,7 @@ private data class NoteListFilters(
     val listMode: NoteListMode,
     val sortOption: NoteSortOption,
     val typeFilter: NoteTypeFilter,
+    val reminderFilter: ReminderFilter,
 )
 
 private fun NoteEntity.matchesSearch(query: String): Boolean {
@@ -232,6 +265,17 @@ private fun NoteEntity.matchesType(typeFilter: NoteTypeFilter): Boolean {
         NoteTypeFilter.All -> true
         NoteTypeFilter.Text -> type == NoteTypes.TEXT
         NoteTypeFilter.Drawing -> type == NoteTypes.DRAWING
+    }
+}
+
+private fun NoteEntity.matchesReminder(reminderFilter: ReminderFilter): Boolean {
+    val reminder = reminderAt
+    val now = System.currentTimeMillis()
+    return when (reminderFilter) {
+        ReminderFilter.All -> true
+        ReminderFilter.WithReminder -> reminder != null
+        ReminderFilter.Overdue -> reminder != null && reminder <= now
+        ReminderFilter.Upcoming -> reminder != null && reminder > now
     }
 }
 

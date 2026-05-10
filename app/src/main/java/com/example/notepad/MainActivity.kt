@@ -22,6 +22,7 @@ class MainActivity : ComponentActivity() {
             val listMode by viewModel.listMode.collectAsStateWithLifecycle()
             val sortOption by viewModel.sortOption.collectAsStateWithLifecycle()
             val typeFilter by viewModel.typeFilter.collectAsStateWithLifecycle()
+            val reminderFilter by viewModel.reminderFilter.collectAsStateWithLifecycle()
             val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
             val editorFontSize by viewModel.editorFontSize.collectAsStateWithLifecycle()
 
@@ -34,6 +35,7 @@ class MainActivity : ComponentActivity() {
                     listMode = listMode,
                     sortOption = sortOption,
                     typeFilter = typeFilter,
+                    reminderFilter = reminderFilter,
                     appLanguage = appLanguage,
                     editorFontSize = editorFontSize,
                     viewModel = viewModel,

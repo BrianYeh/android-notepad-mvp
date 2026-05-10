@@ -15,6 +15,8 @@ Native Android notepad MVP built with Kotlin, Jetpack Compose, Room, and MVVM.
 - Trash view for deleted notes
 - Sort notes by updated time, created time, or title
 - Filter notes by all types, text notes, or drawing notes
+- One-time local reminders for text and drawing notes
+- Reminder filters for all, with reminder, overdue, and upcoming notes
 - Drawing data is stored locally in Room as serialized JSON stroke data
 - In-app language selector for English and Traditional Chinese
 - Manual JSON backup and restore from Settings; choose Google Drive in the Android file picker to store a backup
@@ -66,3 +68,7 @@ $env:JAVA_HOME = "D:\android\Android Studio\jbr"
 ## Storage
 
 All notes and folders are stored in the local Room database `local_notepad.db`. Deleted notes stay in the local database until permanently deleted from Trash. Android cloud backup is disabled for the app. Manual backups are user-created JSON exports saved to a location selected in the Android file picker.
+
+## Notifications
+
+Note reminders are scheduled locally with Android `AlarmManager` and fire once. Android 13 and newer require notification permission; the app requests it when setting a reminder. Future reminders are rescheduled when the app starts, after device reboot, and after restoring a backup.
