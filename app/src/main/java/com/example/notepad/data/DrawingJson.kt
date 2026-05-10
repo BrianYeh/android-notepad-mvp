@@ -3,6 +3,9 @@ package com.example.notepad.data
 import org.json.JSONArray
 import org.json.JSONObject
 
+const val DEFAULT_DRAWING_COLOR_ARGB = -0x1000000
+const val DEFAULT_DRAWING_STROKE_WIDTH = 5f
+
 data class DrawingPoint(
     val x: Float,
     val y: Float,
@@ -10,6 +13,8 @@ data class DrawingPoint(
 
 data class DrawingStroke(
     val points: List<DrawingPoint>,
+    val colorArgb: Int = DEFAULT_DRAWING_COLOR_ARGB,
+    val widthPx: Float = DEFAULT_DRAWING_STROKE_WIDTH,
 )
 
 object DrawingJson {
@@ -24,7 +29,12 @@ object DrawingJson {
                         .put("y", point.y.toDouble()),
                 )
             }
-            strokeArray.put(JSONObject().put("points", pointArray))
+            strokeArray.put(
+                JSONObject()
+                    .put("points", pointArray)
+                    .put("colorArgb", stroke.colorArgb)
+                    .put("widthPx", stroke.widthPx.toDouble()),
+            )
         }
         return strokeArray.toString()
     }
@@ -49,7 +59,19 @@ object DrawingJson {
                             )
                         }
                     }
-                    if (points.isNotEmpty()) add(DrawingStroke(points))
+                    if (points.isNotEmpty()) {
+                        add(
+                            DrawingStroke(
+                                points = points,
+                                colorArgb = strokeObject.optInt("colorArgb", DEFAULT_DRAWING_COLOR_ARGB),
+                                widthPx = strokeObject
+                                    .optDouble("widthPx", DEFAULT_DRAWING_STROKE_WIDTH.toDouble())
+                                    .toFloat()
+                                    .takeIf { it > 0f }
+                                    ?: DEFAULT_DRAWING_STROKE_WIDTH,
+                            ),
+                        )
+                    }
                 }
             }
         }.getOrDefault(emptyList())

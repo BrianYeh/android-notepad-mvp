@@ -68,10 +68,50 @@ class NotepadDatabaseTest {
                     DrawingPoint(1.5f, 2.5f),
                     DrawingPoint(3.5f, 4.5f),
                 ),
+                colorArgb = 0xFFE53935.toInt(),
+                widthPx = 10f,
             ),
         )
 
         assertEquals(strokes, DrawingJson.decode(DrawingJson.encode(strokes)))
+    }
+
+    @Test
+    fun drawingJsonDecodesLegacyStrokeDataWithFallbackStyle() {
+        val legacyJson = """
+            [
+              {
+                "points": [
+                  { "x": 1.5, "y": 2.5 },
+                  { "x": 3.5, "y": 4.5 }
+                ]
+              }
+            ]
+        """.trimIndent()
+
+        val stroke = DrawingJson.decode(legacyJson).single()
+
+        assertEquals(DEFAULT_DRAWING_COLOR_ARGB, stroke.colorArgb)
+        assertEquals(DEFAULT_DRAWING_STROKE_WIDTH, stroke.widthPx, 0.01f)
+    }
+
+    @Test
+    fun drawingPngRendersBlankCanvasAndStyledStrokes() {
+        val blankPng = renderDrawingPng(emptyList(), width = 120, height = 80)
+        val styledPng = renderDrawingPng(
+            strokes = listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(4f, 4f), DrawingPoint(40f, 40f)),
+                    colorArgb = 0xFF1E88E5.toInt(),
+                    widthPx = 8f,
+                ),
+            ),
+            width = 120,
+            height = 80,
+        )
+
+        assertEquals(0x89.toByte(), blankPng.first())
+        assertEquals(0x89.toByte(), styledPng.first())
     }
 
     @Test

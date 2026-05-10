@@ -4,6 +4,7 @@ import android.content.Context
 import android.Manifest
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -70,20 +71,25 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notepad.IncomingTextShare
 import com.example.notepad.data.ALL_NOTES_FILTER_NAME
 import com.example.notepad.data.AppLanguage
 import com.example.notepad.data.DEFAULT_FOLDER_ID
 import com.example.notepad.data.DEFAULT_FOLDER_NAME
+import com.example.notepad.data.DEFAULT_DRAWING_COLOR_ARGB
+import com.example.notepad.data.DEFAULT_DRAWING_STROKE_WIDTH
 import com.example.notepad.data.DrawingJson
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
@@ -95,7 +101,9 @@ import com.example.notepad.data.NoteSortOption
 import com.example.notepad.data.NoteTypeFilter
 import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.ReminderFilter
+import com.example.notepad.data.renderDrawingPng
 import com.example.notepad.viewmodel.NotepadViewModel
+import java.io.File
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -114,10 +122,30 @@ private sealed interface AppScreen {
 }
 
 private const val BACKUP_FILE_NAME = "local-notepad-backup.json"
+private const val DEFAULT_DRAWING_EXPORT_WIDTH = 1080
+private const val DEFAULT_DRAWING_EXPORT_HEIGHT = 1440
 
 private enum class SaveStatus {
     Saving,
     Saved,
+}
+
+private enum class DrawingTool {
+    Pen,
+    Eraser,
+}
+
+private enum class DrawingBrushSize(val widthPx: Float) {
+    Thin(3f),
+    Medium(DEFAULT_DRAWING_STROKE_WIDTH),
+    Thick(10f),
+}
+
+private enum class DrawingColorOption(val colorArgb: Int) {
+    Black(DEFAULT_DRAWING_COLOR_ARGB),
+    Red(0xFFE53935.toInt()),
+    Blue(0xFF1E88E5.toInt()),
+    Green(0xFF43A047.toInt()),
 }
 
 @Composable
@@ -1379,28 +1407,33 @@ private fun DrawingEditorScreen(
     val note by viewModel.observeNote(noteId).collectAsStateWithLifecycle(initialValue = null)
     var title by remember(noteId) { mutableStateOf("") }
     var strokes by remember(noteId) { mutableStateOf<List<DrawingStroke>>(emptyList()) }
+    var redoStrokes by remember(noteId) { mutableStateOf<List<DrawingStroke>>(emptyList()) }
+    var selectedTool by remember(noteId) { mutableStateOf(DrawingTool.Pen) }
+    var selectedBrushSize by remember(noteId) { mutableStateOf(DrawingBrushSize.Medium) }
+    var selectedColor by remember(noteId) { mutableStateOf(DrawingColorOption.Black) }
+    var canvasSize by remember(noteId) { mutableStateOf(IntSize.Zero) }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
-    var pendingExportText by remember { mutableStateOf<String?>(null) }
+    var pendingPngBytes by remember { mutableStateOf<ByteArray?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val exportTextLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/plain"),
+    val exportPngLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("image/png"),
     ) { uri ->
-        val exportText = pendingExportText
-        pendingExportText = null
-        if (uri == null || exportText == null) return@rememberLauncherForActivityResult
+        val pngBytes = pendingPngBytes
+        pendingPngBytes = null
+        if (uri == null || pngBytes == null) return@rememberLauncherForActivityResult
 
         scope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    writeTextToUri(context, uri, exportText)
+                    writeBytesToUri(context, uri, pngBytes)
                 }
-                Toast.makeText(context, text.exportComplete, Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, text.pngExportComplete, Toast.LENGTH_SHORT).show()
             } catch (_: Exception) {
-                Toast.makeText(context, text.exportFailed, Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, text.pngExportFailed, Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -1409,6 +1442,7 @@ private fun DrawingEditorScreen(
         val loaded = note ?: return@LaunchedEffect
         title = loaded.title
         strokes = DrawingJson.decode(loaded.drawingData)
+        redoStrokes = emptyList()
         loadedNoteId = loaded.id
     }
 
@@ -1431,7 +1465,7 @@ private fun DrawingEditorScreen(
         onBack()
     }
 
-    fun shareCurrentDrawingNote() {
+    fun saveCurrentDrawingNoteThen(onSaved: (NoteEntity, List<DrawingStroke>) -> Unit) {
         val currentNote = note ?: return
         val drawingData = DrawingJson.encode(strokes)
         scope.launch {
@@ -1442,30 +1476,98 @@ private fun DrawingEditorScreen(
                 drawingData = drawingData,
                 updatedAt = savedAt,
             )
-            val folderName = folderDisplayNameById(savedNote.folderId, folders, text)
-            sharePlainText(
-                context = context,
-                subject = noteTitle(savedNote, text),
-                body = buildDrawingNoteShareText(savedNote, folderName, text, appLanguage),
-                chooserTitle = text.shareChooserTitle,
-            )
+            onSaved(savedNote, strokes)
         }
     }
 
-    fun exportCurrentDrawingNote() {
-        val currentNote = note ?: return
-        val drawingData = DrawingJson.encode(strokes)
-        scope.launch {
-            val savedAt = viewModel.saveDrawingNoteNow(noteId, title, drawingData) ?: currentNote.updatedAt
-            val savedNote = currentNote.copy(
-                title = title,
-                textContent = null,
-                drawingData = drawingData,
-                updatedAt = savedAt,
-            )
-            val folderName = folderDisplayNameById(savedNote.folderId, folders, text)
-            pendingExportText = buildDrawingNoteShareText(savedNote, folderName, text, appLanguage)
-            exportTextLauncher.launch(defaultTextExportFileName(savedNote, text))
+    fun renderCurrentDrawingPng(currentStrokes: List<DrawingStroke>): ByteArray {
+        val width = canvasSize.width.takeIf { it > 0 } ?: DEFAULT_DRAWING_EXPORT_WIDTH
+        val height = canvasSize.height.takeIf { it > 0 } ?: DEFAULT_DRAWING_EXPORT_HEIGHT
+        return renderDrawingPng(currentStrokes, width, height)
+    }
+
+    fun shareCurrentDrawingPng() {
+        saveCurrentDrawingNoteThen { savedNote, savedStrokes ->
+            scope.launch {
+                try {
+                    val pngBytes = withContext(Dispatchers.Default) {
+                        renderCurrentDrawingPng(savedStrokes)
+                    }
+                    val uri = withContext(Dispatchers.IO) {
+                        createCachedPngUri(
+                            context = context,
+                            fileName = defaultPngExportFileName(savedNote, text),
+                            pngBytes = pngBytes,
+                        )
+                    }
+                    sharePng(
+                        context = context,
+                        uri = uri,
+                        subject = noteTitle(savedNote, text),
+                        body = buildDrawingNoteShareText(
+                            savedNote,
+                            folderDisplayNameById(savedNote.folderId, folders, text),
+                            text,
+                            appLanguage,
+                        ),
+                        chooserTitle = text.shareChooserTitle,
+                    )
+                } catch (_: Exception) {
+                    Toast.makeText(context, text.pngShareFailed, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun exportCurrentDrawingPng() {
+        saveCurrentDrawingNoteThen { savedNote, savedStrokes ->
+            scope.launch {
+                try {
+                    pendingPngBytes = withContext(Dispatchers.Default) {
+                        renderCurrentDrawingPng(savedStrokes)
+                    }
+                    exportPngLauncher.launch(defaultPngExportFileName(savedNote, text))
+                } catch (_: Exception) {
+                    pendingPngBytes = null
+                    Toast.makeText(context, text.pngExportFailed, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun undoStroke() {
+        val lastStroke = strokes.lastOrNull() ?: return
+        val updatedStrokes = strokes.dropLast(1)
+        strokes = updatedStrokes
+        redoStrokes = redoStrokes + lastStroke
+        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(updatedStrokes))
+    }
+
+    fun redoStroke() {
+        val stroke = redoStrokes.lastOrNull() ?: return
+        val updatedStrokes = strokes + stroke
+        strokes = updatedStrokes
+        redoStrokes = redoStrokes.dropLast(1)
+        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(updatedStrokes))
+    }
+
+    fun clearDrawing() {
+        strokes = emptyList()
+        redoStrokes = emptyList()
+        viewModel.saveDrawingNote(noteId, title, "[]")
+    }
+
+    fun finishStroke(updatedStrokes: List<DrawingStroke>) {
+        strokes = updatedStrokes
+        redoStrokes = emptyList()
+        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(updatedStrokes))
+    }
+
+    fun activeBrushColor(): Int {
+        return if (selectedTool == DrawingTool.Eraser) {
+            android.graphics.Color.WHITE
+        } else {
+            selectedColor.colorArgb
         }
     }
 
@@ -1484,26 +1586,6 @@ private fun DrawingEditorScreen(
                     }
                 },
                 actions = {
-                    TextButton(
-                        onClick = ::shareCurrentDrawingNote,
-                        modifier = Modifier.testTag("share_drawing_note_button"),
-                    ) {
-                        Text(text.share)
-                    }
-                    TextButton(
-                        onClick = ::exportCurrentDrawingNote,
-                        modifier = Modifier.testTag("export_drawing_note_button"),
-                    ) {
-                        Text(text.exportTxt)
-                    }
-                    TextButton(
-                        onClick = {
-                            strokes = emptyList()
-                            viewModel.saveDrawingNote(noteId, title, "[]")
-                        },
-                    ) {
-                        Text(text.clear)
-                    }
                     TextButton(onClick = { showDeleteDialog = true }) {
                         Text(text.delete)
                     }
@@ -1553,12 +1635,29 @@ private fun DrawingEditorScreen(
                     onSetReminder = { reminderAt -> viewModel.setNoteReminder(noteId, reminderAt) },
                     onClearReminder = { viewModel.setNoteReminder(noteId, null) },
                 )
+                DrawingToolBar(
+                    strokes = strokes,
+                    redoStrokes = redoStrokes,
+                    selectedTool = selectedTool,
+                    selectedBrushSize = selectedBrushSize,
+                    selectedColor = selectedColor,
+                    text = text,
+                    onUndo = ::undoStroke,
+                    onRedo = ::redoStroke,
+                    onClear = ::clearDrawing,
+                    onSharePng = ::shareCurrentDrawingPng,
+                    onExportPng = ::exportCurrentDrawingPng,
+                    onToolChange = { selectedTool = it },
+                    onBrushSizeChange = { selectedBrushSize = it },
+                    onColorChange = { selectedColor = it },
+                )
                 DrawingCanvas(
                     strokes = strokes,
                     onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
-                    onStrokeFinished = { updatedStrokes ->
-                        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(updatedStrokes))
-                    },
+                    onStrokeFinished = ::finishStroke,
+                    brushColorArgb = activeBrushColor(),
+                    brushWidthPx = selectedBrushSize.widthPx,
+                    onCanvasSizeChange = { canvasSize = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
@@ -1584,40 +1683,156 @@ private fun DrawingEditorScreen(
 }
 
 @Composable
+private fun DrawingToolBar(
+    strokes: List<DrawingStroke>,
+    redoStrokes: List<DrawingStroke>,
+    selectedTool: DrawingTool,
+    selectedBrushSize: DrawingBrushSize,
+    selectedColor: DrawingColorOption,
+    text: UiText,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onClear: () -> Unit,
+    onSharePng: () -> Unit,
+    onExportPng: () -> Unit,
+    onToolChange: (DrawingTool) -> Unit,
+    onBrushSizeChange: (DrawingBrushSize) -> Unit,
+    onColorChange: (DrawingColorOption) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+                Button(
+                    onClick = onUndo,
+                    enabled = strokes.isNotEmpty(),
+                    modifier = Modifier.testTag("drawing_undo_button"),
+                ) {
+                    Text(text.undo)
+                }
+            }
+            item {
+                Button(
+                    onClick = onRedo,
+                    enabled = redoStrokes.isNotEmpty(),
+                    modifier = Modifier.testTag("drawing_redo_button"),
+                ) {
+                    Text(text.redo)
+                }
+            }
+            item {
+                Button(
+                    onClick = onClear,
+                    enabled = strokes.isNotEmpty(),
+                    modifier = Modifier.testTag("drawing_clear_button"),
+                ) {
+                    Text(text.clear)
+                }
+            }
+            item {
+                Button(
+                    onClick = onSharePng,
+                    modifier = Modifier.testTag("share_drawing_png_button"),
+                ) {
+                    Text(text.sharePng)
+                }
+            }
+            item {
+                Button(
+                    onClick = onExportPng,
+                    modifier = Modifier.testTag("export_drawing_png_button"),
+                ) {
+                    Text(text.exportPng)
+                }
+            }
+        }
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DrawingTool.entries.forEach { tool ->
+                item {
+                    FilterChip(
+                        selected = selectedTool == tool,
+                        onClick = { onToolChange(tool) },
+                        label = { Text(tool.label(text)) },
+                        modifier = Modifier.testTag("drawing_tool_${tool.name}"),
+                    )
+                }
+            }
+            DrawingBrushSize.entries.forEach { size ->
+                item {
+                    FilterChip(
+                        selected = selectedBrushSize == size,
+                        onClick = { onBrushSizeChange(size) },
+                        label = { Text("${text.brushSize}: ${size.label(text)}") },
+                        modifier = Modifier.testTag("drawing_brush_${size.name}"),
+                    )
+                }
+            }
+        }
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DrawingColorOption.entries.forEach { color ->
+                item {
+                    FilterChip(
+                        selected = selectedColor == color,
+                        onClick = { onColorChange(color) },
+                        enabled = selectedTool == DrawingTool.Pen,
+                        label = { Text(color.label(text)) },
+                        modifier = Modifier.testTag("drawing_color_${color.name}"),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun DrawingCanvas(
     strokes: List<DrawingStroke>,
     onStrokesChange: (List<DrawingStroke>) -> Unit,
     onStrokeFinished: (List<DrawingStroke>) -> Unit,
+    brushColorArgb: Int,
+    brushWidthPx: Float,
+    onCanvasSizeChange: (IntSize) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val latestStrokes by rememberUpdatedState(strokes)
     val latestOnStrokesChange by rememberUpdatedState(onStrokesChange)
     val latestOnStrokeFinished by rememberUpdatedState(onStrokeFinished)
+    val latestBrushColorArgb by rememberUpdatedState(brushColorArgb)
+    val latestBrushWidthPx by rememberUpdatedState(brushWidthPx)
 
     Canvas(
         modifier = modifier
             .background(Color.White, RoundedCornerShape(8.dp))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            .onSizeChanged(onCanvasSizeChange)
             .pointerInput(Unit) {
                 var baseStrokes = emptyList<DrawingStroke>()
                 var activePoints = emptyList<DrawingPoint>()
+                var activeStroke = DrawingStroke(emptyList())
 
                 detectDragGestures(
                     onDragStart = { offset ->
                         baseStrokes = latestStrokes
                         activePoints = listOf(DrawingPoint(offset.x, offset.y))
-                        latestOnStrokesChange(baseStrokes + DrawingStroke(activePoints))
+                        activeStroke = DrawingStroke(
+                            points = activePoints,
+                            colorArgb = latestBrushColorArgb,
+                            widthPx = latestBrushWidthPx,
+                        )
+                        latestOnStrokesChange(baseStrokes + activeStroke)
                     },
                     onDrag = { change, _ ->
                         change.consume()
                         activePoints = activePoints + DrawingPoint(change.position.x, change.position.y)
-                        latestOnStrokesChange(baseStrokes + DrawingStroke(activePoints))
+                        activeStroke = activeStroke.copy(points = activePoints)
+                        latestOnStrokesChange(baseStrokes + activeStroke)
                     },
                     onDragEnd = {
-                        latestOnStrokeFinished(baseStrokes + DrawingStroke(activePoints))
+                        latestOnStrokeFinished(baseStrokes + activeStroke)
                     },
                     onDragCancel = {
-                        latestOnStrokeFinished(baseStrokes + DrawingStroke(activePoints))
+                        latestOnStrokeFinished(baseStrokes + activeStroke)
                     },
                 )
             },
@@ -1626,8 +1841,8 @@ private fun DrawingCanvas(
             val points = stroke.points
             if (points.size == 1) {
                 drawCircle(
-                    color = Color.Black,
-                    radius = 2.5f,
+                    color = Color(stroke.colorArgb),
+                    radius = stroke.widthPx / 2f,
                     center = Offset(points.first().x, points.first().y),
                 )
             } else if (points.size > 1) {
@@ -1639,8 +1854,8 @@ private fun DrawingCanvas(
                 }
                 drawPath(
                     path = path,
-                    color = Color.Black,
-                    style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    color = Color(stroke.colorArgb),
+                    style = Stroke(width = stroke.widthPx, cap = StrokeCap.Round, join = StrokeJoin.Round),
                 )
             }
         }
@@ -1993,6 +2208,30 @@ private fun EditorFontSize.label(text: UiText): String {
     }
 }
 
+private fun DrawingTool.label(text: UiText): String {
+    return when (this) {
+        DrawingTool.Pen -> text.pen
+        DrawingTool.Eraser -> text.eraser
+    }
+}
+
+private fun DrawingBrushSize.label(text: UiText): String {
+    return when (this) {
+        DrawingBrushSize.Thin -> text.thin
+        DrawingBrushSize.Medium -> text.medium
+        DrawingBrushSize.Thick -> text.thick
+    }
+}
+
+private fun DrawingColorOption.label(text: UiText): String {
+    return when (this) {
+        DrawingColorOption.Black -> text.black
+        DrawingColorOption.Red -> text.red
+        DrawingColorOption.Blue -> text.blue
+        DrawingColorOption.Green -> text.green
+    }
+}
+
 private fun SaveStatus.label(text: UiText): String {
     return when (this) {
         SaveStatus.Saving -> text.saving
@@ -2065,6 +2304,12 @@ private fun defaultTextExportFileName(note: NoteEntity, text: UiText): String {
     return "$title $date.txt"
 }
 
+private fun defaultPngExportFileName(note: NoteEntity, text: UiText): String {
+    val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+    val title = safeFileNameBase(noteTitle(note, text))
+    return "$title $date.png"
+}
+
 private fun safeFileNameBase(title: String): String {
     return title
         .replace(Regex("""[\\/:*?"<>|\p{Cntrl}]"""), " ")
@@ -2089,11 +2334,59 @@ private fun sharePlainText(
     context.startActivity(Intent.createChooser(sendIntent, chooserTitle))
 }
 
+private fun sharePng(
+    context: Context,
+    uri: Uri,
+    subject: String,
+    body: String,
+    chooserTitle: String,
+) {
+    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(Intent.EXTRA_SUBJECT, subject)
+        putExtra(Intent.EXTRA_TEXT, body)
+        putExtra(Intent.EXTRA_STREAM, uri)
+        clipData = ClipData.newUri(context.contentResolver, subject, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    val chooser = Intent.createChooser(sendIntent, chooserTitle).apply {
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(chooser)
+}
+
+private fun createCachedPngUri(
+    context: Context,
+    fileName: String,
+    pngBytes: ByteArray,
+): Uri {
+    val directory = File(context.cacheDir, "shared-drawings").apply {
+        mkdirs()
+    }
+    val file = File(directory, fileName)
+    file.outputStream().use { outputStream ->
+        outputStream.write(pngBytes)
+    }
+    return FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file,
+    )
+}
+
 private fun writeTextToUri(context: Context, uri: Uri, text: String) {
     val outputStream = context.contentResolver.openOutputStream(uri)
         ?: error("Unable to open backup output stream.")
     outputStream.bufferedWriter(Charsets.UTF_8).use { writer ->
         writer.write(text)
+    }
+}
+
+private fun writeBytesToUri(context: Context, uri: Uri, bytes: ByteArray) {
+    val outputStream = context.contentResolver.openOutputStream(uri)
+        ?: error("Unable to open output stream.")
+    outputStream.use { stream ->
+        stream.write(bytes)
     }
 }
 

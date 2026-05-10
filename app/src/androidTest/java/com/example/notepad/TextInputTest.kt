@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -57,6 +58,21 @@ class TextInputTest {
         composeRule.onNodeWithTag("font_size_Large")
             .assertIsDisplayed()
             .performClick()
+    }
+
+    @Test
+    fun drawingEditorShowsUpgradedDrawingTools() {
+        composeRule.onNodeWithTag("add_note_button").performClick()
+        composeRule.onNodeWithTag("new_drawing_note_menu_item").performClick()
+
+        composeRule.onNodeWithTag("drawing_undo_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_redo_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_tool_Pen").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_tool_Eraser").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_brush_Thin").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_color_Red").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("share_drawing_png_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("export_drawing_png_button").performScrollTo().assertIsDisplayed()
     }
 
     @Test
