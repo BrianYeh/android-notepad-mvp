@@ -31,6 +31,14 @@ enum class NoteTypeFilter {
     Drawing,
 }
 
+enum class NoteQuickFilter {
+    All,
+    Text,
+    Drawing,
+    HasReminder,
+    Pinned,
+}
+
 enum class ReminderFilter {
     All,
     WithReminder,

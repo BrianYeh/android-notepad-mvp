@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.notepad.data.AppLanguage
 import com.example.notepad.data.EditorFontSize
 import com.example.notepad.data.NoteEntity
+import com.example.notepad.data.NoteQuickFilter
 import com.example.notepad.data.NoteListMode
 import com.example.notepad.data.NoteSortOption
 import com.example.notepad.data.NoteTypeFilter
@@ -49,6 +50,8 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     val typeFilter: StateFlow<NoteTypeFilter> = _typeFilter
     private val _reminderFilter = MutableStateFlow(ReminderFilter.All)
     val reminderFilter: StateFlow<ReminderFilter> = _reminderFilter
+    private val _quickFilter = MutableStateFlow(NoteQuickFilter.All)
+    val quickFilter: StateFlow<NoteQuickFilter> = _quickFilter
     private val _appLanguage = MutableStateFlow(
         AppLanguage.fromCode(preferences.getString("app_language", AppLanguage.English.code)),
     )
@@ -71,22 +74,18 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         searchQuery,
         listMode,
         sortOption,
-        typeFilter,
-    ) { folderId, query, mode, sort, type ->
+        quickFilter,
+    ) { folderId, query, mode, sort, quickFilter ->
         NoteListFilters(
             selectedFolderId = folderId,
             searchQuery = query.trim(),
             listMode = mode,
             sortOption = sort,
-            typeFilter = type,
-            reminderFilter = ReminderFilter.All,
+            quickFilter = quickFilter,
         )
     }
 
     private val noteFilters = baseNoteFilters
-        .combine(reminderFilter) { filters, reminder ->
-            filters.copy(reminderFilter = reminder)
-        }
 
     val notes = repository.allNotes
         .combine(noteFilters) { notes, filters ->
@@ -94,8 +93,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
                 .asSequence()
                 .filter { note -> note.isDeleted == (filters.listMode == NoteListMode.Trash) }
                 .filter { note -> filters.selectedFolderId == null || note.folderId == filters.selectedFolderId }
-                .filter { note -> note.matchesType(filters.typeFilter) }
-                .filter { note -> note.matchesReminder(filters.reminderFilter) }
+                .filter { note -> note.matchesQuickFilter(filters.quickFilter) }
                 .filter { note -> filters.searchQuery.isBlank() || note.matchesSearch(filters.searchQuery) }
                 .toList()
                 .sortedFor(filters)
@@ -137,6 +135,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun setReminderFilter(filter: ReminderFilter) {
         _reminderFilter.value = filter
+    }
+
+    fun setQuickFilter(filter: NoteQuickFilter) {
+        _quickFilter.value = filter
     }
 
     fun setLanguage(language: AppLanguage) {
@@ -304,8 +306,7 @@ private data class NoteListFilters(
     val searchQuery: String,
     val listMode: NoteListMode,
     val sortOption: NoteSortOption,
-    val typeFilter: NoteTypeFilter,
-    val reminderFilter: ReminderFilter,
+    val quickFilter: NoteQuickFilter,
 )
 
 private fun NoteEntity.matchesSearch(query: String): Boolean {
@@ -313,22 +314,13 @@ private fun NoteEntity.matchesSearch(query: String): Boolean {
         textContent.orEmpty().contains(query, ignoreCase = true)
 }
 
-private fun NoteEntity.matchesType(typeFilter: NoteTypeFilter): Boolean {
-    return when (typeFilter) {
-        NoteTypeFilter.All -> true
-        NoteTypeFilter.Text -> type == NoteTypes.TEXT
-        NoteTypeFilter.Drawing -> type == NoteTypes.DRAWING
-    }
-}
-
-private fun NoteEntity.matchesReminder(reminderFilter: ReminderFilter): Boolean {
-    val reminder = reminderAt
-    val now = System.currentTimeMillis()
-    return when (reminderFilter) {
-        ReminderFilter.All -> true
-        ReminderFilter.WithReminder -> reminder != null
-        ReminderFilter.Overdue -> reminder != null && reminder <= now
-        ReminderFilter.Upcoming -> reminder != null && reminder > now
+private fun NoteEntity.matchesQuickFilter(filter: NoteQuickFilter): Boolean {
+    return when (filter) {
+        NoteQuickFilter.All -> true
+        NoteQuickFilter.Text -> type == NoteTypes.TEXT
+        NoteQuickFilter.Drawing -> type == NoteTypes.DRAWING
+        NoteQuickFilter.HasReminder -> reminderAt != null
+        NoteQuickFilter.Pinned -> isPinned
     }
 }
 

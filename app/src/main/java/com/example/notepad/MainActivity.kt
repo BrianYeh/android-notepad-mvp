@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
             val sortOption by viewModel.sortOption.collectAsStateWithLifecycle()
             val typeFilter by viewModel.typeFilter.collectAsStateWithLifecycle()
             val reminderFilter by viewModel.reminderFilter.collectAsStateWithLifecycle()
+            val quickFilter by viewModel.quickFilter.collectAsStateWithLifecycle()
             val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
             val editorFontSize by viewModel.editorFontSize.collectAsStateWithLifecycle()
             val isRecognizingText by viewModel.isRecognizingText.collectAsStateWithLifecycle()
@@ -45,6 +46,7 @@ class MainActivity : ComponentActivity() {
                     sortOption = sortOption,
                     typeFilter = typeFilter,
                     reminderFilter = reminderFilter,
+                    quickFilter = quickFilter,
                     appLanguage = appLanguage,
                     editorFontSize = editorFontSize,
                     isRecognizingText = isRecognizingText,

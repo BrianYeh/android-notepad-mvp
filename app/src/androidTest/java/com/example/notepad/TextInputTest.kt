@@ -10,6 +10,8 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.notepad.ui.highlightRanges
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -109,5 +111,52 @@ class TextInputTest {
         composeRule.onNodeWithTag("note_search_input")
             .performTextReplacement(contentNeedle)
         composeRule.onNodeWithText(title).assertIsDisplayed()
+        composeRule.onNodeWithText(contentNeedle).assertIsDisplayed()
+    }
+
+    @Test
+    fun searchQuickFiltersAndRecentlyUpdatedWorkTogether() {
+        val textTitle = "Alpha knowledge note"
+        val textBody = "personal knowledge alpha body"
+        val drawingTitle = "Alpha sketch"
+
+        composeRule.onNodeWithTag("add_note_button").performClick()
+        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        composeRule.onNodeWithTag("text_note_title").performTextInput(textTitle)
+        composeRule.onNodeWithTag("text_note_content").performTextInput(textBody)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(textTitle).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithTag("add_note_button").performClick()
+        composeRule.onNodeWithTag("new_drawing_note_menu_item").performClick()
+        composeRule.onNodeWithTag("drawing_note_title").performTextInput(drawingTitle)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(drawingTitle).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithTag("recently_updated_chip").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("note_search_input").performTextInput("alpha")
+        composeRule.onNodeWithTag("quick_filter_Text").performScrollTo().performClick()
+        composeRule.onNodeWithText(textTitle).assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(drawingTitle).fetchSemanticsNodes().isEmpty()
+        }
+
+        composeRule.onNodeWithTag("quick_filter_Drawing").performScrollTo().performClick()
+        composeRule.onNodeWithText(drawingTitle).assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(textTitle).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    @Test
+    fun highlightRangesAreCaseInsensitive() {
+        assertEquals(listOf(0..4, 11..15), "Alpha note alpha".highlightRanges("alpha"))
+        assertEquals(listOf(0..1, 4..5), "中文內容中文".highlightRanges("中文"))
     }
 }

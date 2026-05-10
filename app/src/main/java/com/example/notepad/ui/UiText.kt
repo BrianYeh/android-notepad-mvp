@@ -7,6 +7,7 @@ data class UiText(
     val settings: String,
     val language: String,
     val allNotes: String,
+    val all: String,
     val activeNotes: String,
     val trash: String,
     val uncategorized: String,
@@ -16,6 +17,7 @@ data class UiText(
     val sortUpdated: String,
     val sortCreated: String,
     val sortTitle: String,
+    val recentlyUpdated: String,
     val noteType: String,
     val allTypes: String,
     val textNotes: String,
@@ -23,6 +25,7 @@ data class UiText(
     val reminderFilter: String,
     val allReminders: String,
     val withReminder: String,
+    val hasReminder: String,
     val overdueReminders: String,
     val upcomingReminders: String,
     val newTextNote: String,
@@ -41,6 +44,7 @@ data class UiText(
     val permanentlyDelete: String,
     val noNotes: String,
     val noSearchResults: String,
+    val noSearchOrFilterResults: String,
     val noDeletedNotes: String,
     val drawing: String,
     val text: String,
@@ -126,6 +130,14 @@ data class UiText(
     val backupFailed: String,
     val restoreFailed: String,
 ) {
+    fun resultCount(count: Int): String {
+        return if (this === TraditionalChineseText) {
+            "$count 筆結果"
+        } else {
+            "$count results"
+        }
+    }
+
     fun deleteFolderBody(folderName: String): String {
         return if (this === TraditionalChineseText) {
             "$folderName 裡的記事會移到 $uncategorized。"
@@ -140,6 +152,7 @@ val EnglishText = UiText(
     settings = "Settings",
     language = "Language",
     allNotes = "All Notes",
+    all = "All",
     activeNotes = "Notes",
     trash = "Trash",
     uncategorized = "Uncategorized",
@@ -149,6 +162,7 @@ val EnglishText = UiText(
     sortUpdated = "Updated time",
     sortCreated = "Created time",
     sortTitle = "Title",
+    recentlyUpdated = "Recently updated",
     noteType = "Type",
     allTypes = "All types",
     textNotes = "Text notes",
@@ -156,6 +170,7 @@ val EnglishText = UiText(
     reminderFilter = "Reminder",
     allReminders = "All reminders",
     withReminder = "With reminder",
+    hasReminder = "Has reminder",
     overdueReminders = "Overdue",
     upcomingReminders = "Upcoming",
     newTextNote = "New Text Note",
@@ -174,6 +189,7 @@ val EnglishText = UiText(
     permanentlyDelete = "Delete forever",
     noNotes = "No notes",
     noSearchResults = "No matching notes",
+    noSearchOrFilterResults = "No notes match this search or filter",
     noDeletedNotes = "Trash is empty",
     drawing = "Drawing",
     text = "Text",
@@ -265,6 +281,7 @@ val TraditionalChineseText = UiText(
     settings = "設定",
     language = "語言",
     allNotes = "全部記事",
+    all = "全部",
     activeNotes = "一般記事",
     trash = "垃圾桶",
     uncategorized = "未分類",
@@ -274,6 +291,7 @@ val TraditionalChineseText = UiText(
     sortUpdated = "更新時間",
     sortCreated = "建立時間",
     sortTitle = "標題",
+    recentlyUpdated = "最近修改",
     noteType = "類型",
     allTypes = "全部類型",
     textNotes = "文字記事",
@@ -281,6 +299,7 @@ val TraditionalChineseText = UiText(
     reminderFilter = "提醒",
     allReminders = "全部提醒",
     withReminder = "有提醒",
+    hasReminder = "有提醒",
     overdueReminders = "已過期",
     upcomingReminders = "即將到期",
     newTextNote = "新增文字記事",
@@ -299,6 +318,7 @@ val TraditionalChineseText = UiText(
     permanentlyDelete = "永久刪除",
     noNotes = "沒有記事",
     noSearchResults = "沒有符合的記事",
+    noSearchOrFilterResults = "沒有符合搜尋或篩選的記事",
     noDeletedNotes = "垃圾桶是空的",
     drawing = "繪圖",
     text = "文字",

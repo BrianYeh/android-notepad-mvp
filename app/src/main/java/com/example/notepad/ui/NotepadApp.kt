@@ -82,6 +82,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
@@ -103,6 +106,7 @@ import com.example.notepad.data.DrawingTools
 import com.example.notepad.data.EditorFontSize
 import com.example.notepad.data.FolderEntity
 import com.example.notepad.data.NoteEntity
+import com.example.notepad.data.NoteQuickFilter
 import com.example.notepad.data.NoteListMode
 import com.example.notepad.data.NoteSortOption
 import com.example.notepad.data.NoteTypeFilter
@@ -134,6 +138,9 @@ private sealed interface AppScreen {
 private const val BACKUP_FILE_NAME = "local-notepad-backup.json"
 private const val DEFAULT_DRAWING_EXPORT_WIDTH = 1080
 private const val DEFAULT_DRAWING_EXPORT_HEIGHT = 1440
+private const val NOTE_PREVIEW_MAX_CHARS = 160
+private const val NOTE_PREVIEW_CONTEXT_BEFORE = 45
+private const val NOTE_PREVIEW_CONTEXT_AFTER = 110
 
 private enum class SaveStatus {
     Saving,
@@ -186,6 +193,7 @@ fun NotepadApp(
     sortOption: NoteSortOption,
     typeFilter: NoteTypeFilter,
     reminderFilter: ReminderFilter,
+    quickFilter: NoteQuickFilter,
     appLanguage: AppLanguage,
     editorFontSize: EditorFontSize,
     isRecognizingText: Boolean,
@@ -237,6 +245,7 @@ fun NotepadApp(
             sortOption = sortOption,
             typeFilter = typeFilter,
             reminderFilter = reminderFilter,
+            quickFilter = quickFilter,
             appLanguage = appLanguage,
             text = text,
             onSelectFolder = viewModel::selectFolder,
@@ -245,6 +254,7 @@ fun NotepadApp(
             onSortOptionChange = viewModel::setSortOption,
             onTypeFilterChange = viewModel::setTypeFilter,
             onReminderFilterChange = viewModel::setReminderFilter,
+            onQuickFilterChange = viewModel::setQuickFilter,
             onSelectLanguage = viewModel::setLanguage,
             onOpenSettings = { screen = AppScreen.Settings },
             onCreateFolder = viewModel::createFolder,
@@ -342,6 +352,7 @@ private fun MainScreen(
     sortOption: NoteSortOption,
     typeFilter: NoteTypeFilter,
     reminderFilter: ReminderFilter,
+    quickFilter: NoteQuickFilter,
     appLanguage: AppLanguage,
     text: UiText,
     onSelectFolder: (Long?) -> Unit,
@@ -350,6 +361,7 @@ private fun MainScreen(
     onSortOptionChange: (NoteSortOption) -> Unit,
     onTypeFilterChange: (NoteTypeFilter) -> Unit,
     onReminderFilterChange: (ReminderFilter) -> Unit,
+    onQuickFilterChange: (NoteQuickFilter) -> Unit,
     onSelectLanguage: (AppLanguage) -> Unit,
     onOpenSettings: () -> Unit,
     onCreateFolder: (String) -> Unit,
@@ -479,12 +491,19 @@ private fun MainScreen(
 
             NoteFilterRow(
                 sortOption = sortOption,
-                typeFilter = typeFilter,
-                reminderFilter = reminderFilter,
+                quickFilter = quickFilter,
                 text = text,
                 onSortOptionChange = onSortOptionChange,
-                onTypeFilterChange = onTypeFilterChange,
-                onReminderFilterChange = onReminderFilterChange,
+                onQuickFilterChange = onQuickFilterChange,
+            )
+
+            Text(
+                text = text.resultCount(notes.size),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .testTag("note_result_count"),
             )
 
             HorizontalDivider()
@@ -494,6 +513,7 @@ private fun MainScreen(
                 folders = folders,
                 text = text,
                 searchQuery = searchQuery,
+                hasActiveFilters = quickFilter != NoteQuickFilter.All,
                 listMode = listMode,
                 appLanguage = appLanguage,
                 onOpenNote = onOpenNote,
@@ -775,12 +795,10 @@ private fun ListModeRow(
 @Composable
 private fun NoteFilterRow(
     sortOption: NoteSortOption,
-    typeFilter: NoteTypeFilter,
-    reminderFilter: ReminderFilter,
+    quickFilter: NoteQuickFilter,
     text: UiText,
     onSortOptionChange: (NoteSortOption) -> Unit,
-    onTypeFilterChange: (NoteTypeFilter) -> Unit,
-    onReminderFilterChange: (ReminderFilter) -> Unit,
+    onQuickFilterChange: (NoteQuickFilter) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -788,25 +806,38 @@ private fun NoteFilterRow(
             .padding(horizontal = 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             SortSelector(
                 sortOption = sortOption,
                 text = text,
                 onSortOptionChange = onSortOptionChange,
                 modifier = Modifier.weight(1f),
             )
-            TypeFilterSelector(
-                typeFilter = typeFilter,
-                text = text,
-                onTypeFilterChange = onTypeFilterChange,
-                modifier = Modifier.weight(1f),
+            FilterChip(
+                selected = sortOption == NoteSortOption.UpdatedAt,
+                onClick = { onSortOptionChange(NoteSortOption.UpdatedAt) },
+                label = { Text(text.recentlyUpdated) },
+                modifier = Modifier.testTag("recently_updated_chip"),
             )
         }
-        ReminderFilterSelector(
-            reminderFilter = reminderFilter,
-            text = text,
-            onReminderFilterChange = onReminderFilterChange,
-        )
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            NoteQuickFilter.entries.forEach { filter ->
+                item {
+                    FilterChip(
+                        selected = quickFilter == filter,
+                        onClick = { onQuickFilterChange(filter) },
+                        label = { Text(filter.label(text)) },
+                        modifier = Modifier.testTag("quick_filter_${filter.name}"),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1059,6 +1090,7 @@ private fun NoteList(
     folders: List<FolderEntity>,
     text: UiText,
     searchQuery: String,
+    hasActiveFilters: Boolean,
     listMode: NoteListMode,
     appLanguage: AppLanguage,
     onOpenNote: (NoteEntity) -> Unit,
@@ -1076,7 +1108,7 @@ private fun NoteList(
         ) {
             Text(
                 when {
-                    searchQuery.isNotBlank() -> text.noSearchResults
+                    searchQuery.isNotBlank() || hasActiveFilters -> text.noSearchOrFilterResults
                     listMode == NoteListMode.Trash -> text.noDeletedNotes
                     else -> text.noNotes
                 },
@@ -1095,6 +1127,7 @@ private fun NoteList(
                 note = note,
                 folderName = folderDisplayNameById(note.folderId, folders, text),
                 text = text,
+                searchQuery = searchQuery,
                 appLanguage = appLanguage,
                 onOpen = { onOpenNote(note) },
                 onMove = { onMoveNote(note) },
@@ -1112,6 +1145,7 @@ private fun NoteRow(
     note: NoteEntity,
     folderName: String,
     text: UiText,
+    searchQuery: String,
     appLanguage: AppLanguage,
     onOpen: () -> Unit,
     onMove: () -> Unit,
@@ -1135,7 +1169,11 @@ private fun NoteRow(
                     )
                 }
                 Text(
-                    text = noteTitle(note, text),
+                    text = highlightedText(
+                        value = noteTitle(note, text),
+                        query = searchQuery,
+                        highlightColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    ),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -1156,6 +1194,20 @@ private fun NoteRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            notePreview(note, searchQuery)?.let { preview ->
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = highlightedText(
+                        value = preview,
+                        query = searchQuery,
+                        highlightColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("note_preview_${note.id}"),
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -2344,6 +2396,63 @@ private fun noteTitle(note: NoteEntity, text: UiText): String {
     }
 }
 
+private fun notePreview(note: NoteEntity, query: String): String? {
+    if (note.type != NoteTypes.TEXT) return null
+
+    val content = note.textContent
+        .orEmpty()
+        .replace(Regex("\\s+"), " ")
+        .trim()
+    if (content.isBlank()) return null
+
+    val trimmedQuery = query.trim()
+    if (trimmedQuery.isNotBlank()) {
+        val matchIndex = content.indexOf(trimmedQuery, ignoreCase = true)
+        if (matchIndex >= 0) {
+            val start = (matchIndex - NOTE_PREVIEW_CONTEXT_BEFORE).coerceAtLeast(0)
+            val end = (matchIndex + trimmedQuery.length + NOTE_PREVIEW_CONTEXT_AFTER).coerceAtMost(content.length)
+            val prefix = if (start > 0) "..." else ""
+            val suffix = if (end < content.length) "..." else ""
+            return "$prefix${content.substring(start, end)}$suffix"
+        }
+    }
+
+    return content.take(NOTE_PREVIEW_MAX_CHARS)
+}
+
+fun highlightedText(
+    value: String,
+    query: String,
+    highlightColor: Color,
+): AnnotatedString {
+    val trimmedQuery = query.trim()
+    if (trimmedQuery.isBlank()) return AnnotatedString(value)
+
+    return buildAnnotatedString {
+        append(value)
+        value.highlightRanges(trimmedQuery).forEach { range ->
+            addStyle(
+                SpanStyle(background = highlightColor),
+                start = range.first,
+                end = range.last + 1,
+            )
+        }
+    }
+}
+
+fun String.highlightRanges(query: String): List<IntRange> {
+    if (query.isBlank()) return emptyList()
+    val ranges = mutableListOf<IntRange>()
+    var searchStart = 0
+    while (searchStart <= length) {
+        val index = indexOf(query, startIndex = searchStart, ignoreCase = true)
+        if (index < 0) break
+        ranges += index until index + query.length
+        searchStart = index + query.length
+    }
+    return ranges
+}
+
 private fun noteMetadata(
     note: NoteEntity,
     folderName: String,
@@ -2370,6 +2479,16 @@ private fun NoteTypeFilter.label(text: UiText): String {
         NoteTypeFilter.All -> text.allTypes
         NoteTypeFilter.Text -> text.textNotes
         NoteTypeFilter.Drawing -> text.drawingNotes
+    }
+}
+
+private fun NoteQuickFilter.label(text: UiText): String {
+    return when (this) {
+        NoteQuickFilter.All -> text.all
+        NoteQuickFilter.Text -> text.textNotes
+        NoteQuickFilter.Drawing -> text.drawingNotes
+        NoteQuickFilter.HasReminder -> text.hasReminder
+        NoteQuickFilter.Pinned -> text.pinned
     }
 }
 
