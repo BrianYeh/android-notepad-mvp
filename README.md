@@ -11,6 +11,7 @@ Native Android notepad MVP built with Kotlin, Jetpack Compose, Room, and MVVM.
 - Create, edit, move, and delete text notes
 - Create, draw, clear, move, delete, save, and reload drawing notes
 - Drawing data is stored locally in Room as serialized JSON stroke data
+- In-app language selector for English and Traditional Chinese
 - No login, sync, sharing, image export, or cloud storage
 
 ## Requirements

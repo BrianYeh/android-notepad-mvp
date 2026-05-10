@@ -66,6 +66,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notepad.data.ALL_NOTES_FILTER_NAME
+import com.example.notepad.data.AppLanguage
 import com.example.notepad.data.DEFAULT_FOLDER_ID
 import com.example.notepad.data.DEFAULT_FOLDER_NAME
 import com.example.notepad.data.DrawingJson
@@ -77,6 +78,7 @@ import com.example.notepad.data.NoteTypes
 import com.example.notepad.viewmodel.NotepadViewModel
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.delay
 
 private sealed interface AppScreen {
@@ -105,16 +107,21 @@ fun NotepadApp(
     folders: List<FolderEntity>,
     notes: List<NoteEntity>,
     selectedFolderId: Long?,
+    appLanguage: AppLanguage,
     viewModel: NotepadViewModel,
 ) {
     var screen: AppScreen by remember { mutableStateOf(AppScreen.Main) }
+    val text = remember(appLanguage) { uiTextFor(appLanguage) }
 
     when (val currentScreen = screen) {
         AppScreen.Main -> MainScreen(
             folders = folders,
             notes = notes,
             selectedFolderId = selectedFolderId,
+            appLanguage = appLanguage,
+            text = text,
             onSelectFolder = viewModel::selectFolder,
+            onSelectLanguage = viewModel::setLanguage,
             onCreateFolder = viewModel::createFolder,
             onRenameFolder = viewModel::renameFolder,
             onDeleteFolder = viewModel::deleteFolder,
@@ -142,6 +149,7 @@ fun NotepadApp(
         is AppScreen.TextEditor -> TextEditorScreen(
             noteId = currentScreen.noteId,
             folders = folders,
+            text = text,
             viewModel = viewModel,
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
@@ -150,6 +158,7 @@ fun NotepadApp(
         is AppScreen.DrawingEditor -> DrawingEditorScreen(
             noteId = currentScreen.noteId,
             folders = folders,
+            text = text,
             viewModel = viewModel,
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
@@ -163,7 +172,10 @@ private fun MainScreen(
     folders: List<FolderEntity>,
     notes: List<NoteEntity>,
     selectedFolderId: Long?,
+    appLanguage: AppLanguage,
+    text: UiText,
     onSelectFolder: (Long?) -> Unit,
+    onSelectLanguage: (AppLanguage) -> Unit,
     onCreateFolder: (String) -> Unit,
     onRenameFolder: (Long, String) -> Unit,
     onDeleteFolder: (Long) -> Unit,
@@ -183,7 +195,16 @@ private fun MainScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Local Notepad") })
+            TopAppBar(
+                title = { Text(text.appName) },
+                actions = {
+                    LanguageSelector(
+                        appLanguage = appLanguage,
+                        text = text,
+                        onSelectLanguage = onSelectLanguage,
+                    )
+                },
+            )
         },
         floatingActionButton = {
             Box {
@@ -198,21 +219,24 @@ private fun MainScreen(
                     onDismissRequest = { addMenuExpanded = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text("New Text Note") },
+                        text = { Text(text.newTextNote) },
+                        modifier = Modifier.testTag("new_text_note_menu_item"),
                         onClick = {
                             addMenuExpanded = false
                             onCreateTextNote()
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("New Drawing Note") },
+                        text = { Text(text.newDrawingNote) },
+                        modifier = Modifier.testTag("new_drawing_note_menu_item"),
                         onClick = {
                             addMenuExpanded = false
                             onCreateDrawingNote()
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("New Folder") },
+                        text = { Text(text.newFolder) },
+                        modifier = Modifier.testTag("new_folder_menu_item"),
                         onClick = {
                             addMenuExpanded = false
                             showCreateFolderDialog = true
@@ -230,12 +254,14 @@ private fun MainScreen(
             FolderFilterRow(
                 folders = folders,
                 selectedFolderId = selectedFolderId,
+                text = text,
                 onSelectFolder = onSelectFolder,
             )
 
             selectedFolder?.let { folder ->
                 FolderActionRow(
                     folder = folder,
+                    text = text,
                     onRename = { folderToRename = folder },
                     onDelete = { folderToDelete = folder },
                 )
@@ -246,6 +272,8 @@ private fun MainScreen(
             NoteList(
                 notes = notes,
                 folders = folders,
+                text = text,
+                appLanguage = appLanguage,
                 onOpenNote = onOpenNote,
                 onMoveNote = { noteToMove = it },
                 onDeleteNote = { noteToDelete = it },
@@ -256,9 +284,10 @@ private fun MainScreen(
 
     if (showCreateFolderDialog) {
         FolderNameDialog(
-            title = "New Folder",
+            title = text.newFolder,
             initialName = "",
             folders = folders,
+            text = text,
             currentFolderId = null,
             onDismiss = { showCreateFolderDialog = false },
             onConfirm = { name ->
@@ -270,9 +299,10 @@ private fun MainScreen(
 
     folderToRename?.let { folder ->
         FolderNameDialog(
-            title = "Rename Folder",
+            title = text.renameFolder,
             initialName = folder.name,
             folders = folders,
+            text = text,
             currentFolderId = folder.id,
             onDismiss = { folderToRename = null },
             onConfirm = { name ->
@@ -284,9 +314,10 @@ private fun MainScreen(
 
     folderToDelete?.let { folder ->
         ConfirmDialog(
-            title = "Delete Folder",
-            body = "Notes in ${folder.name} will move to $DEFAULT_FOLDER_NAME.",
-            confirmText = "Delete",
+            title = text.deleteFolder,
+            body = text.deleteFolderBody(folderDisplayName(folder, text)),
+            confirmText = text.delete,
+            cancelText = text.cancel,
             onDismiss = { folderToDelete = null },
             onConfirm = {
                 onDeleteFolder(folder.id)
@@ -298,6 +329,7 @@ private fun MainScreen(
     noteToMove?.let { note ->
         MoveNoteDialog(
             folders = folders,
+            text = text,
             currentFolderId = note.folderId,
             onDismiss = { noteToMove = null },
             onMove = { folderId ->
@@ -309,9 +341,10 @@ private fun MainScreen(
 
     noteToDelete?.let { note ->
         ConfirmDialog(
-            title = "Delete Note",
-            body = "This note will be removed from this device.",
-            confirmText = "Delete",
+            title = text.deleteNote,
+            body = text.deleteNoteBody,
+            confirmText = text.delete,
+            cancelText = text.cancel,
             onDismiss = { noteToDelete = null },
             onConfirm = {
                 onDeleteNote(note.id)
@@ -322,9 +355,42 @@ private fun MainScreen(
 }
 
 @Composable
+private fun LanguageSelector(
+    appLanguage: AppLanguage,
+    text: UiText,
+    onSelectLanguage: (AppLanguage) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box {
+        TextButton(
+            onClick = { expanded = true },
+            modifier = Modifier.testTag("language_button"),
+        ) {
+            Text("${text.language}: ${appLanguage.displayName}")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            AppLanguage.entries.forEach { language ->
+                DropdownMenuItem(
+                    text = { Text(language.displayName) },
+                    onClick = {
+                        expanded = false
+                        onSelectLanguage(language)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun FolderFilterRow(
     folders: List<FolderEntity>,
     selectedFolderId: Long?,
+    text: UiText,
     onSelectFolder: (Long?) -> Unit,
 ) {
     LazyRow(
@@ -336,14 +402,20 @@ private fun FolderFilterRow(
             FilterChip(
                 selected = selectedFolderId == null,
                 onClick = { onSelectFolder(null) },
-                label = { Text(ALL_NOTES_FILTER_NAME) },
+                label = { Text(text.allNotes) },
             )
         }
         items(folders, key = { it.id }) { folder ->
             FilterChip(
                 selected = selectedFolderId == folder.id,
                 onClick = { onSelectFolder(folder.id) },
-                label = { Text(folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = {
+                    Text(
+                        folderDisplayName(folder, text),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
             )
         }
     }
@@ -352,6 +424,7 @@ private fun FolderFilterRow(
 @Composable
 private fun FolderActionRow(
     folder: FolderEntity,
+    text: UiText,
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -362,7 +435,7 @@ private fun FolderActionRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = folder.name,
+            text = folderDisplayName(folder, text),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.weight(1f),
             maxLines = 1,
@@ -370,10 +443,10 @@ private fun FolderActionRow(
         )
         if (folder.id != DEFAULT_FOLDER_ID) {
             TextButton(onClick = onRename) {
-                Text("Rename")
+                Text(text.rename)
             }
             TextButton(onClick = onDelete) {
-                Text("Delete")
+                Text(text.delete)
             }
         }
     }
@@ -383,6 +456,8 @@ private fun FolderActionRow(
 private fun NoteList(
     notes: List<NoteEntity>,
     folders: List<FolderEntity>,
+    text: UiText,
+    appLanguage: AppLanguage,
     onOpenNote: (NoteEntity) -> Unit,
     onMoveNote: (NoteEntity) -> Unit,
     onDeleteNote: (NoteEntity) -> Unit,
@@ -393,7 +468,7 @@ private fun NoteList(
             modifier = modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center,
         ) {
-            Text("No notes")
+            Text(text.noNotes)
         }
         return
     }
@@ -406,7 +481,9 @@ private fun NoteList(
         items(notes, key = { it.id }) { note ->
             NoteRow(
                 note = note,
-                folderName = folders.firstOrNull { it.id == note.folderId }?.name ?: DEFAULT_FOLDER_NAME,
+                folderName = folderDisplayNameById(note.folderId, folders, text),
+                text = text,
+                appLanguage = appLanguage,
                 onOpen = { onOpenNote(note) },
                 onMove = { onMoveNote(note) },
                 onDelete = { onDeleteNote(note) },
@@ -419,6 +496,8 @@ private fun NoteList(
 private fun NoteRow(
     note: NoteEntity,
     folderName: String,
+    text: UiText,
+    appLanguage: AppLanguage,
     onOpen: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
@@ -431,7 +510,7 @@ private fun NoteRow(
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = noteTitle(note),
+                    text = noteTitle(note, text),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -439,14 +518,14 @@ private fun NoteRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = if (note.type == NoteTypes.DRAWING) "Drawing" else "Text",
+                    text = if (note.type == NoteTypes.DRAWING) text.drawing else text.text,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "$folderName • Updated ${formatTime(note.updatedAt)}",
+                text = "$folderName • ${text.updated} ${formatTime(note.updatedAt, appLanguage)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -457,10 +536,10 @@ private fun NoteRow(
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onMove) {
-                    Text("Move")
+                    Text(text.move)
                 }
                 TextButton(onClick = onDelete) {
-                    Text("Delete")
+                    Text(text.delete)
                 }
             }
         }
@@ -472,6 +551,7 @@ private fun NoteRow(
 private fun TextEditorScreen(
     noteId: Long,
     folders: List<FolderEntity>,
+    text: UiText,
     viewModel: NotepadViewModel,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
@@ -516,15 +596,15 @@ private fun TextEditorScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Text Note") },
+                title = { Text(text.textNote) },
                 navigationIcon = {
                     TextButton(onClick = ::saveAndBack) {
-                        Text("Back")
+                        Text(text.back)
                     }
                 },
                 actions = {
                     TextButton(onClick = { showDeleteDialog = true }) {
-                        Text("Delete")
+                        Text(text.delete)
                     }
                 },
             )
@@ -538,7 +618,7 @@ private fun TextEditorScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("Note not found")
+                Text(text.noteNotFound)
             }
         } else {
             Column(
@@ -551,7 +631,7 @@ private fun TextEditorScreen(
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Title") },
+                    label = { Text(text.title) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     keyboardActions = KeyboardActions(
@@ -564,13 +644,14 @@ private fun TextEditorScreen(
                 )
                 NoteFolderSelector(
                     folders = folders,
+                    text = text,
                     currentFolderId = currentNote.folderId,
                     onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
                 )
                 OutlinedTextField(
                     value = content,
                     onValueChange = { content = it },
-                    label = { Text("Content") },
+                    label = { Text(text.content) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -584,9 +665,10 @@ private fun TextEditorScreen(
 
     if (showDeleteDialog) {
         ConfirmDialog(
-            title = "Delete Note",
-            body = "This note will be removed from this device.",
-            confirmText = "Delete",
+            title = text.deleteNote,
+            body = text.deleteNoteBody,
+            confirmText = text.delete,
+            cancelText = text.cancel,
             onDismiss = { showDeleteDialog = false },
             onConfirm = {
                 viewModel.deleteNote(noteId)
@@ -602,6 +684,7 @@ private fun TextEditorScreen(
 private fun DrawingEditorScreen(
     noteId: Long,
     folders: List<FolderEntity>,
+    text: UiText,
     viewModel: NotepadViewModel,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
@@ -645,10 +728,10 @@ private fun DrawingEditorScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Drawing Note") },
+                title = { Text(text.drawingNote) },
                 navigationIcon = {
                     TextButton(onClick = ::saveAndBack) {
-                        Text("Back")
+                        Text(text.back)
                     }
                 },
                 actions = {
@@ -658,10 +741,10 @@ private fun DrawingEditorScreen(
                             viewModel.saveDrawingNote(noteId, title, "[]")
                         },
                     ) {
-                        Text("Clear")
+                        Text(text.clear)
                     }
                     TextButton(onClick = { showDeleteDialog = true }) {
-                        Text("Delete")
+                        Text(text.delete)
                     }
                 },
             )
@@ -675,7 +758,7 @@ private fun DrawingEditorScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("Note not found")
+                Text(text.noteNotFound)
             }
         } else {
             Column(
@@ -688,7 +771,7 @@ private fun DrawingEditorScreen(
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Title") },
+                    label = { Text(text.title) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier
@@ -698,6 +781,7 @@ private fun DrawingEditorScreen(
                 )
                 NoteFolderSelector(
                     folders = folders,
+                    text = text,
                     currentFolderId = currentNote.folderId,
                     onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
                 )
@@ -717,9 +801,10 @@ private fun DrawingEditorScreen(
 
     if (showDeleteDialog) {
         ConfirmDialog(
-            title = "Delete Note",
-            body = "This note will be removed from this device.",
-            confirmText = "Delete",
+            title = text.deleteNote,
+            body = text.deleteNoteBody,
+            confirmText = text.delete,
+            cancelText = text.cancel,
             onDismiss = { showDeleteDialog = false },
             onConfirm = {
                 viewModel.deleteNote(noteId)
@@ -797,11 +882,12 @@ private fun DrawingCanvas(
 @Composable
 private fun NoteFolderSelector(
     folders: List<FolderEntity>,
+    text: UiText,
     currentFolderId: Long,
     onMove: (Long) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val currentFolderName = folders.firstOrNull { it.id == currentFolderId }?.name ?: DEFAULT_FOLDER_NAME
+    val currentFolderName = folderDisplayNameById(currentFolderId, folders, text)
 
     Box {
         Button(onClick = { expanded = true }) {
@@ -813,7 +899,7 @@ private fun NoteFolderSelector(
         ) {
             folders.forEach { folder ->
                 DropdownMenuItem(
-                    text = { Text(folder.name) },
+                    text = { Text(folderDisplayName(folder, text)) },
                     onClick = {
                         expanded = false
                         onMove(folder.id)
@@ -829,6 +915,7 @@ private fun FolderNameDialog(
     title: String,
     initialName: String,
     folders: List<FolderEntity>,
+    text: UiText,
     currentFolderId: Long?,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
@@ -847,7 +934,7 @@ private fun FolderNameDialog(
                         name = it
                         error = null
                     },
-                    label = { Text("Folder name") },
+                    label = { Text(text.folderName) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.testTag("folder_name_input"),
@@ -865,16 +952,16 @@ private fun FolderNameDialog(
             TextButton(
                 onClick = {
                     val trimmed = name.trim()
-                    error = validateFolderName(trimmed, folders, currentFolderId)
+                    error = validateFolderName(trimmed, folders, text, currentFolderId)
                     if (error == null) onConfirm(trimmed)
                 },
             ) {
-                Text("Save")
+                Text(text.save)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(text.cancel)
             }
         },
     )
@@ -883,13 +970,14 @@ private fun FolderNameDialog(
 @Composable
 private fun MoveNoteDialog(
     folders: List<FolderEntity>,
+    text: UiText,
     currentFolderId: Long,
     onDismiss: () -> Unit,
     onMove: (Long) -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Move Note") },
+        title = { Text(text.moveNote) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 folders.forEach { folder ->
@@ -898,7 +986,11 @@ private fun MoveNoteDialog(
                         enabled = folder.id != currentFolderId,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            folderDisplayName(folder, text),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }
@@ -906,7 +998,7 @@ private fun MoveNoteDialog(
         confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(text.cancel)
             }
         },
     )
@@ -917,6 +1009,7 @@ private fun ConfirmDialog(
     title: String,
     body: String,
     confirmText: String,
+    cancelText: String,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -931,7 +1024,7 @@ private fun ConfirmDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(cancelText)
             }
         },
     )
@@ -940,23 +1033,52 @@ private fun ConfirmDialog(
 private fun validateFolderName(
     name: String,
     folders: List<FolderEntity>,
+    text: UiText,
     currentFolderId: Long?,
 ): String? {
-    if (name.isBlank()) return "Folder name is required."
-    if (name.equals(ALL_NOTES_FILTER_NAME, ignoreCase = true)) return "$ALL_NOTES_FILTER_NAME is a filter."
-    if (name.equals(DEFAULT_FOLDER_NAME, ignoreCase = true)) return "$DEFAULT_FOLDER_NAME is reserved."
-    if (folders.any { it.id != currentFolderId && it.name.equals(name, ignoreCase = true) }) {
-        return "Folder already exists."
+    if (name.isBlank()) return text.folderNameRequired
+    if (
+        name.equals(ALL_NOTES_FILTER_NAME, ignoreCase = true) ||
+        name.equals(text.allNotes, ignoreCase = true)
+    ) {
+        return text.allNotesIsFilter
+    }
+    if (
+        name.equals(DEFAULT_FOLDER_NAME, ignoreCase = true) ||
+        name.equals(text.uncategorized, ignoreCase = true)
+    ) {
+        return text.uncategorizedIsReserved
+    }
+    if (folders.any { it.id != currentFolderId && folderDisplayName(it, text).equals(name, ignoreCase = true) }) {
+        return text.folderAlreadyExists
     }
     return null
 }
 
-private fun noteTitle(note: NoteEntity): String {
+private fun folderDisplayName(folder: FolderEntity, text: UiText): String {
+    return if (folder.id == DEFAULT_FOLDER_ID) text.uncategorized else folder.name
+}
+
+private fun folderDisplayNameById(
+    folderId: Long,
+    folders: List<FolderEntity>,
+    text: UiText,
+): String {
+    val folder = folders.firstOrNull { it.id == folderId }
+    return if (folder == null) text.uncategorized else folderDisplayName(folder, text)
+}
+
+private fun noteTitle(note: NoteEntity, text: UiText): String {
     return note.title.ifBlank {
-        if (note.type == NoteTypes.DRAWING) "Untitled drawing" else "Untitled text note"
+        if (note.type == NoteTypes.DRAWING) text.untitledDrawing else text.untitledTextNote
     }
 }
 
-private fun formatTime(timestamp: Long): String {
-    return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestamp))
+private fun formatTime(timestamp: Long, language: AppLanguage): String {
+    val locale = when (language) {
+        AppLanguage.English -> Locale.ENGLISH
+        AppLanguage.TraditionalChinese -> Locale.TRADITIONAL_CHINESE
+    }
+    return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale)
+        .format(Date(timestamp))
 }

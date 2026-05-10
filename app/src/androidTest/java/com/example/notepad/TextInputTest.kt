@@ -19,7 +19,7 @@ class TextInputTest {
     @Test
     fun textNoteTitleAndContentAcceptInput() {
         composeRule.onNodeWithTag("add_note_button").performClick()
-        composeRule.onNodeWithText("New Text Note").performClick()
+        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
 
         composeRule.onNodeWithTag("text_note_title")
             .assertIsDisplayed()
@@ -31,5 +31,14 @@ class TextInputTest {
 
         composeRule.onNodeWithText("中文標題").assertIsDisplayed()
         composeRule.onNodeWithText("這是中文內容").assertIsDisplayed()
+    }
+
+    @Test
+    fun userCanSwitchToTraditionalChinese() {
+        composeRule.onNodeWithTag("language_button").performClick()
+        composeRule.onNodeWithText("繁體中文").performClick()
+
+        composeRule.onNodeWithText("本機記事").assertIsDisplayed()
+        composeRule.onNodeWithText("全部記事").assertIsDisplayed()
     }
 }

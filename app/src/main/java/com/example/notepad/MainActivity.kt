@@ -18,12 +18,14 @@ class MainActivity : ComponentActivity() {
             val folders by viewModel.folders.collectAsStateWithLifecycle()
             val notes by viewModel.notes.collectAsStateWithLifecycle()
             val selectedFolderId by viewModel.selectedFolderId.collectAsStateWithLifecycle()
+            val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
 
             LocalNotepadTheme {
                 NotepadApp(
                     folders = folders,
                     notes = notes,
                     selectedFolderId = selectedFolderId,
+                    appLanguage = appLanguage,
                     viewModel = viewModel,
                 )
             }

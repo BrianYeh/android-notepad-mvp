@@ -1,0 +1,132 @@
+package com.example.notepad.ui
+
+import com.example.notepad.data.AppLanguage
+
+data class UiText(
+    val appName: String,
+    val language: String,
+    val allNotes: String,
+    val uncategorized: String,
+    val newTextNote: String,
+    val newDrawingNote: String,
+    val newFolder: String,
+    val renameFolder: String,
+    val deleteFolder: String,
+    val delete: String,
+    val rename: String,
+    val noNotes: String,
+    val drawing: String,
+    val text: String,
+    val updated: String,
+    val move: String,
+    val textNote: String,
+    val drawingNote: String,
+    val back: String,
+    val clear: String,
+    val noteNotFound: String,
+    val title: String,
+    val content: String,
+    val deleteNote: String,
+    val deleteNoteBody: String,
+    val folderName: String,
+    val save: String,
+    val cancel: String,
+    val moveNote: String,
+    val folderNameRequired: String,
+    val allNotesIsFilter: String,
+    val uncategorizedIsReserved: String,
+    val folderAlreadyExists: String,
+    val untitledDrawing: String,
+    val untitledTextNote: String,
+) {
+    fun deleteFolderBody(folderName: String): String {
+        return if (this === TraditionalChineseText) {
+            "$folderName 裡的記事會移到 $uncategorized。"
+        } else {
+            "Notes in $folderName will move to $uncategorized."
+        }
+    }
+}
+
+val EnglishText = UiText(
+    appName = "Local Notepad",
+    language = "Language",
+    allNotes = "All Notes",
+    uncategorized = "Uncategorized",
+    newTextNote = "New Text Note",
+    newDrawingNote = "New Drawing Note",
+    newFolder = "New Folder",
+    renameFolder = "Rename Folder",
+    deleteFolder = "Delete Folder",
+    delete = "Delete",
+    rename = "Rename",
+    noNotes = "No notes",
+    drawing = "Drawing",
+    text = "Text",
+    updated = "Updated",
+    move = "Move",
+    textNote = "Text Note",
+    drawingNote = "Drawing Note",
+    back = "Back",
+    clear = "Clear",
+    noteNotFound = "Note not found",
+    title = "Title",
+    content = "Content",
+    deleteNote = "Delete Note",
+    deleteNoteBody = "This note will be removed from this device.",
+    folderName = "Folder name",
+    save = "Save",
+    cancel = "Cancel",
+    moveNote = "Move Note",
+    folderNameRequired = "Folder name is required.",
+    allNotesIsFilter = "All Notes is a filter.",
+    uncategorizedIsReserved = "Uncategorized is reserved.",
+    folderAlreadyExists = "Folder already exists.",
+    untitledDrawing = "Untitled drawing",
+    untitledTextNote = "Untitled text note",
+)
+
+val TraditionalChineseText = UiText(
+    appName = "本機記事",
+    language = "語言",
+    allNotes = "全部記事",
+    uncategorized = "未分類",
+    newTextNote = "新增文字記事",
+    newDrawingNote = "新增繪圖記事",
+    newFolder = "新增資料夾",
+    renameFolder = "重新命名資料夾",
+    deleteFolder = "刪除資料夾",
+    delete = "刪除",
+    rename = "重新命名",
+    noNotes = "沒有記事",
+    drawing = "繪圖",
+    text = "文字",
+    updated = "更新",
+    move = "移動",
+    textNote = "文字記事",
+    drawingNote = "繪圖記事",
+    back = "返回",
+    clear = "清除",
+    noteNotFound = "找不到記事",
+    title = "標題",
+    content = "內容",
+    deleteNote = "刪除記事",
+    deleteNoteBody = "這則記事會從此裝置移除。",
+    folderName = "資料夾名稱",
+    save = "儲存",
+    cancel = "取消",
+    moveNote = "移動記事",
+    folderNameRequired = "請輸入資料夾名稱。",
+    allNotesIsFilter = "全部記事是篩選器。",
+    uncategorizedIsReserved = "未分類是保留名稱。",
+    folderAlreadyExists = "資料夾已存在。",
+    untitledDrawing = "未命名繪圖",
+    untitledTextNote = "未命名文字記事",
+)
+
+fun uiTextFor(language: AppLanguage): UiText {
+    return when (language) {
+        AppLanguage.English -> EnglishText
+        AppLanguage.TraditionalChinese -> TraditionalChineseText
+    }
+}
