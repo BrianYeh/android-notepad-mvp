@@ -416,6 +416,21 @@ class TextInputTest {
     }
 
     @Test
+    fun findMatchScrollTargetUsesSmallerPaddingForShortViewports() {
+        assertEquals(
+            240,
+            findMatchScrollTarget(
+                currentScroll = 0,
+                viewportHeight = 180,
+                matchTop = 360f,
+                matchBottom = 390f,
+                maxScroll = 1_000,
+                viewportPaddingPx = 96f,
+            ),
+        )
+    }
+
+    @Test
     fun findInNoteNoMatchesAndEmptyQueryAreHandled() {
         assertEquals(emptyList<IntRange>(), findInNoteMatches("Alpha note", "missing"))
         assertEquals(emptyList<IntRange>(), findInNoteMatches("Alpha note", ""))

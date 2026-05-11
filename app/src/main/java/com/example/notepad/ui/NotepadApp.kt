@@ -1304,6 +1304,7 @@ private fun TextEditorScreen(
     var readContentTopInScroll by remember(noteId) { mutableStateOf(0f) }
     val autoSaveVersion = remember(noteId) { AtomicLong(0L) }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val editContentPaddingPx = with(LocalDensity.current) { 16.dp.toPx() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val content = contentField.text
     val findMatches = remember(content, findQuery) { findInNoteMatches(content, findQuery) }
@@ -1467,7 +1468,7 @@ private fun TextEditorScreen(
             textLayoutResult = editContentLayout,
             matchRange = findMatches.getOrNull(currentFindIndex),
             viewportHeight = editContentViewportHeight,
-            contentTopPx = 0f,
+            contentTopPx = editContentPaddingPx,
         )
     }
 
@@ -1878,9 +1879,6 @@ private fun TextEditorScreen(
                     .padding(padding)
                     .background(NOTE_PAPER_BACKGROUND)
                     .navigationBarsPadding()
-                    .onSizeChanged { readViewportHeight = it.height }
-                    .onGloballyPositioned { readViewportTopInRoot = it.positionInRoot().y }
-                    .verticalScroll(readScrollState)
                     .padding(horizontal = 20.dp, vertical = 18.dp)
                     .testTag("text_note_read_mode"),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -1909,91 +1907,101 @@ private fun TextEditorScreen(
                         },
                     )
                 }
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .onSizeChanged { readViewportHeight = it.height }
+                        .onGloballyPositioned { readViewportTopInRoot = it.positionInRoot().y }
+                        .verticalScroll(readScrollState),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(NOTE_PAPER_SURFACE)
-                            .padding(horizontal = 20.dp, vertical = 18.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
                     ) {
-                        Text(
-                            text = title.ifBlank { text.untitledTextNote },
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.testTag("text_note_read_title"),
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(NOTE_PAPER_SURFACE)
+                                .padding(horizontal = 20.dp, vertical = 18.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Text(
-                                text = folderDisplayNameById(currentNote.folderId, folders, text),
+                                text = title.ifBlank { text.untitledTextNote },
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.testTag("text_note_read_title"),
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = folderDisplayNameById(currentNote.folderId, folders, text),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (currentNote.isPinned) {
+                                    Text(
+                                        text = "★ ${text.pinned}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        modifier = Modifier.testTag("text_note_pinned_indicator"),
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "${text.lastUpdated}: ${formatTime(lastSavedAt ?: currentNote.updatedAt, appLanguage)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
                             )
-                            if (currentNote.isPinned) {
-                                Text(
-                                    text = "★ ${text.pinned}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.tertiary,
-                                    modifier = Modifier.testTag("text_note_pinned_indicator"),
-                                )
-                            }
+                            Text(
+                                text = reminderStatus(currentNote.reminderAt, text, appLanguage),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (currentNote.reminderAt != null && currentNote.reminderAt <= System.currentTimeMillis()) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.testTag("note_reminder_status"),
+                            )
+                            HorizontalDivider()
+                            Text(
+                                text = findHighlightedText(
+                                    value = content.ifBlank { text.content },
+                                    query = findQuery,
+                                    activeMatchIndex = currentFindIndex,
+                                    matchColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                    activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
+                                ),
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = editorFontSize.fontSizeSp.sp,
+                                    lineHeight = (editorFontSize.fontSizeSp + 10).sp,
+                                ),
+                                color = if (content.isBlank()) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                                onTextLayout = { readContentLayout = it },
+                                modifier = Modifier
+                                    .onGloballyPositioned { coordinates ->
+                                        readContentTopInScroll =
+                                            coordinates.positionInRoot().y -
+                                                readViewportTopInRoot +
+                                                readScrollState.value
+                                    }
+                                    .testTag("text_note_read_content"),
+                            )
                         }
-                        Text(
-                            text = "${text.lastUpdated}: ${formatTime(lastSavedAt ?: currentNote.updatedAt, appLanguage)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = reminderStatus(currentNote.reminderAt, text, appLanguage),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (currentNote.reminderAt != null && currentNote.reminderAt <= System.currentTimeMillis()) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            modifier = Modifier.testTag("note_reminder_status"),
-                        )
-                        HorizontalDivider()
-                        Text(
-                            text = findHighlightedText(
-                                value = content.ifBlank { text.content },
-                                query = findQuery,
-                                activeMatchIndex = currentFindIndex,
-                                matchColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
-                            ),
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontSize = editorFontSize.fontSizeSp.sp,
-                                lineHeight = (editorFontSize.fontSizeSp + 10).sp,
-                            ),
-                            color = if (content.isBlank()) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                            onTextLayout = { readContentLayout = it },
-                            modifier = Modifier
-                                .onGloballyPositioned { coordinates ->
-                                    readContentTopInScroll =
-                                        coordinates.positionInRoot().y -
-                                            readViewportTopInRoot +
-                                            readScrollState.value
-                                }
-                                .testTag("text_note_read_content"),
-                        )
                     }
                 }
             }
@@ -3101,11 +3109,12 @@ fun findMatchScrollTarget(
     viewportPaddingPx: Float = 96f,
 ): Int? {
     if (viewportHeight <= 0 || maxScroll <= 0) return null
-    val visibleTop = currentScroll + viewportPaddingPx
-    val visibleBottom = currentScroll + viewportHeight - viewportPaddingPx
+    val effectivePaddingPx = viewportPaddingPx.coerceAtMost(viewportHeight / 3f)
+    val visibleTop = currentScroll + effectivePaddingPx
+    val visibleBottom = currentScroll + viewportHeight - effectivePaddingPx
     val target = when {
-        matchTop < visibleTop -> matchTop - viewportPaddingPx
-        matchBottom > visibleBottom -> matchBottom - viewportHeight + viewportPaddingPx
+        matchTop < visibleTop -> matchTop - effectivePaddingPx
+        matchBottom > visibleBottom -> matchBottom - viewportHeight + effectivePaddingPx
         else -> return null
     }
     return target.roundToInt().coerceIn(0, maxScroll)
