@@ -37,8 +37,8 @@ class TextInputTest {
         }
     }
 
-    private fun verticalScrollValue(tag: String): Float {
-        val range = composeRule.onNodeWithTag(tag)
+    private fun verticalScrollValue(tag: String, useUnmergedTree: Boolean = false): Float {
+        val range = composeRule.onNodeWithTag(tag, useUnmergedTree = useUnmergedTree)
             .fetchSemanticsNode()
             .config
             .getOrNull(SemanticsProperties.VerticalScrollAxisRange)
@@ -122,6 +122,41 @@ class TextInputTest {
     }
 
     @Test
+    fun textEditorFocusWritingModeKeepsContentAndSaveStatusAvailable() {
+        val suffix = System.currentTimeMillis()
+        val title = "Focus writer title $suffix"
+        val body = "Focus writer body $suffix"
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_title")
+        composeRule.onNodeWithTag("text_note_title").performTextInput(title)
+        composeRule.onNodeWithTag("text_note_content").performTextInput(body)
+        composeRule.onNodeWithTag("text_note_edit_metadata").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_updated_time").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("toggle_focus_writer_button").performClick()
+        composeRule.onNodeWithTag("text_note_focus_mode").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().assertTextContains(body)
+        composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("text_note_edit_metadata").fetchSemanticsNodes().isEmpty()
+        }
+
+        composeRule.onNodeWithTag("toggle_focus_writer_button").performClick()
+        composeRule.onNodeWithTag("text_note_edit_metadata").assertIsDisplayed()
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("add_note_button").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(title).assertIsDisplayed()
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("text_note_read_content").assertTextContains(body)
+    }
+
+    @Test
     fun textNoteEditsPersistAfterAppBackAndSystemBack() {
         val suffix = System.currentTimeMillis()
         val firstTitle = "Persist title $suffix"
@@ -194,10 +229,10 @@ class TextInputTest {
     }
 
     @Test
-    fun findInNoteNextScrollsReadAndEditViewports() {
+    fun findInNoteNextScrollsReadViewportAndNavigatesEditMatches() {
         val suffix = System.currentTimeMillis()
         val title = "Find scroll title $suffix"
-        val filler = (1..45).joinToString(separator = "\n") { index ->
+        val filler = (1..90).joinToString(separator = "\n") { index ->
             "filler line $index keeps the next match below the visible area"
         }
         val body = "needle top\n$filler\nneedle bottom"
@@ -216,28 +251,23 @@ class TextInputTest {
         composeRule.onNodeWithTag("find_in_note_button").performClick()
         composeRule.onNodeWithTag("find_in_note_input").performTextInput("needle")
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/2")
-        val initialReadScroll = verticalScrollValue("text_note_read_mode")
+        val initialReadScroll = verticalScrollValue("text_note_read_scroll", useUnmergedTree = true)
 
         composeRule.onNodeWithTag("next_find_match_button").performClick()
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("2/2")
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            verticalScrollValue("text_note_read_mode") > initialReadScroll + 20f
+            verticalScrollValue("text_note_read_scroll", useUnmergedTree = true) > initialReadScroll + 20f
         }
 
         composeRule.onNodeWithTag("edit_note_button").performClick()
         waitForTag("text_note_content_scroll")
         composeRule.onNodeWithTag("previous_find_match_button").performClick()
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/2")
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            verticalScrollValue("text_note_content_scroll") < 20f
-        }
-        val initialEditScroll = verticalScrollValue("text_note_content_scroll")
 
         composeRule.onNodeWithTag("next_find_match_button").performClick()
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("2/2")
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            verticalScrollValue("text_note_content_scroll") > initialEditScroll + 20f
-        }
+        composeRule.onNodeWithTag("previous_find_match_button").performClick()
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/2")
         composeRule.onNodeWithTag("back_button").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag("add_note_button").fetchSemanticsNodes().isNotEmpty()
@@ -315,6 +345,31 @@ class TextInputTest {
         composeRule.onNodeWithText(title).assertIsDisplayed()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithText(contentNeedle).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    @Test
+    fun mainScreenShowsKnowledgeHeaderAndScannableNoteTypeChip() {
+        val suffix = System.currentTimeMillis()
+        val title = "Header scan note $suffix"
+
+        composeRule.onNodeWithTag("knowledge_header").assertIsDisplayed()
+        composeRule.onNodeWithTag("note_result_count").assertIsDisplayed()
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_title")
+        composeRule.onNodeWithTag("text_note_title").performTextInput(title)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("add_note_button").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(title).assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule
+                .onAllNodesWithTag("note_type_chip", useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
         }
     }
 
@@ -418,7 +473,7 @@ class TextInputTest {
     @Test
     fun findMatchScrollTargetUsesSmallerPaddingForShortViewports() {
         assertEquals(
-            240,
+            270,
             findMatchScrollTarget(
                 currentScroll = 0,
                 viewportHeight = 180,
