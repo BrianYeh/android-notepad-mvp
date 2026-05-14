@@ -85,6 +85,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -146,6 +147,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -162,6 +164,7 @@ private sealed interface AppScreen {
 private const val BACKUP_FILE_NAME = "local-notepad-backup.json"
 private const val DEFAULT_DRAWING_EXPORT_WIDTH = 1080
 private const val DEFAULT_DRAWING_EXPORT_HEIGHT = 1440
+private const val MAX_DRAWING_EXPORT_DIMENSION = 4096
 private const val NOTE_PREVIEW_MAX_CHARS = 160
 private const val NOTE_PREVIEW_CONTEXT_BEFORE = 45
 private const val NOTE_PREVIEW_CONTEXT_AFTER = 110
@@ -2392,6 +2395,7 @@ private fun DrawingEditorScreen(
     var selectedColor by remember(noteId) { mutableStateOf(DrawingColorOption.Black) }
     var canvasSize by remember(noteId) { mutableStateOf(IntSize.Zero) }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
+    var hasHandledInitialDrawingFocus by remember(noteId) { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var pendingPngBytes by remember { mutableStateOf<ByteArray?>(null) }
     val context = LocalContext.current
@@ -2427,9 +2431,12 @@ private fun DrawingEditorScreen(
     }
 
     LaunchedEffect(loadedNoteId) {
-        if (loadedNoteId == noteId) {
-            titleFocusRequester.requestFocus()
-            keyboardController?.show()
+        if (loadedNoteId == noteId && !hasHandledInitialDrawingFocus) {
+            hasHandledInitialDrawingFocus = true
+            if (title.isBlank() && strokes.isEmpty()) {
+                titleFocusRequester.requestFocus()
+                keyboardController?.show()
+            }
         }
     }
 
@@ -2461,9 +2468,14 @@ private fun DrawingEditorScreen(
     }
 
     fun renderCurrentDrawingPng(currentStrokes: List<DrawingStroke>): ByteArray {
-        val width = canvasSize.width.takeIf { it > 0 } ?: DEFAULT_DRAWING_EXPORT_WIDTH
-        val height = canvasSize.height.takeIf { it > 0 } ?: DEFAULT_DRAWING_EXPORT_HEIGHT
-        return renderDrawingPng(currentStrokes, width, height)
+        val exportSize = drawingExportCanvasSizePx(
+            strokes = currentStrokes,
+            measuredCanvasSize = canvasSize,
+            fallbackWidthPx = DEFAULT_DRAWING_EXPORT_WIDTH,
+            fallbackHeightPx = DEFAULT_DRAWING_EXPORT_HEIGHT,
+            maxDimensionPx = MAX_DRAWING_EXPORT_DIMENSION,
+        )
+        return renderDrawingPng(currentStrokes, exportSize.width, exportSize.height)
     }
 
     fun shareCurrentDrawingPng() {
@@ -2796,23 +2808,40 @@ private fun DrawingCanvas(
     val latestBrushColorArgb by rememberUpdatedState(brushColorArgb)
     val latestBrushWidthPx by rememberUpdatedState(brushWidthPx)
     val latestStrokeTool by rememberUpdatedState(strokeTool)
-    var activeEraserPreview by remember { mutableStateOf<Offset?>(null) }
+    var measuredCanvasSize by remember { mutableStateOf(IntSize.Zero) }
+    var isDrawing by remember { mutableStateOf(false) }
+    var drawingStartViewportScale by remember { mutableStateOf(1f) }
+    val fittedViewportScale = drawingViewportScale(strokes, measuredCanvasSize)
+    val viewportScale = if (isDrawing) drawingStartViewportScale else fittedViewportScale
+    val latestViewportScale by rememberUpdatedState(viewportScale)
+    var activeEraserPreview by remember { mutableStateOf<DrawingPoint?>(null) }
 
     Canvas(
         modifier = modifier
             .background(Color.White, RoundedCornerShape(8.dp))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-            .onSizeChanged(onCanvasSizeChange)
+            .onSizeChanged { size ->
+                measuredCanvasSize = size
+                onCanvasSizeChange(size)
+            }
             .pointerInput(Unit) {
                 var baseStrokes = emptyList<DrawingStroke>()
                 var activePoints = emptyList<DrawingPoint>()
                 var activeStroke = DrawingStroke(emptyList())
 
+                fun Offset.toLogicalPoint(): DrawingPoint {
+                    val scale = latestViewportScale.coerceAtLeast(0.001f)
+                    return DrawingPoint(x / scale, y / scale)
+                }
+
                 detectDragGestures(
                     onDragStart = { offset ->
+                        drawingStartViewportScale = latestViewportScale
+                        isDrawing = true
+                        val point = offset.toLogicalPoint()
                         baseStrokes = latestStrokes
-                        activePoints = listOf(DrawingPoint(offset.x, offset.y))
-                        activeEraserPreview = offset.takeIf { latestStrokeTool == DrawingTools.ERASER }
+                        activePoints = listOf(point)
+                        activeEraserPreview = point.takeIf { latestStrokeTool == DrawingTools.ERASER }
                         activeStroke = DrawingStroke(
                             points = activePoints,
                             colorArgb = latestBrushColorArgb,
@@ -2823,36 +2852,112 @@ private fun DrawingCanvas(
                     },
                     onDrag = { change, _ ->
                         change.consume()
-                        activePoints = activePoints + DrawingPoint(change.position.x, change.position.y)
-                        activeEraserPreview = change.position.takeIf { latestStrokeTool == DrawingTools.ERASER }
+                        val point = change.position.toLogicalPoint()
+                        activePoints = activePoints + point
+                        activeEraserPreview = point.takeIf { latestStrokeTool == DrawingTools.ERASER }
                         activeStroke = activeStroke.copy(points = activePoints)
                         latestOnStrokesChange(baseStrokes + activeStroke)
                     },
                     onDragEnd = {
                         latestOnStrokeFinished(baseStrokes + activeStroke)
                         activeEraserPreview = null
+                        isDrawing = false
                     },
                     onDragCancel = {
                         latestOnStrokeFinished(baseStrokes + activeStroke)
                         activeEraserPreview = null
+                        isDrawing = false
                     },
                 )
             },
     ) {
-        drawDrawingStrokes(strokes)
+        drawDrawingStrokes(strokes, viewportScale)
         activeEraserPreview?.let { center ->
             if (strokeTool == DrawingTools.ERASER) {
-                drawEraserPreview(center, brushWidthPx)
+                withTransform({ scale(viewportScale, viewportScale, Offset.Zero) }) {
+                    drawEraserPreview(center.toOffset(), brushWidthPx)
+                }
             }
         }
     }
 }
 
-private fun DrawScope.drawDrawingStrokes(strokes: List<DrawingStroke>) {
+fun drawingRequiredCanvasWidthPx(
+    strokes: List<DrawingStroke>,
+    minimumWidthPx: Float,
+    paddingPx: Float = 48f,
+): Float {
+    val maxStrokeRight = strokes
+        .filter { it.tool != DrawingTools.ERASER }
+        .maxOfOrNull { stroke ->
+            val maxPointX = stroke.points.maxOfOrNull { point -> point.x } ?: 0f
+            maxPointX + stroke.widthPx / 2f
+        } ?: 0f
+    return max(minimumWidthPx, maxStrokeRight + paddingPx)
+}
+
+fun drawingRequiredCanvasHeightPx(
+    strokes: List<DrawingStroke>,
+    minimumHeightPx: Float,
+    paddingPx: Float = 48f,
+): Float {
+    val maxStrokeBottom = strokes
+        .filter { it.tool != DrawingTools.ERASER }
+        .maxOfOrNull { stroke ->
+            val maxPointY = stroke.points.maxOfOrNull { point -> point.y } ?: 0f
+            maxPointY + stroke.widthPx / 2f
+        } ?: 0f
+    return max(minimumHeightPx, maxStrokeBottom + paddingPx)
+}
+
+fun drawingViewportScale(
+    strokes: List<DrawingStroke>,
+    measuredCanvasSize: IntSize,
+    paddingPx: Float = 0f,
+): Float {
+    if (measuredCanvasSize.width <= 0 || measuredCanvasSize.height <= 0) return 1f
+    val requiredWidth = drawingRequiredCanvasWidthPx(strokes, measuredCanvasSize.width.toFloat(), paddingPx)
+    val requiredHeight = drawingRequiredCanvasHeightPx(strokes, measuredCanvasSize.height.toFloat(), paddingPx)
+    return min(
+        1f,
+        min(
+            measuredCanvasSize.width / requiredWidth,
+            measuredCanvasSize.height / requiredHeight,
+        ),
+    ).coerceAtLeast(0.001f)
+}
+
+fun drawingExportCanvasSizePx(
+    strokes: List<DrawingStroke>,
+    measuredCanvasSize: IntSize,
+    fallbackWidthPx: Int,
+    fallbackHeightPx: Int,
+    paddingPx: Float = 48f,
+    maxDimensionPx: Int = MAX_DRAWING_EXPORT_DIMENSION,
+): IntSize {
+    val safeMaxDimension = max(1, maxDimensionPx)
+    val measuredWidth = measuredCanvasSize.width.takeIf { it > 0 } ?: fallbackWidthPx
+    val measuredHeight = measuredCanvasSize.height.takeIf { it > 0 } ?: fallbackHeightPx
+    return IntSize(
+        width = ceil(drawingRequiredCanvasWidthPx(strokes, measuredWidth.toFloat(), paddingPx))
+            .toInt()
+            .coerceAtMost(safeMaxDimension),
+        height = ceil(drawingRequiredCanvasHeightPx(strokes, measuredHeight.toFloat(), paddingPx))
+            .toInt()
+            .coerceAtMost(safeMaxDimension),
+    )
+}
+
+private fun DrawScope.drawDrawingStrokes(
+    strokes: List<DrawingStroke>,
+    viewportScale: Float = 1f,
+) {
     drawRect(Color.White)
     drawContext.canvas.saveLayer(Rect(Offset.Zero, size), Paint())
-    strokes.forEach { stroke ->
-        drawDrawingStroke(stroke)
+    withTransform({ scale(viewportScale, viewportScale, Offset.Zero) }) {
+        strokes.forEach { stroke ->
+            drawDrawingStroke(stroke)
+        }
     }
     drawContext.canvas.restore()
 }

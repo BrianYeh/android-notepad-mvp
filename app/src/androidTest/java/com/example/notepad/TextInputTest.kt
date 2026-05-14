@@ -14,8 +14,15 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.unit.IntSize
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.notepad.data.DrawingPoint
+import com.example.notepad.data.DrawingStroke
+import com.example.notepad.data.DrawingTools
 import com.example.notepad.ui.cursorScrollTarget
+import com.example.notepad.ui.drawingExportCanvasSizePx
+import com.example.notepad.ui.drawingRequiredCanvasHeightPx
+import com.example.notepad.ui.drawingViewportScale
 import com.example.notepad.ui.findMatchScrollTarget
 import com.example.notepad.ui.findInNoteMatches
 import com.example.notepad.ui.formatFindMatchStatus
@@ -524,6 +531,116 @@ class TextInputTest {
                 cursorBottom = 650f,
                 maxScroll = 2_000,
                 viewportBottomPaddingPx = 56f,
+            ),
+        )
+    }
+
+    @Test
+    fun drawingViewportScaleKeepsTallSavedStrokesVisibleWithoutResizingCanvas() {
+        val tallStroke = DrawingStroke(
+            points = listOf(DrawingPoint(40f, 20f), DrawingPoint(180f, 960f)),
+            widthPx = 20f,
+        )
+
+        assertEquals(
+            1_018f,
+            drawingRequiredCanvasHeightPx(
+                strokes = listOf(tallStroke),
+                minimumHeightPx = 420f,
+            ),
+            0.001f,
+        )
+        assertEquals(
+            0.619f,
+            drawingViewportScale(
+                strokes = listOf(tallStroke),
+                measuredCanvasSize = IntSize(width = 360, height = 600),
+            ),
+            0.001f,
+        )
+    }
+
+    @Test
+    fun drawingExportCanvasSizePreservesTallSavedStrokeBottom() {
+        val tallStroke = DrawingStroke(
+            points = listOf(DrawingPoint(40f, 20f), DrawingPoint(180f, 960f)),
+            widthPx = 20f,
+        )
+
+        assertEquals(
+            IntSize(width = 360, height = 1_018),
+            drawingExportCanvasSizePx(
+                strokes = listOf(tallStroke),
+                measuredCanvasSize = IntSize(width = 360, height = 600),
+                fallbackWidthPx = 1080,
+                fallbackHeightPx = 1440,
+            ),
+        )
+    }
+
+    @Test
+    fun drawingBoundsIgnoreInvisibleEraserStrokes() {
+        val penStroke = DrawingStroke(
+            points = listOf(DrawingPoint(40f, 20f), DrawingPoint(180f, 300f)),
+            widthPx = 20f,
+        )
+        val eraserStroke = DrawingStroke(
+            points = listOf(DrawingPoint(40f, 20f), DrawingPoint(180f, 960f)),
+            widthPx = 120f,
+            tool = DrawingTools.ERASER,
+        )
+
+        assertEquals(
+            358f,
+            drawingRequiredCanvasHeightPx(
+                strokes = listOf(penStroke, eraserStroke),
+                minimumHeightPx = 320f,
+            ),
+            0.001f,
+        )
+        assertEquals(
+            1f,
+            drawingViewportScale(
+                strokes = listOf(penStroke, eraserStroke),
+                measuredCanvasSize = IntSize(width = 360, height = 600),
+            ),
+            0.001f,
+        )
+    }
+
+    @Test
+    fun drawingExportCanvasSizeCapsHugeRestoredCoordinates() {
+        val hugeStroke = DrawingStroke(
+            points = listOf(DrawingPoint(40f, 20f), DrawingPoint(500_000f, 900_000f)),
+            widthPx = 20f,
+        )
+
+        assertEquals(
+            IntSize(width = 4_096, height = 4_096),
+            drawingExportCanvasSizePx(
+                strokes = listOf(hugeStroke),
+                measuredCanvasSize = IntSize(width = 360, height = 600),
+                fallbackWidthPx = 1080,
+                fallbackHeightPx = 1440,
+                maxDimensionPx = 4_096,
+            ),
+        )
+    }
+
+    @Test
+    fun drawingExportCanvasSizeRoundsFractionalBoundsUp() {
+        val fractionalStroke = DrawingStroke(
+            points = listOf(DrawingPoint(100.1f, 50.1f)),
+            widthPx = 5f,
+        )
+
+        assertEquals(
+            IntSize(width = 151, height = 101),
+            drawingExportCanvasSizePx(
+                strokes = listOf(fractionalStroke),
+                measuredCanvasSize = IntSize(width = 100, height = 100),
+                fallbackWidthPx = 100,
+                fallbackHeightPx = 100,
             ),
         )
     }
