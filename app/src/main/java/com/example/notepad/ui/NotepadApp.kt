@@ -26,7 +26,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -2392,7 +2391,6 @@ private fun DrawingEditorScreen(
     var selectedBrushSize by remember(noteId) { mutableStateOf(DrawingBrushSize.Medium) }
     var selectedColor by remember(noteId) { mutableStateOf(DrawingColorOption.Black) }
     var canvasSize by remember(noteId) { mutableStateOf(IntSize.Zero) }
-    val drawingScrollState = rememberScrollState()
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var pendingPngBytes by remember { mutableStateOf<ByteArray?>(null) }
@@ -2428,8 +2426,8 @@ private fun DrawingEditorScreen(
         loadedNoteId = loaded.id
     }
 
-    LaunchedEffect(loadedNoteId, title, strokes) {
-        if (loadedNoteId == noteId && title.isBlank() && strokes.isEmpty()) {
+    LaunchedEffect(loadedNoteId) {
+        if (loadedNoteId == noteId) {
             titleFocusRequester.requestFocus()
             keyboardController?.show()
         }
@@ -2557,13 +2555,6 @@ private fun DrawingEditorScreen(
         }
     }
 
-    val requiredCanvasHeight = with(density) {
-        drawingRequiredCanvasHeightPx(
-            strokes = strokes,
-            minimumHeightPx = 420.dp.toPx(),
-        ).toDp()
-    }
-
     BackHandler(onBack = ::saveAndBack)
 
     Scaffold(
@@ -2644,27 +2635,18 @@ private fun DrawingEditorScreen(
                     onBrushSizeChange = { selectedBrushSize = it },
                     onColorChange = { selectedColor = it },
                 )
-                BoxWithConstraints(
+                DrawingCanvas(
+                    strokes = strokes,
+                    onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
+                    onStrokeFinished = ::finishStroke,
+                    brushColorArgb = selectedColor.colorArgb,
+                    brushWidthPx = activeStrokeWidth(),
+                    strokeTool = activeStrokeTool(),
+                    onCanvasSizeChange = { canvasSize = it },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
-                        .verticalScroll(drawingScrollState)
-                        .testTag("drawing_canvas_scroll"),
-                ) {
-                    val canvasHeight = if (requiredCanvasHeight > maxHeight) requiredCanvasHeight else maxHeight
-                    DrawingCanvas(
-                        strokes = strokes,
-                        onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
-                        onStrokeFinished = ::finishStroke,
-                        brushColorArgb = selectedColor.colorArgb,
-                        brushWidthPx = activeStrokeWidth(),
-                        strokeTool = activeStrokeTool(),
-                        onCanvasSizeChange = { canvasSize = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(canvasHeight),
-                    )
-                }
+                        .weight(1f),
+                )
             }
         }
     }
@@ -2864,18 +2846,6 @@ private fun DrawingCanvas(
             }
         }
     }
-}
-
-fun drawingRequiredCanvasHeightPx(
-    strokes: List<DrawingStroke>,
-    minimumHeightPx: Float,
-    paddingPx: Float = 48f,
-): Float {
-    val maxStrokeBottom = strokes.maxOfOrNull { stroke ->
-        val maxPointY = stroke.points.maxOfOrNull { point -> point.y } ?: 0f
-        maxPointY + stroke.widthPx / 2f
-    } ?: 0f
-    return max(minimumHeightPx, maxStrokeBottom + paddingPx)
 }
 
 private fun DrawScope.drawDrawingStrokes(strokes: List<DrawingStroke>) {
