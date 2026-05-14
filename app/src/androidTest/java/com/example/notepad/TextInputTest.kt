@@ -15,7 +15,10 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.notepad.data.DrawingPoint
+import com.example.notepad.data.DrawingStroke
 import com.example.notepad.ui.cursorScrollTarget
+import com.example.notepad.ui.drawingRequiredCanvasHeightPx
 import com.example.notepad.ui.findMatchScrollTarget
 import com.example.notepad.ui.findInNoteMatches
 import com.example.notepad.ui.formatFindMatchStatus
@@ -489,6 +492,22 @@ class TextInputTest {
                 viewportPaddingPx = 96f,
             ),
         )
+    }
+
+    @Test
+    fun drawingRequiredCanvasHeightExpandsToPreserveOldStrokeBottom() {
+        val strokes = listOf(
+            DrawingStroke(
+                points = listOf(
+                    DrawingPoint(24f, 20f),
+                    DrawingPoint(48f, 920f),
+                ),
+                widthPx = 12f,
+            ),
+        )
+
+        assertEquals(974f, drawingRequiredCanvasHeightPx(strokes, minimumHeightPx = 420f), 0.01f)
+        assertEquals(420f, drawingRequiredCanvasHeightPx(emptyList(), minimumHeightPx = 420f), 0.01f)
     }
 
     @Test
