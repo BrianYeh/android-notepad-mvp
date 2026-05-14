@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.notepad.ui.cursorScrollTarget
 import com.example.notepad.ui.findMatchScrollTarget
 import com.example.notepad.ui.findInNoteMatches
 import com.example.notepad.ui.formatFindMatchStatus
@@ -486,6 +487,43 @@ class TextInputTest {
                 matchBottom = 390f,
                 maxScroll = 1_000,
                 viewportPaddingPx = 96f,
+            ),
+        )
+    }
+
+    @Test
+    fun cursorScrollTargetKeepsTypingCaretVisibleNearViewportBottom() {
+        assertEquals(
+            656,
+            cursorScrollTarget(
+                currentScroll = 0,
+                viewportHeight = 400,
+                cursorTop = 980f,
+                cursorBottom = 1_000f,
+                maxScroll = 2_000,
+                viewportBottomPaddingPx = 56f,
+            ),
+        )
+        assertEquals(
+            76,
+            cursorScrollTarget(
+                currentScroll = 500,
+                viewportHeight = 400,
+                cursorTop = 100f,
+                cursorBottom = 120f,
+                maxScroll = 2_000,
+                viewportTopPaddingPx = 24f,
+            ),
+        )
+        assertEquals(
+            null,
+            cursorScrollTarget(
+                currentScroll = 500,
+                viewportHeight = 400,
+                cursorTop = 620f,
+                cursorBottom = 650f,
+                maxScroll = 2_000,
+                viewportBottomPaddingPx = 56f,
             ),
         )
     }

@@ -1336,6 +1336,8 @@ private fun TextEditorScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val editContentPaddingPx = with(LocalDensity.current) { 16.dp.toPx() }
+    val editCursorTopPaddingPx = with(LocalDensity.current) { 18.dp.toPx() }
+    val editCursorBottomPaddingPx = with(LocalDensity.current) { 56.dp.toPx() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val content = contentField.text
     val findMatches = remember(content, findQuery) { findInNoteMatches(content, findQuery) }
@@ -1517,6 +1519,26 @@ private fun TextEditorScreen(
             matchRange = findMatches.getOrNull(currentFindIndex),
             viewportHeight = editContentViewportHeight,
             contentTopPx = editContentPaddingPx,
+        )
+    }
+
+    LaunchedEffect(
+        isEditing,
+        isContentFocused,
+        isFocusWriting,
+        contentField.selection,
+        contentField.text.length,
+        editContentLayout,
+        editContentViewportHeight,
+        editContentScrollState.maxValue,
+    ) {
+        if (!isEditing || (!isContentFocused && !isFocusWriting)) return@LaunchedEffect
+        editContentScrollState.scrollCursorIntoView(
+            textLayoutResult = editContentLayout,
+            cursorOffset = contentField.selection.max,
+            viewportHeight = editContentViewportHeight,
+            contentTopPx = editCursorTopPaddingPx,
+            viewportBottomPaddingPx = editCursorBottomPaddingPx,
         )
     }
 
@@ -3378,6 +3400,50 @@ private suspend fun ScrollState.scrollMatchIntoView(
         matchTop = contentTopPx + startBox.top,
         matchBottom = contentTopPx + endBox.bottom,
         maxScroll = maxValue,
+    ) ?: return
+    scrollTo(target)
+}
+
+fun cursorScrollTarget(
+    currentScroll: Int,
+    viewportHeight: Int,
+    cursorTop: Float,
+    cursorBottom: Float,
+    maxScroll: Int,
+    viewportTopPaddingPx: Float = 24f,
+    viewportBottomPaddingPx: Float = 56f,
+): Int? {
+    if (viewportHeight <= 0 || maxScroll <= 0) return null
+    val effectiveTopPaddingPx = viewportTopPaddingPx.coerceAtMost(viewportHeight / 3f)
+    val effectiveBottomPaddingPx = viewportBottomPaddingPx.coerceAtMost(viewportHeight / 3f)
+    val visibleTop = currentScroll + effectiveTopPaddingPx
+    val visibleBottom = currentScroll + viewportHeight - effectiveBottomPaddingPx
+    val target = when {
+        cursorBottom > visibleBottom -> cursorBottom - viewportHeight + effectiveBottomPaddingPx
+        cursorTop < visibleTop -> cursorTop - effectiveTopPaddingPx
+        else -> return null
+    }
+    return target.roundToInt().coerceIn(0, maxScroll)
+}
+
+private suspend fun ScrollState.scrollCursorIntoView(
+    textLayoutResult: TextLayoutResult?,
+    cursorOffset: Int,
+    viewportHeight: Int,
+    contentTopPx: Float,
+    viewportBottomPaddingPx: Float,
+) {
+    val layout = textLayoutResult ?: return
+    val textLength = layout.layoutInput.text.text.length
+    val safeOffset = cursorOffset.coerceIn(0, textLength)
+    val cursorRect = layout.getCursorRect(safeOffset)
+    val target = cursorScrollTarget(
+        currentScroll = value,
+        viewportHeight = viewportHeight,
+        cursorTop = contentTopPx + cursorRect.top,
+        cursorBottom = contentTopPx + cursorRect.bottom,
+        maxScroll = maxValue,
+        viewportBottomPaddingPx = viewportBottomPaddingPx,
     ) ?: return
     scrollTo(target)
 }
