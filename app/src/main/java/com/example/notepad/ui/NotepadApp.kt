@@ -18,6 +18,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -74,6 +75,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
@@ -89,6 +91,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -1304,6 +1307,8 @@ private fun TextEditorScreen(
     var modeInitializedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var isEditing by remember(noteId) { mutableStateOf(false) }
     var isFocusWriting by remember(noteId) { mutableStateOf(false) }
+    var isContentFocused by remember(noteId) { mutableStateOf(false) }
+    var isMetadataExpanded by remember(noteId) { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isMoreMenuExpanded by remember { mutableStateOf(false) }
     var isFindVisible by remember(noteId) { mutableStateOf(false) }
@@ -1329,6 +1334,7 @@ private fun TextEditorScreen(
     var readContentTopInScroll by remember(noteId) { mutableStateOf(0f) }
     val autoSaveVersion = remember(noteId) { AtomicLong(0L) }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val editContentPaddingPx = with(LocalDensity.current) { 16.dp.toPx() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val content = contentField.text
@@ -1627,6 +1633,25 @@ private fun TextEditorScreen(
         ).show()
     }
 
+    fun insertIntoContent(prefix: String) {
+        val currentContent = contentField.text
+        val selection = contentField.selection
+        val start = selection.min.coerceIn(0, currentContent.length)
+        val end = selection.max.coerceIn(start, currentContent.length)
+        val updatedContent = buildString {
+            append(currentContent.substring(0, start))
+            append(prefix)
+            append(currentContent.substring(end))
+        }
+        autoSaveVersion.incrementAndGet()
+        contentField = TextFieldValue(
+            text = updatedContent,
+            selection = TextRange(start + prefix.length),
+        )
+        contentFocusRequester.requestFocus()
+        keyboardController?.show()
+    }
+
     LaunchedEffect(isEditing, isFocusWriting) {
         if (isEditing && loadedNoteId == noteId) {
             if (isFocusWriting) {
@@ -1639,7 +1664,14 @@ private fun TextEditorScreen(
         }
     }
 
+    LaunchedEffect(isContentFocused) {
+        if (isContentFocused) {
+            isMetadataExpanded = false
+        }
+    }
+
     val currentNote = note
+    val isCompactEditor = isEditing && (isFocusWriting || isContentFocused)
 
     BackHandler(onBack = ::saveAndBack)
 
@@ -1648,11 +1680,28 @@ private fun TextEditorScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        if (isEditing) text.textEditor else text.textNote,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    if (isEditing) {
+                        Column {
+                            Text(
+                                title.ifBlank { text.untitledTextNote },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                saveStatus.label(text),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                modifier = Modifier.testTag("text_note_top_save_status"),
+                            )
+                        }
+                    } else {
+                        Text(
+                            text.textNote,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 },
                 navigationIcon = {
                     TextButton(
@@ -1675,7 +1724,7 @@ private fun TextEditorScreen(
                         onClick = { isFindVisible = true },
                         modifier = Modifier.testTag("find_in_note_button"),
                     ) {
-                        Text(text.search)
+                        Text(text.findInNote.take(4), maxLines = 1)
                     }
                     Box {
                         TextButton(
@@ -1685,7 +1734,7 @@ private fun TextEditorScreen(
                             },
                             modifier = Modifier.testTag("more_note_button"),
                         ) {
-                            Text(text.more)
+                            Text("...")
                         }
                         DropdownMenu(
                             expanded = isMoreMenuExpanded,
@@ -1767,8 +1816,8 @@ private fun TextEditorScreen(
                     .background(NOTE_PAPER_BACKGROUND)
                     .navigationBarsPadding()
                     .imePadding()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (isFindVisible && !isMoreMenuExpanded) {
                     FindInNoteBar(
@@ -1794,7 +1843,7 @@ private fun TextEditorScreen(
                         },
                     )
                 }
-                if (isFocusWriting) {
+                if (isCompactEditor) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1804,7 +1853,11 @@ private fun TextEditorScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("text_note_compact_metadata"),
+                        ) {
                             Text(
                                 text = title.ifBlank { text.untitledTextNote },
                                 style = MaterialTheme.typography.titleMedium,
@@ -1818,23 +1871,27 @@ private fun TextEditorScreen(
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.testTag("text_note_save_status"),
                             )
-                            Text(
-                                text = "${text.lastUpdated}: ${formatTime(lastSavedAt ?: currentNote.updatedAt, appLanguage)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.testTag("text_note_updated_time"),
-                            )
                         }
                         TextButton(
-                            onClick = { isFocusWriting = false },
+                            onClick = { isMetadataExpanded = !isMetadataExpanded },
+                            modifier = Modifier.testTag("toggle_metadata_button"),
+                        ) {
+                            Text(text.details, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        TextButton(
+                            onClick = {
+                                isFocusWriting = false
+                                savePendingTextNote()
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
+                            },
                             modifier = Modifier.testTag("toggle_focus_writer_button"),
                         ) {
                             Text(text.exitFocusWriting)
                         }
                     }
-                } else {
+                }
+                if (!isCompactEditor || isMetadataExpanded) {
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1918,6 +1975,8 @@ private fun TextEditorScreen(
                             }
                         }
                     }
+                }
+                if (!isCompactEditor) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1929,7 +1988,11 @@ private fun TextEditorScreen(
                             modifier = Modifier.weight(1f),
                         )
                         TextButton(
-                            onClick = { isFocusWriting = true },
+                            onClick = {
+                                isFocusWriting = true
+                                contentFocusRequester.requestFocus()
+                                keyboardController?.show()
+                            },
                             modifier = Modifier.testTag("toggle_focus_writer_button"),
                         ) {
                             Text(text.focusWriting)
@@ -1940,13 +2003,14 @@ private fun TextEditorScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.outline,
-                            shape = RoundedCornerShape(4.dp),
-                        )
-                        .background(NOTE_PAPER_SURFACE, RoundedCornerShape(4.dp))
+                        .background(NOTE_PAPER_SURFACE, RoundedCornerShape(10.dp))
                         .onSizeChanged { editContentViewportHeight = it.height }
+                        .pointerInput(Unit) {
+                            detectTapGestures {
+                                contentFocusRequester.requestFocus()
+                                keyboardController?.show()
+                            }
+                        }
                         .verticalScroll(editContentScrollState)
                         .testTag("text_note_content_scroll"),
                 ) {
@@ -1958,7 +2022,7 @@ private fun TextEditorScreen(
                                 lineHeight = (editorFontSize.fontSizeSp + 8).sp,
                             ),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(16.dp),
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
                         )
                     }
                     BasicTextField(
@@ -1983,9 +2047,23 @@ private fun TextEditorScreen(
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp)
+                            .padding(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 72.dp)
                             .focusRequester(contentFocusRequester)
+                            .onFocusChanged { isContentFocused = it.isFocused }
                             .testTag("text_note_content"),
+                    )
+                }
+                if (isCompactEditor) {
+                    TextEditorAccessoryBar(
+                        text = text,
+                        onInsertCheckbox = { insertIntoContent("- [ ] ") },
+                        onInsertBullet = { insertIntoContent("- ") },
+                        onInsertNumbered = { insertIntoContent("1. ") },
+                        onHideKeyboard = {
+                            savePendingTextNote()
+                            keyboardController?.hide()
+                            focusManager.clearFocus()
+                        },
                     )
                 }
             }
@@ -2160,78 +2238,113 @@ private fun FindInNoteBar(
         else -> formatFindMatchStatus(currentIndex, matchCount, text.noMatches)
     }
 
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(NOTE_PAPER_SURFACE, RoundedCornerShape(8.dp))
-            .padding(10.dp)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
             .testTag("find_in_note_bar"),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            placeholder = { Text(text.searchInNote) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            modifier = Modifier
+                .weight(1f)
+                .focusRequester(findFocusRequester)
+                .testTag("find_in_note_input"),
+        )
+        Text(
+            text = statusText,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .width(52.dp)
+                .testTag("find_match_status"),
+        )
+        TextButton(
+            onClick = onPrevious,
+            enabled = query.isNotBlank() && matchCount > 0,
+            modifier = Modifier
+                .width(40.dp)
+                .testTag("previous_find_match_button"),
         ) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                label = { Text(text.searchInNote) },
-                placeholder = { Text(text.findHint) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        TextButton(onClick = { onQueryChange("") }) {
-                            Text(text.clear)
-                        }
-                    }
-                },
-                modifier = Modifier
-                    .weight(1f)
-                    .focusRequester(findFocusRequester)
-                    .testTag("find_in_note_input"),
-            )
-            Text(
-                text = statusText,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .width(92.dp)
-                    .testTag("find_match_status"),
-            )
+            Text("<", maxLines = 1)
         }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        TextButton(
+            onClick = onNext,
+            enabled = query.isNotBlank() && matchCount > 0,
+            modifier = Modifier
+                .width(40.dp)
+                .testTag("next_find_match_button"),
         ) {
+            Text(">", maxLines = 1)
+        }
+        TextButton(
+            onClick = onClearSearch,
+            modifier = Modifier
+                .width(44.dp)
+                .testTag("clear_find_in_note_button"),
+        ) {
+            Text("x", maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun TextEditorAccessoryBar(
+    text: UiText,
+    onInsertCheckbox: () -> Unit,
+    onInsertBullet: () -> Unit,
+    onInsertNumbered: () -> Unit,
+    onHideKeyboard: () -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(NOTE_PAPER_SURFACE, RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+            .testTag("text_editor_accessory_bar"),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        item {
             TextButton(
-                onClick = onPrevious,
-                enabled = query.isNotBlank() && matchCount > 0,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("previous_find_match_button"),
+                onClick = onInsertCheckbox,
+                modifier = Modifier.testTag("quick_insert_checkbox_button"),
             ) {
-                Text(text.previousMatch, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("[ ] ${text.checkboxItem}", maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+        }
+        item {
             TextButton(
-                onClick = onNext,
-                enabled = query.isNotBlank() && matchCount > 0,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("next_find_match_button"),
+                onClick = onInsertBullet,
+                modifier = Modifier.testTag("quick_insert_bullet_button"),
             ) {
-                Text(text.nextMatch, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("- ${text.bulletItem}", maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+        }
+        item {
             TextButton(
-                onClick = onClearSearch,
-                modifier = Modifier.testTag("clear_find_in_note_button"),
+                onClick = onInsertNumbered,
+                modifier = Modifier.testTag("quick_insert_numbered_button"),
             ) {
-                Text(text.clearSearch, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("1. ${text.numberedItem}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        item {
+            TextButton(
+                onClick = onHideKeyboard,
+                modifier = Modifier.testTag("hide_keyboard_button"),
+            ) {
+                Text(text.hideKeyboard, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

@@ -28,16 +28,22 @@ The app can continue to improve these surfaces:
 
 4. Text editor metadata card
    - Title, folder, save status, last updated time, reminder, and pinned state are grouped above the writing area.
+   - While the content editor is focused, metadata collapses into a compact writing bar with save status and a `Details` expander.
    - Test tag: `text_note_edit_metadata`.
 
 5. Focus writing mode
-   - Text editor has a `Focus` mode that hides metadata and gives the content editor more room.
-   - Save status and last updated time remain visible in the compact focus bar.
+   - Text editor has a compact writing mode that gives the content editor more room while the keyboard is active.
+   - Save status remains visible in the compact focus bar; full folder/reminder/pinned/last-updated metadata is available from `Details`.
    - Test tags: `toggle_focus_writer_button`, `text_note_focus_mode`, `text_note_content`.
+
+6. Quick insert bar
+   - Compact editor mode exposes small text insertion actions for checkbox, bullet, numbered item, and hide keyboard.
+   - Test tags: `text_editor_accessory_bar`, `quick_insert_checkbox_button`.
 
 Additional polish:
 
 - Find in note now uses a more compact toolbar row and avoids showing a crowded `No matches` status before the user enters a query.
+- The content editor is a paper-like surface with larger padding, lighter styling, and tap-to-focus behavior across empty space.
 
 ## Verification
 
@@ -62,7 +68,9 @@ adb shell input text "adb_extra_text"
 Manual acceptance checklist:
 
 - Open a new text note; it starts in edit mode and accepts title/content input.
-- Tap `Focus`; metadata collapses and the content area remains editable.
+- Focus the content field; metadata collapses and the content area remains editable.
+- Tap `Details`; full folder/reminder/pinned/last-updated metadata returns without leaving the editor.
+- Use the quick insert bar to add a checkbox, bullet, or numbered item.
 - Tap `Done`; metadata returns with save status and last updated time.
 - Press Back; reopen the note and confirm the newly typed content persists.
 - On the main screen, confirm search/filter/sort/result count appear as one header and note rows show type chips.

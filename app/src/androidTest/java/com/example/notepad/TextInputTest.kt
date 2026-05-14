@@ -64,7 +64,10 @@ class TextInputTest {
             .assertIsDisplayed()
             .performTextInput("這是中文內容")
 
+        composeRule.onNodeWithTag("text_note_compact_metadata").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_editor_accessory_bar").assertIsDisplayed()
+        composeRule.onNodeWithTag("toggle_metadata_button").performClick()
         composeRule.onNodeWithTag("text_note_updated_time").assertIsDisplayed()
         composeRule.onNodeWithTag("note_reminder_status").assertIsDisplayed()
         composeRule.onNodeWithTag("find_in_note_button").performClick()
@@ -131,17 +134,18 @@ class TextInputTest {
         waitForTag("text_note_title")
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextInput(body)
-        composeRule.onNodeWithTag("text_note_edit_metadata").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_compact_metadata").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
-        composeRule.onNodeWithTag("text_note_updated_time").assertIsDisplayed()
-
-        composeRule.onNodeWithTag("toggle_focus_writer_button").performClick()
-        composeRule.onNodeWithTag("text_note_focus_mode").assertIsDisplayed()
-        composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().assertTextContains(body)
-        composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_editor_accessory_bar").assertIsDisplayed()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag("text_note_edit_metadata").fetchSemanticsNodes().isEmpty()
         }
+        composeRule.onNodeWithTag("quick_insert_checkbox_button").performClick()
+        composeRule.onNodeWithTag("text_note_content").assertTextContains("- [ ]")
+
+        composeRule.onNodeWithTag("toggle_metadata_button").performClick()
+        composeRule.onNodeWithTag("text_note_edit_metadata").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_updated_time").assertIsDisplayed()
 
         composeRule.onNodeWithTag("toggle_focus_writer_button").performClick()
         composeRule.onNodeWithTag("text_note_edit_metadata").assertIsDisplayed()
@@ -154,6 +158,7 @@ class TextInputTest {
         composeRule.onNodeWithText(title).assertIsDisplayed()
         composeRule.onNodeWithText(title).performClick()
         composeRule.onNodeWithTag("text_note_read_content").assertTextContains(body)
+        composeRule.onNodeWithTag("text_note_read_content").assertTextContains("- [ ]")
     }
 
     @Test

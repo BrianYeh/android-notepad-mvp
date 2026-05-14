@@ -10,7 +10,7 @@ Native Android notepad MVP built with Kotlin, Jetpack Compose, Room, and MVVM.
 - Deleting a folder moves its notes to `Uncategorized`
 - Create, edit, move, pin, soft-delete, restore, and permanently delete text notes
 - Friendly text note screen with a clean reading mode, edit flow, warm paper-style background, compact toolbar, and keyboard-aware editor layout
-- Long-form text editor with a metadata card, focus writing mode, save status, last updated time, safe save-on-back behavior, and configurable editor font size
+- Long-form text editor with auto-collapsing metadata, a quick insert bar, save status, last updated time, safe save-on-back behavior, and configurable editor font size
 - Search notes by title and text note content with highlighted matches
 - Find within a single text note with a compact search toolbar, highlighted matches, and previous/next jump controls
 - Knowledge-base filters for all notes, text notes, drawing notes, notes with reminders, and pinned notes
