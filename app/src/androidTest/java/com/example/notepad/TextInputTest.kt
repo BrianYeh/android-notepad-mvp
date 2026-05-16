@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.IntSize
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.notepad.data.DrawingPoint
@@ -133,6 +135,67 @@ class TextInputTest {
     }
 
     @Test
+    fun longPressEnablesMultiSelectAndDeletesSelectedNotes() {
+        val suffix = System.currentTimeMillis()
+        val firstTitle = "Multi select first $suffix"
+        val secondTitle = "Multi select second $suffix"
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_title")
+        composeRule.onNodeWithTag("text_note_title").performTextInput(firstTitle)
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(firstTitle).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_title")
+        composeRule.onNodeWithTag("text_note_title").performTextInput(secondTitle)
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(secondTitle).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(firstTitle).performTouchInput { longClick() }
+        composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("1 selected")
+        composeRule.onNodeWithText(secondTitle).performClick()
+        composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("2 selected")
+        composeRule.onNodeWithTag("delete_selected_notes_button").performClick()
+        composeRule.onNodeWithTag("confirm_dialog_confirm_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(firstTitle).fetchSemanticsNodes().isEmpty() &&
+                composeRule.onAllNodesWithText(secondTitle).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    @Test
+    fun backExitsMultiSelectModeWithoutOpeningOrDeletingNote() {
+        val title = "Back exits multi select ${System.currentTimeMillis()}"
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_title")
+        composeRule.onNodeWithTag("text_note_title").performTextInput(title)
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(title).performTouchInput { longClick() }
+        composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("1 selected")
+
+        composeRule.runOnUiThread {
+            composeRule.activity.onBackPressedDispatcher.onBackPressed()
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("selected_notes_count").fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag("add_note_button").assertIsDisplayed()
+        composeRule.onNodeWithText(title).assertIsDisplayed()
+    }
+
+    @Test
     fun textEditorFocusWritingModeKeepsContentAndSaveStatusAvailable() {
         val suffix = System.currentTimeMillis()
         val title = "Focus writer title $suffix"
@@ -145,6 +208,10 @@ class TextInputTest {
         composeRule.onNodeWithTag("text_note_compact_metadata").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
         composeRule.onNodeWithTag("text_editor_accessory_bar").assertIsDisplayed()
+        assertEquals(
+            0,
+            composeRule.onAllNodesWithTag("quick_insert_numbered_button").fetchSemanticsNodes().size,
+        )
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag("text_note_edit_metadata").fetchSemanticsNodes().isEmpty()
         }
@@ -317,8 +384,11 @@ class TextInputTest {
     @Test
     fun drawingEditorShowsUpgradedDrawingTools() {
         openAddMenuItem("new_drawing_note_menu_item")
+        waitForTag("exit_fullscreen_drawing_button")
+        composeRule.onNodeWithTag("exit_fullscreen_drawing_button").performClick()
         waitForTag("drawing_undo_button")
 
+        composeRule.onNodeWithTag("drawing_fullscreen_button").assertIsDisplayed()
         composeRule.onNodeWithTag("drawing_undo_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("drawing_redo_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("drawing_tool_Pen").performScrollTo().assertIsDisplayed()
@@ -329,6 +399,31 @@ class TextInputTest {
         composeRule.onNodeWithTag("drawing_eraser_hint").assertIsDisplayed()
         composeRule.onNodeWithTag("share_drawing_png_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("export_drawing_png_button").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun drawingEditorCanUseFullscreenCanvasMode() {
+        openAddMenuItem("new_drawing_note_menu_item")
+        waitForTag("fullscreen_drawing_mode")
+
+        composeRule.onNodeWithTag("fullscreen_drawing_canvas").assertIsDisplayed()
+        composeRule.onNodeWithTag("exit_fullscreen_drawing_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_tool_Pen").assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("drawing_note_title").fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("share_drawing_png_button").fetchSemanticsNodes().isEmpty()
+        }
+
+        composeRule.onNodeWithTag("exit_fullscreen_drawing_button").performClick()
+        waitForTag("drawing_fullscreen_button")
+
+        composeRule.onNodeWithTag("drawing_fullscreen_button").performClick()
+        waitForTag("fullscreen_drawing_mode")
+
+        composeRule.onNodeWithTag("fullscreen_drawing_canvas").assertIsDisplayed()
+        composeRule.onNodeWithTag("exit_fullscreen_drawing_button").assertIsDisplayed()
     }
 
     @Test

@@ -14,9 +14,11 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +47,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -311,8 +315,10 @@ fun NotepadApp(
             },
             onMoveNote = viewModel::moveNote,
             onDeleteNote = viewModel::deleteNote,
+            onDeleteNotes = { noteIds -> noteIds.forEach(viewModel::deleteNote) },
             onRestoreNote = viewModel::restoreNote,
             onPermanentlyDeleteNote = viewModel::permanentlyDeleteNote,
+            onPermanentlyDeleteNotes = { noteIds -> noteIds.forEach(viewModel::permanentlyDeleteNote) },
             onTogglePinned = { note -> viewModel.setNotePinned(note.id, !note.isPinned) },
         )
 
@@ -402,8 +408,10 @@ private fun MainScreen(
     onOpenNote: (NoteEntity) -> Unit,
     onMoveNote: (Long, Long) -> Unit,
     onDeleteNote: (Long) -> Unit,
+    onDeleteNotes: (Set<Long>) -> Unit,
     onRestoreNote: (Long) -> Unit,
     onPermanentlyDeleteNote: (Long) -> Unit,
+    onPermanentlyDeleteNotes: (Set<Long>) -> Unit,
     onTogglePinned: (NoteEntity) -> Unit,
 ) {
     var addMenuExpanded by remember { mutableStateOf(false) }
@@ -413,30 +421,75 @@ private fun MainScreen(
     var noteToMove by remember { mutableStateOf<NoteEntity?>(null) }
     var noteToDelete by remember { mutableStateOf<NoteEntity?>(null) }
     var noteToPermanentlyDelete by remember { mutableStateOf<NoteEntity?>(null) }
+    var selectedNoteIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var selectedNotesToDelete by remember { mutableStateOf<Set<Long>?>(null) }
     val selectedFolder = folders.firstOrNull { it.id == selectedFolderId }
     val isTrash = listMode == NoteListMode.Trash
+    val isSelectionMode = selectedNoteIds.isNotEmpty()
+    val visibleNoteIds = remember(notes) { notes.map { it.id }.toSet() }
+    fun clearNoteSelection() {
+        selectedNoteIds = emptySet()
+        selectedNotesToDelete = null
+    }
+
+    LaunchedEffect(visibleNoteIds) {
+        selectedNoteIds = selectedNoteIds.intersect(visibleNoteIds)
+    }
+
+    LaunchedEffect(listMode, selectedFolderId, searchQuery, quickFilter) {
+        clearNoteSelection()
+    }
+
+    BackHandler(enabled = isSelectionMode, onBack = ::clearNoteSelection)
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(text.appName) },
-                actions = {
-                    TextButton(
-                        onClick = onOpenSettings,
-                        modifier = Modifier.testTag("settings_button"),
-                    ) {
-                        Text(text.settings)
-                    }
-                    LanguageSelector(
-                        appLanguage = appLanguage,
-                        text = text,
-                        onSelectLanguage = onSelectLanguage,
-                    )
-                },
-            )
+            if (isSelectionMode) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = text.selectedNotesCount(selectedNoteIds.size),
+                            modifier = Modifier.testTag("selected_notes_count"),
+                        )
+                    },
+                    navigationIcon = {
+                        TextButton(
+                            onClick = ::clearNoteSelection,
+                            modifier = Modifier.testTag("cancel_note_selection_button"),
+                        ) {
+                            Text(text.cancel)
+                        }
+                    },
+                    actions = {
+                        TextButton(
+                            onClick = { selectedNotesToDelete = selectedNoteIds },
+                            modifier = Modifier.testTag("delete_selected_notes_button"),
+                        ) {
+                            Text(if (isTrash) text.permanentlyDelete else text.deleteSelected)
+                        }
+                    },
+                )
+            } else {
+                TopAppBar(
+                    title = { Text(text.appName) },
+                    actions = {
+                        TextButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier.testTag("settings_button"),
+                        ) {
+                            Text(text.settings)
+                        }
+                        LanguageSelector(
+                            appLanguage = appLanguage,
+                            text = text,
+                            onSelectLanguage = onSelectLanguage,
+                        )
+                    },
+                )
+            }
         },
         floatingActionButton = {
-            if (!isTrash) {
+            if (!isTrash && !isSelectionMode) {
                 Box {
                     FloatingActionButton(
                         onClick = { addMenuExpanded = true },
@@ -552,7 +605,18 @@ private fun MainScreen(
                 hasActiveFilters = quickFilter != NoteQuickFilter.All,
                 listMode = listMode,
                 appLanguage = appLanguage,
+                selectedNoteIds = selectedNoteIds,
                 onOpenNote = onOpenNote,
+                onToggleNoteSelection = { note ->
+                    selectedNoteIds = if (note.id in selectedNoteIds) {
+                        selectedNoteIds - note.id
+                    } else {
+                        selectedNoteIds + note.id
+                    }
+                },
+                onStartNoteSelection = { note ->
+                    selectedNoteIds = selectedNoteIds + note.id
+                },
                 onMoveNote = { noteToMove = it },
                 onDeleteNote = { noteToDelete = it },
                 onRestoreNote = { note -> onRestoreNote(note.id) },
@@ -644,6 +708,24 @@ private fun MainScreen(
             onConfirm = {
                 onPermanentlyDeleteNote(note.id)
                 noteToPermanentlyDelete = null
+            },
+        )
+    }
+
+    selectedNotesToDelete?.let { noteIds ->
+        ConfirmDialog(
+            title = if (isTrash) text.permanentlyDeleteSelectedNotes else text.deleteSelectedNotes,
+            body = if (isTrash) text.permanentlyDeleteSelectedNotesBody else text.deleteSelectedNotesBody,
+            confirmText = if (isTrash) text.permanentlyDelete else text.delete,
+            cancelText = text.cancel,
+            onDismiss = { selectedNotesToDelete = null },
+            onConfirm = {
+                if (isTrash) {
+                    onPermanentlyDeleteNotes(noteIds)
+                } else {
+                    onDeleteNotes(noteIds)
+                }
+                clearNoteSelection()
             },
         )
     }
@@ -1129,7 +1211,10 @@ private fun NoteList(
     hasActiveFilters: Boolean,
     listMode: NoteListMode,
     appLanguage: AppLanguage,
+    selectedNoteIds: Set<Long>,
     onOpenNote: (NoteEntity) -> Unit,
+    onToggleNoteSelection: (NoteEntity) -> Unit,
+    onStartNoteSelection: (NoteEntity) -> Unit,
     onMoveNote: (NoteEntity) -> Unit,
     onDeleteNote: (NoteEntity) -> Unit,
     onRestoreNote: (NoteEntity) -> Unit,
@@ -1137,6 +1222,8 @@ private fun NoteList(
     onTogglePinned: (NoteEntity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val isSelectionMode = selectedNoteIds.isNotEmpty()
+
     if (notes.isEmpty()) {
         Box(
             modifier = modifier.fillMaxWidth(),
@@ -1175,7 +1262,11 @@ private fun NoteList(
                 text = text,
                 searchQuery = searchQuery,
                 appLanguage = appLanguage,
+                isSelectionMode = isSelectionMode,
+                isSelected = note.id in selectedNoteIds,
                 onOpen = { onOpenNote(note) },
+                onToggleSelection = { onToggleNoteSelection(note) },
+                onStartSelection = { onStartNoteSelection(note) },
                 onMove = { onMoveNote(note) },
                 onDelete = { onDeleteNote(note) },
                 onRestore = { onRestoreNote(note) },
@@ -1186,6 +1277,7 @@ private fun NoteList(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NoteRow(
     note: NoteEntity,
@@ -1193,7 +1285,11 @@ private fun NoteRow(
     text: UiText,
     searchQuery: String,
     appLanguage: AppLanguage,
+    isSelectionMode: Boolean,
+    isSelected: Boolean,
     onOpen: () -> Unit,
+    onToggleSelection: () -> Unit,
+    onStartSelection: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
     onRestore: () -> Unit,
@@ -1201,12 +1297,38 @@ private fun NoteRow(
     onTogglePinned: () -> Unit,
 ) {
     Card(
-        onClick = { if (!note.isDeleted) onOpen() },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {
+                    if (isSelectionMode) {
+                        onToggleSelection()
+                    } else if (!note.isDeleted) {
+                        onOpen()
+                    }
+                },
+                onLongClick = onStartSelection,
+            )
+            .testTag("note_card_${note.id}"),
         shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
+        ),
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isSelectionMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelection() },
+                        modifier = Modifier.testTag("note_selection_checkbox_${note.id}"),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
                 if (note.isPinned && !note.isDeleted) {
                     Text(
                         text = "★ ",
@@ -1261,29 +1383,31 @@ private fun NoteRow(
                     modifier = Modifier.testTag("note_preview_${note.id}"),
                 )
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                if (note.isDeleted) {
-                    TextButton(onClick = onRestore) {
-                        Text(text.restore)
-                    }
-                    TextButton(onClick = onPermanentlyDelete) {
-                        Text(text.permanentlyDelete)
-                    }
-                } else {
-                    TextButton(
-                        onClick = onTogglePinned,
-                        modifier = Modifier.testTag("pin_note_${note.id}"),
-                    ) {
-                        Text(if (note.isPinned) text.unpin else text.pin)
-                    }
-                    TextButton(onClick = onMove) {
-                        Text(text.move)
-                    }
-                    TextButton(onClick = onDelete) {
-                        Text(text.delete)
+            if (!isSelectionMode) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    if (note.isDeleted) {
+                        TextButton(onClick = onRestore) {
+                            Text(text.restore)
+                        }
+                        TextButton(onClick = onPermanentlyDelete) {
+                            Text(text.permanentlyDelete)
+                        }
+                    } else {
+                        TextButton(
+                            onClick = onTogglePinned,
+                            modifier = Modifier.testTag("pin_note_${note.id}"),
+                        ) {
+                            Text(if (note.isPinned) text.unpin else text.pin)
+                        }
+                        TextButton(onClick = onMove) {
+                            Text(text.move)
+                        }
+                        TextButton(onClick = onDelete) {
+                            Text(text.delete)
+                        }
                     }
                 }
             }
@@ -2083,7 +2207,6 @@ private fun TextEditorScreen(
                         text = text,
                         onInsertCheckbox = { insertIntoContent("- [ ] ") },
                         onInsertBullet = { insertIntoContent("- ") },
-                        onInsertNumbered = { insertIntoContent("1. ") },
                         onHideKeyboard = {
                             savePendingTextNote()
                             keyboardController?.hide()
@@ -2328,7 +2451,6 @@ private fun TextEditorAccessoryBar(
     text: UiText,
     onInsertCheckbox: () -> Unit,
     onInsertBullet: () -> Unit,
-    onInsertNumbered: () -> Unit,
     onHideKeyboard: () -> Unit,
 ) {
     LazyRow(
@@ -2354,14 +2476,6 @@ private fun TextEditorAccessoryBar(
                 modifier = Modifier.testTag("quick_insert_bullet_button"),
             ) {
                 Text("- ${text.bulletItem}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        item {
-            TextButton(
-                onClick = onInsertNumbered,
-                modifier = Modifier.testTag("quick_insert_numbered_button"),
-            ) {
-                Text("1. ${text.numberedItem}", maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         item {
@@ -2394,6 +2508,7 @@ private fun DrawingEditorScreen(
     var selectedBrushSize by remember(noteId) { mutableStateOf(DrawingBrushSize.Medium) }
     var selectedColor by remember(noteId) { mutableStateOf(DrawingColorOption.Black) }
     var canvasSize by remember(noteId) { mutableStateOf(IntSize.Zero) }
+    var isFullscreenDrawing by remember(noteId) { mutableStateOf(false) }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var hasHandledInitialDrawingFocus by remember(noteId) { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -2402,7 +2517,6 @@ private fun DrawingEditorScreen(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
     val exportPngLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("image/png"),
     ) { uri ->
@@ -2434,8 +2548,7 @@ private fun DrawingEditorScreen(
         if (loadedNoteId == noteId && !hasHandledInitialDrawingFocus) {
             hasHandledInitialDrawingFocus = true
             if (title.isBlank() && strokes.isEmpty()) {
-                titleFocusRequester.requestFocus()
-                keyboardController?.show()
+                isFullscreenDrawing = true
             }
         }
     }
@@ -2567,26 +2680,39 @@ private fun DrawingEditorScreen(
         }
     }
 
-    BackHandler(onBack = ::saveAndBack)
+    fun exitFullscreenDrawing() {
+        isFullscreenDrawing = false
+        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(strokes))
+    }
+
+    BackHandler {
+        if (isFullscreenDrawing) {
+            exitFullscreenDrawing()
+        } else {
+            saveAndBack()
+        }
+    }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(text.drawingNote) },
-                navigationIcon = {
-                    TextButton(
-                        onClick = ::saveAndBack,
-                        modifier = Modifier.testTag("back_button"),
-                    ) {
-                        Text(text.back)
-                    }
-                },
-                actions = {
-                    TextButton(onClick = { showDeleteDialog = true }) {
-                        Text(text.delete)
-                    }
-                },
-            )
+            if (!isFullscreenDrawing) {
+                TopAppBar(
+                    title = { Text(text.drawingNote) },
+                    navigationIcon = {
+                        TextButton(
+                            onClick = ::saveAndBack,
+                            modifier = Modifier.testTag("back_button"),
+                        ) {
+                            Text(text.back)
+                        }
+                    },
+                    actions = {
+                        TextButton(onClick = { showDeleteDialog = true }) {
+                            Text(text.delete)
+                        }
+                    },
+                )
+            }
         },
     ) { padding ->
         val currentNote = note
@@ -2598,6 +2724,71 @@ private fun DrawingEditorScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(text.noteNotFound)
+            }
+        } else if (isFullscreenDrawing) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .background(NOTE_PAPER_BACKGROUND)
+                    .testTag("fullscreen_drawing_mode"),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = ::exitFullscreenDrawing,
+                        modifier = Modifier.testTag("exit_fullscreen_drawing_button"),
+                    ) {
+                        Text(text.exitFocusWriting)
+                    }
+                    Text(
+                        text = title.ifBlank { text.untitledDrawing },
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                DrawingCanvas(
+                    strokes = strokes,
+                    onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
+                    onStrokeFinished = ::finishStroke,
+                    brushColorArgb = selectedColor.colorArgb,
+                    brushWidthPx = activeStrokeWidth(),
+                    strokeTool = activeStrokeTool(),
+                    onCanvasSizeChange = { canvasSize = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .testTag("fullscreen_drawing_canvas"),
+                )
+                DrawingToolBar(
+                    strokes = strokes,
+                    redoStrokes = redoStrokes,
+                    selectedTool = selectedTool,
+                    selectedBrushSize = selectedBrushSize,
+                    selectedColor = selectedColor,
+                    text = text,
+                    onUndo = ::undoStroke,
+                    onRedo = ::redoStroke,
+                    onClear = ::clearDrawing,
+                    onSharePng = ::shareCurrentDrawingPng,
+                    onExportPng = ::exportCurrentDrawingPng,
+                    onToolChange = { selectedTool = it },
+                    onBrushSizeChange = { selectedBrushSize = it },
+                    onColorChange = { selectedColor = it },
+                    showFileActions = false,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
+                        .padding(12.dp),
+                )
             }
         } else {
             Column(
@@ -2631,6 +2822,23 @@ private fun DrawingEditorScreen(
                     onSetReminder = { reminderAt -> viewModel.setNoteReminder(noteId, reminderAt) },
                     onClearReminder = { viewModel.setNoteReminder(noteId, null) },
                 )
+                DrawingCanvasWithFullscreenEntry(
+                    strokes = strokes,
+                    text = text,
+                    onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
+                    onStrokeFinished = ::finishStroke,
+                    brushColorArgb = selectedColor.colorArgb,
+                    brushWidthPx = activeStrokeWidth(),
+                    strokeTool = activeStrokeTool(),
+                    onCanvasSizeChange = { canvasSize = it },
+                    onFullscreen = {
+                        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(strokes))
+                        isFullscreenDrawing = true
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                )
                 DrawingToolBar(
                     strokes = strokes,
                     redoStrokes = redoStrokes,
@@ -2646,18 +2854,6 @@ private fun DrawingEditorScreen(
                     onToolChange = { selectedTool = it },
                     onBrushSizeChange = { selectedBrushSize = it },
                     onColorChange = { selectedColor = it },
-                )
-                DrawingCanvas(
-                    strokes = strokes,
-                    onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
-                    onStrokeFinished = ::finishStroke,
-                    brushColorArgb = selectedColor.colorArgb,
-                    brushWidthPx = activeStrokeWidth(),
-                    strokeTool = activeStrokeTool(),
-                    onCanvasSizeChange = { canvasSize = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
                 )
             }
         }
@@ -2695,8 +2891,13 @@ private fun DrawingToolBar(
     onToolChange: (DrawingTool) -> Unit,
     onBrushSizeChange: (DrawingBrushSize) -> Unit,
     onColorChange: (DrawingColorOption) -> Unit,
+    modifier: Modifier = Modifier,
+    showFileActions: Boolean = true,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
                 Button(
@@ -2725,20 +2926,22 @@ private fun DrawingToolBar(
                     Text(text.clear)
                 }
             }
-            item {
-                Button(
-                    onClick = onSharePng,
-                    modifier = Modifier.testTag("share_drawing_png_button"),
-                ) {
-                    Text(text.sharePng)
+            if (showFileActions) {
+                item {
+                    Button(
+                        onClick = onSharePng,
+                        modifier = Modifier.testTag("share_drawing_png_button"),
+                    ) {
+                        Text(text.sharePng)
+                    }
                 }
-            }
-            item {
-                Button(
-                    onClick = onExportPng,
-                    modifier = Modifier.testTag("export_drawing_png_button"),
-                ) {
-                    Text(text.exportPng)
+                item {
+                    Button(
+                        onClick = onExportPng,
+                        modifier = Modifier.testTag("export_drawing_png_button"),
+                    ) {
+                        Text(text.exportPng)
+                    }
                 }
             }
         }
@@ -2787,6 +2990,42 @@ private fun DrawingToolBar(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag("drawing_eraser_hint"),
             )
+        }
+    }
+}
+
+@Composable
+private fun DrawingCanvasWithFullscreenEntry(
+    strokes: List<DrawingStroke>,
+    text: UiText,
+    onStrokesChange: (List<DrawingStroke>) -> Unit,
+    onStrokeFinished: (List<DrawingStroke>) -> Unit,
+    brushColorArgb: Int,
+    brushWidthPx: Float,
+    strokeTool: String,
+    onCanvasSizeChange: (IntSize) -> Unit,
+    onFullscreen: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier) {
+        DrawingCanvas(
+            strokes = strokes,
+            onStrokesChange = onStrokesChange,
+            onStrokeFinished = onStrokeFinished,
+            brushColorArgb = brushColorArgb,
+            brushWidthPx = brushWidthPx,
+            strokeTool = strokeTool,
+            onCanvasSizeChange = onCanvasSizeChange,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Button(
+            onClick = onFullscreen,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(12.dp)
+                .testTag("drawing_fullscreen_button"),
+        ) {
+            Text(text.fullscreenWriting, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -3304,12 +3543,18 @@ private fun ConfirmDialog(
         title = { Text(title) },
         text = { Text(body) },
         confirmButton = {
-            TextButton(onClick = onConfirm) {
+            TextButton(
+                onClick = onConfirm,
+                modifier = Modifier.testTag("confirm_dialog_confirm_button"),
+            ) {
                 Text(confirmText)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("confirm_dialog_cancel_button"),
+            ) {
                 Text(cancelText)
             }
         },

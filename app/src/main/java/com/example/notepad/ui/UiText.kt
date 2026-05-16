@@ -39,6 +39,7 @@ data class UiText(
     val renameFolder: String,
     val deleteFolder: String,
     val delete: String,
+    val deleteSelected: String,
     val rename: String,
     val restore: String,
     val permanentlyDelete: String,
@@ -58,10 +59,10 @@ data class UiText(
     val more: String,
     val focusWriting: String,
     val exitFocusWriting: String,
+    val fullscreenWriting: String,
     val details: String,
     val checkboxItem: String,
     val bulletItem: String,
-    val numberedItem: String,
     val hideKeyboard: String,
     val noteOptions: String,
     val textNote: String,
@@ -127,8 +128,12 @@ data class UiText(
     val content: String,
     val deleteNote: String,
     val deleteNoteBody: String,
+    val deleteSelectedNotes: String,
+    val deleteSelectedNotesBody: String,
     val permanentlyDeleteNote: String,
     val permanentlyDeleteNoteBody: String,
+    val permanentlyDeleteSelectedNotes: String,
+    val permanentlyDeleteSelectedNotesBody: String,
     val folderName: String,
     val save: String,
     val cancel: String,
@@ -160,6 +165,14 @@ data class UiText(
             "$folderName 裡的記事會移到 $uncategorized。"
         } else {
             "Notes in $folderName will move to $uncategorized."
+        }
+    }
+
+    fun selectedNotesCount(count: Int): String {
+        return if (this === TraditionalChineseText) {
+            "已選 $count 筆"
+        } else {
+            "$count selected"
         }
     }
 }
@@ -201,6 +214,7 @@ val EnglishText = UiText(
     renameFolder = "Rename Folder",
     deleteFolder = "Delete Folder",
     delete = "Delete",
+    deleteSelected = "Delete",
     rename = "Rename",
     restore = "Restore",
     permanentlyDelete = "Delete forever",
@@ -218,12 +232,12 @@ val EnglishText = UiText(
     move = "Move",
     edit = "Edit",
     more = "More",
-    focusWriting = "Focus",
+    focusWriting = "Full screen",
     exitFocusWriting = "Done",
+    fullscreenWriting = "Full-screen writing",
     details = "Details",
     checkboxItem = "Checkbox",
     bulletItem = "Bullet",
-    numberedItem = "Numbered",
     hideKeyboard = "Hide keyboard",
     noteOptions = "Note options",
     textNote = "Text Note",
@@ -289,8 +303,12 @@ val EnglishText = UiText(
     content = "Content",
     deleteNote = "Delete Note",
     deleteNoteBody = "This note will move to Trash.",
+    deleteSelectedNotes = "Delete selected notes",
+    deleteSelectedNotesBody = "Selected notes will move to Trash.",
     permanentlyDeleteNote = "Delete Note Forever",
     permanentlyDeleteNoteBody = "This note will be permanently removed from this device.",
+    permanentlyDeleteSelectedNotes = "Delete selected notes forever",
+    permanentlyDeleteSelectedNotesBody = "Selected notes will be permanently removed from this device.",
     folderName = "Folder name",
     save = "Save",
     cancel = "Cancel",
@@ -347,6 +365,7 @@ val TraditionalChineseText = UiText(
     renameFolder = "重新命名資料夾",
     deleteFolder = "刪除資料夾",
     delete = "刪除",
+    deleteSelected = "刪除",
     rename = "重新命名",
     restore = "還原",
     permanentlyDelete = "永久刪除",
@@ -364,12 +383,12 @@ val TraditionalChineseText = UiText(
     move = "移動",
     edit = "編輯",
     more = "更多",
-    focusWriting = "專注",
+    focusWriting = "全螢幕",
     exitFocusWriting = "完成",
+    fullscreenWriting = "全螢幕書寫",
     details = "詳細",
     checkboxItem = "核取方塊",
     bulletItem = "項目符號",
-    numberedItem = "編號",
     hideKeyboard = "隱藏鍵盤",
     noteOptions = "記事選項",
     textNote = "文字記事",
@@ -435,8 +454,12 @@ val TraditionalChineseText = UiText(
     content = "內容",
     deleteNote = "刪除記事",
     deleteNoteBody = "這則記事會移到垃圾桶。",
+    deleteSelectedNotes = "刪除所選記事",
+    deleteSelectedNotesBody = "所選記事會移到垃圾桶。",
     permanentlyDeleteNote = "永久刪除記事",
     permanentlyDeleteNoteBody = "這則記事會從此裝置永久移除。",
+    permanentlyDeleteSelectedNotes = "永久刪除所選記事",
+    permanentlyDeleteSelectedNotesBody = "所選記事會從此裝置永久移除。",
     folderName = "資料夾名稱",
     save = "儲存",
     cancel = "取消",
