@@ -208,7 +208,7 @@ data class UiText(
 }
 
 val EnglishText = UiText(
-    appName = "Claw Notes",
+    appName = "Just Notes",
     settings = "Settings",
     language = "Language",
     allNotes = "All Notes",
@@ -354,7 +354,7 @@ val EnglishText = UiText(
     untitledDrawing = "Untitled drawing",
     untitledTextNote = "Untitled text note",
     googleDriveBackup = "Online Sync",
-    backupTargetHint = "Choose Google Drive in the Android file picker. Claw Notes saves one sync file there using the Google account already connected to Drive.",
+    backupTargetHint = "Choose Google Drive in the Android file picker. Just Notes saves one sync file there using the Google account already connected to Drive.",
     lastBackup = "Last sync",
     lastRestore = "Last restore",
     backupInProgress = "Syncing...",
@@ -381,7 +381,7 @@ val EnglishText = UiText(
     syncTarget = "Sync target",
     thisDevice = "This device",
     connectedDevices = "Connected devices",
-    googleDriveHandledByFiles = "Google sign-in is handled by the Google Drive file picker. Claw Notes does not store your Google password.",
+    googleDriveHandledByFiles = "Google sign-in is handled by the Google Drive file picker. Just Notes does not store your Google password.",
 )
 
 val TraditionalChineseText = UiText(
@@ -531,7 +531,7 @@ val TraditionalChineseText = UiText(
     untitledDrawing = "未命名繪圖",
     untitledTextNote = "未命名文字記事",
     googleDriveBackup = "線上同步",
-    backupTargetHint = "在 Android 檔案選擇器中選擇 Google Drive。Claw Notes 會把同步檔存到 Drive 已登入的 Google 帳號。",
+    backupTargetHint = "在 Android 檔案選擇器中選擇 Google Drive。Just Notes 會把同步檔存到 Drive 已登入的 Google 帳號。",
     lastBackup = "上次同步",
     lastRestore = "上次還原",
     backupInProgress = "同步中...",
@@ -558,7 +558,7 @@ val TraditionalChineseText = UiText(
     syncTarget = "同步目標",
     thisDevice = "這台裝置",
     connectedDevices = "連結的裝置",
-    googleDriveHandledByFiles = "Google 登入由 Google Drive 檔案選擇器處理。Claw Notes 不會儲存你的 Google 密碼。",
+    googleDriveHandledByFiles = "Google 登入由 Google Drive 檔案選擇器處理。Just Notes 不會儲存你的 Google 密碼。",
 )
 
 fun uiTextFor(language: AppLanguage): UiText {

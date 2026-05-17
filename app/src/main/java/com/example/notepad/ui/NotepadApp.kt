@@ -166,7 +166,7 @@ private sealed interface AppScreen {
     data class DrawingEditor(val noteId: Long) : AppScreen
 }
 
-private const val BACKUP_FILE_NAME = "claw-notes-backup.json"
+private const val BACKUP_FILE_NAME = "just-notes-backup.json"
 private const val DEFAULT_DRAWING_EXPORT_WIDTH = 1080
 private const val DEFAULT_DRAWING_EXPORT_HEIGHT = 1440
 private const val MAX_DRAWING_EXPORT_DIMENSION = 4096
