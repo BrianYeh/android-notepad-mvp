@@ -60,6 +60,18 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         EditorFontSize.fromCode(preferences.getString("editor_font_size", EditorFontSize.Medium.code)),
     )
     val editorFontSize: StateFlow<EditorFontSize> = _editorFontSize
+    private val _onlineSyncTargetUri = MutableStateFlow(preferences.getString("online_sync_target_uri", null))
+    val onlineSyncTargetUri: StateFlow<String?> = _onlineSyncTargetUri
+    private val _onlineSyncAutoOnStart = MutableStateFlow(preferences.getBoolean("online_sync_auto_on_start", false))
+    val onlineSyncAutoOnStart: StateFlow<Boolean> = _onlineSyncAutoOnStart
+    private val _lastOnlineSyncAt = MutableStateFlow(
+        preferences.getLong("last_online_sync_at", 0L).takeIf { it > 0L },
+    )
+    val lastOnlineSyncAt: StateFlow<Long?> = _lastOnlineSyncAt
+    private val _lastOnlineRestoreAt = MutableStateFlow(
+        preferences.getLong("last_online_restore_at", 0L).takeIf { it > 0L },
+    )
+    val lastOnlineRestoreAt: StateFlow<Long?> = _lastOnlineRestoreAt
     private val _isRecognizingText = MutableStateFlow(false)
     val isRecognizingText: StateFlow<Boolean> = _isRecognizingText
 
@@ -152,6 +164,51 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         _editorFontSize.value = fontSize
         preferences.edit()
             .putString("editor_font_size", fontSize.code)
+            .apply()
+    }
+
+    fun setOnlineSyncTargetUri(uri: String?) {
+        _onlineSyncTargetUri.value = uri
+        preferences.edit().apply {
+            if (uri == null) {
+                remove("online_sync_target_uri")
+            } else {
+                putString("online_sync_target_uri", uri)
+            }
+        }.apply()
+    }
+
+    fun setOnlineSyncAutoOnStart(enabled: Boolean) {
+        _onlineSyncAutoOnStart.value = enabled
+        preferences.edit()
+            .putBoolean("online_sync_auto_on_start", enabled)
+            .apply()
+    }
+
+    fun recordOnlineSync(timestamp: Long = System.currentTimeMillis()) {
+        _lastOnlineSyncAt.value = timestamp
+        preferences.edit()
+            .putLong("last_online_sync_at", timestamp)
+            .apply()
+    }
+
+    fun recordOnlineRestore(timestamp: Long = System.currentTimeMillis()) {
+        _lastOnlineRestoreAt.value = timestamp
+        preferences.edit()
+            .putLong("last_online_restore_at", timestamp)
+            .apply()
+    }
+
+    fun disconnectOnlineSync() {
+        _onlineSyncTargetUri.value = null
+        _onlineSyncAutoOnStart.value = false
+        _lastOnlineSyncAt.value = null
+        _lastOnlineRestoreAt.value = null
+        preferences.edit()
+            .remove("online_sync_target_uri")
+            .remove("last_online_sync_at")
+            .remove("last_online_restore_at")
+            .putBoolean("online_sync_auto_on_start", false)
             .apply()
     }
 

@@ -162,6 +162,21 @@ data class UiText(
     val restoreComplete: String,
     val backupFailed: String,
     val restoreFailed: String,
+    val onlineSyncProvider: String,
+    val onlineSyncTargetConnected: String,
+    val onlineSyncTargetMissing: String,
+    val syncNotes: String,
+    val autoSyncOnStart: String,
+    val chooseGoogleDriveSyncFile: String,
+    val changeGoogleDriveSyncFile: String,
+    val accountSettings: String,
+    val disconnectSync: String,
+    val disconnectSyncTitle: String,
+    val disconnectSyncBody: String,
+    val syncTarget: String,
+    val thisDevice: String,
+    val connectedDevices: String,
+    val googleDriveHandledByFiles: String,
 ) {
     fun resultCount(count: Int): String {
         return if (this === TraditionalChineseText) {
@@ -185,6 +200,10 @@ data class UiText(
         } else {
             "$count selected"
         }
+    }
+
+    fun syncNotesCount(count: Int): String {
+        return "$syncNotes $count"
     }
 }
 
@@ -334,20 +353,35 @@ val EnglishText = UiText(
     folderAlreadyExists = "Folder already exists.",
     untitledDrawing = "Untitled drawing",
     untitledTextNote = "Untitled text note",
-    googleDriveBackup = "Google Drive Backup",
-    backupTargetHint = "Choose a Google Drive folder or local file from the Android file picker. Restore replaces all local notes and folders with the selected backup.",
-    lastBackup = "Last backup",
+    googleDriveBackup = "Online Sync",
+    backupTargetHint = "Choose Google Drive in the Android file picker. Claw Notes saves one sync file there using the Google account already connected to Drive.",
+    lastBackup = "Last sync",
     lastRestore = "Last restore",
-    backupInProgress = "Backing up...",
+    backupInProgress = "Syncing...",
     restoreInProgress = "Restoring...",
     restoreBackupConfirmTitle = "Restore backup?",
     restoreBackupConfirmBody = "Choose a trusted backup file. Restore replaces all current local notes and folders with the selected backup.",
-    backupToGoogleDrive = "Back Up",
+    backupToGoogleDrive = "Sync",
     restoreFromBackup = "Restore",
-    backupComplete = "Backup saved.",
+    backupComplete = "Sync saved.",
     restoreComplete = "Backup restored.",
-    backupFailed = "Backup failed.",
+    backupFailed = "Sync failed.",
     restoreFailed = "Restore failed.",
+    onlineSyncProvider = "Google Drive",
+    onlineSyncTargetConnected = "Google Drive sync file connected",
+    onlineSyncTargetMissing = "No Google Drive sync file selected",
+    syncNotes = "Sync notes",
+    autoSyncOnStart = "Sync when app opens",
+    chooseGoogleDriveSyncFile = "Choose sync file",
+    changeGoogleDriveSyncFile = "Change sync file",
+    accountSettings = "Account settings",
+    disconnectSync = "Sign out",
+    disconnectSyncTitle = "Sign out of online sync?",
+    disconnectSyncBody = "This removes the saved Google Drive sync target from this device. Local notes stay on this device.",
+    syncTarget = "Sync target",
+    thisDevice = "This device",
+    connectedDevices = "Connected devices",
+    googleDriveHandledByFiles = "Google sign-in is handled by the Google Drive file picker. Claw Notes does not store your Google password.",
 )
 
 val TraditionalChineseText = UiText(
@@ -496,20 +530,35 @@ val TraditionalChineseText = UiText(
     folderAlreadyExists = "資料夾已存在。",
     untitledDrawing = "未命名繪圖",
     untitledTextNote = "未命名文字記事",
-    googleDriveBackup = "Google Drive 備份",
-    backupTargetHint = "從 Android 檔案選擇器挑選 Google Drive 資料夾或本機檔案。還原會用所選備份取代目前所有本機記事與資料夾。",
-    lastBackup = "上次備份",
+    googleDriveBackup = "線上同步",
+    backupTargetHint = "在 Android 檔案選擇器中選擇 Google Drive。Claw Notes 會把同步檔存到 Drive 已登入的 Google 帳號。",
+    lastBackup = "上次同步",
     lastRestore = "上次還原",
-    backupInProgress = "備份中...",
+    backupInProgress = "同步中...",
     restoreInProgress = "還原中...",
     restoreBackupConfirmTitle = "還原備份？",
     restoreBackupConfirmBody = "請選擇可信任的備份檔。還原會用所選備份取代目前所有本機記事與資料夾。",
-    backupToGoogleDrive = "備份",
+    backupToGoogleDrive = "同步",
     restoreFromBackup = "還原",
-    backupComplete = "備份已儲存。",
+    backupComplete = "同步已儲存。",
     restoreComplete = "備份已還原。",
-    backupFailed = "備份失敗。",
+    backupFailed = "同步失敗。",
     restoreFailed = "還原失敗。",
+    onlineSyncProvider = "Google Drive",
+    onlineSyncTargetConnected = "已連結 Google Drive 同步檔",
+    onlineSyncTargetMissing = "尚未選擇 Google Drive 同步檔",
+    syncNotes = "同步便條",
+    autoSyncOnStart = "開啟時同步",
+    chooseGoogleDriveSyncFile = "選擇同步檔",
+    changeGoogleDriveSyncFile = "更換同步檔",
+    accountSettings = "帳戶設定",
+    disconnectSync = "登出",
+    disconnectSyncTitle = "登出線上同步？",
+    disconnectSyncBody = "這會移除此裝置保存的 Google Drive 同步目標。本機記事不會被刪除。",
+    syncTarget = "同步目標",
+    thisDevice = "這台裝置",
+    connectedDevices = "連結的裝置",
+    googleDriveHandledByFiles = "Google 登入由 Google Drive 檔案選擇器處理。Claw Notes 不會儲存你的 Google 密碼。",
 )
 
 fun uiTextFor(language: AppLanguage): UiText {

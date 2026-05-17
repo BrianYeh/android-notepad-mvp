@@ -238,6 +238,11 @@ fun NotepadApp(
     var screen: AppScreen by remember { mutableStateOf(AppScreen.Main) }
     val text = remember(appLanguage) { uiTextFor(appLanguage) }
     val context = LocalContext.current
+    val onlineSyncTargetUri by viewModel.onlineSyncTargetUri.collectAsStateWithLifecycle()
+    val onlineSyncAutoOnStart by viewModel.onlineSyncAutoOnStart.collectAsStateWithLifecycle()
+    val lastOnlineSyncAt by viewModel.lastOnlineSyncAt.collectAsStateWithLifecycle()
+    val lastOnlineRestoreAt by viewModel.lastOnlineRestoreAt.collectAsStateWithLifecycle()
+    var onlineSyncAutoAttempted by remember { mutableStateOf(false) }
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri ->
@@ -266,6 +271,21 @@ fun NotepadApp(
         ) { noteId ->
             screen = AppScreen.TextEditor(noteId)
             onIncomingTextShareHandled(share.id)
+        }
+    }
+
+    LaunchedEffect(onlineSyncAutoOnStart, onlineSyncTargetUri) {
+        val targetUri = onlineSyncTargetUri
+        if (!onlineSyncAutoOnStart || targetUri == null || onlineSyncAutoAttempted) return@LaunchedEffect
+        onlineSyncAutoAttempted = true
+        try {
+            val backupJson = viewModel.exportBackupJson()
+            withContext(Dispatchers.IO) {
+                writeTextToUri(context, Uri.parse(targetUri), backupJson)
+            }
+            viewModel.recordOnlineSync()
+        } catch (_: Exception) {
+            Toast.makeText(context, text.backupFailed, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -327,8 +347,18 @@ fun NotepadApp(
             text = text,
             appLanguage = appLanguage,
             editorFontSize = editorFontSize,
+            notesCount = notes.count { !it.isDeleted },
+            onlineSyncTargetUri = onlineSyncTargetUri,
+            onlineSyncAutoOnStart = onlineSyncAutoOnStart,
+            lastOnlineSyncAt = lastOnlineSyncAt,
+            lastOnlineRestoreAt = lastOnlineRestoreAt,
             viewModel = viewModel,
             onEditorFontSizeChange = viewModel::setEditorFontSize,
+            onOnlineSyncTargetChange = viewModel::setOnlineSyncTargetUri,
+            onOnlineSyncAutoOnStartChange = viewModel::setOnlineSyncAutoOnStart,
+            onOnlineSyncRecorded = { viewModel.recordOnlineSync() },
+            onOnlineRestoreRecorded = { viewModel.recordOnlineRestore() },
+            onOnlineSyncDisconnect = viewModel::disconnectOnlineSync,
             onBack = { screen = AppScreen.Main },
         )
 
@@ -743,16 +773,26 @@ private fun SettingsScreen(
     text: UiText,
     appLanguage: AppLanguage,
     editorFontSize: EditorFontSize,
+    notesCount: Int,
+    onlineSyncTargetUri: String?,
+    onlineSyncAutoOnStart: Boolean,
+    lastOnlineSyncAt: Long?,
+    lastOnlineRestoreAt: Long?,
     viewModel: NotepadViewModel,
     onEditorFontSizeChange: (EditorFontSize) -> Unit,
+    onOnlineSyncTargetChange: (String?) -> Unit,
+    onOnlineSyncAutoOnStartChange: (Boolean) -> Unit,
+    onOnlineSyncRecorded: () -> Unit,
+    onOnlineRestoreRecorded: () -> Unit,
+    onOnlineSyncDisconnect: () -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingBackupJson by remember { mutableStateOf<String?>(null) }
-    var lastBackupAt by remember { mutableStateOf<Long?>(null) }
-    var lastRestoreAt by remember { mutableStateOf<Long?>(null) }
     var showRestoreConfirmDialog by remember { mutableStateOf(false) }
+    var showAccountSettingsDialog by remember { mutableStateOf(false) }
+    var showDisconnectDialog by remember { mutableStateOf(false) }
     var isBackupInProgress by remember { mutableStateOf(false) }
     var isRestoreInProgress by remember { mutableStateOf(false) }
 
@@ -766,10 +806,12 @@ private fun SettingsScreen(
         scope.launch {
             isBackupInProgress = true
             try {
+                persistUriPermission(context, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                 withContext(Dispatchers.IO) {
                     writeTextToUri(context, uri, backupJson)
                 }
-                lastBackupAt = System.currentTimeMillis()
+                onOnlineSyncTargetChange(uri.toString())
+                onOnlineSyncRecorded()
                 Toast.makeText(context, text.backupComplete, Toast.LENGTH_SHORT).show()
             } catch (_: Exception) {
                 Toast.makeText(context, text.backupFailed, Toast.LENGTH_SHORT).show()
@@ -787,16 +829,42 @@ private fun SettingsScreen(
         scope.launch {
             isRestoreInProgress = true
             try {
+                persistUriPermission(context, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 val backupJson = withContext(Dispatchers.IO) {
                     readTextFromUri(context, uri)
                 }
                 viewModel.importBackupJson(backupJson)
-                lastRestoreAt = System.currentTimeMillis()
+                onOnlineRestoreRecorded()
                 Toast.makeText(context, text.restoreComplete, Toast.LENGTH_SHORT).show()
             } catch (_: Exception) {
                 Toast.makeText(context, text.restoreFailed, Toast.LENGTH_SHORT).show()
             } finally {
                 isRestoreInProgress = false
+            }
+        }
+    }
+
+    fun syncNow() {
+        scope.launch {
+            try {
+                val backupJson = viewModel.exportBackupJson()
+                val target = onlineSyncTargetUri
+                if (target == null) {
+                    pendingBackupJson = backupJson
+                    createBackupLauncher.launch(BACKUP_FILE_NAME)
+                    return@launch
+                }
+
+                isBackupInProgress = true
+                withContext(Dispatchers.IO) {
+                    writeTextToUri(context, Uri.parse(target), backupJson)
+                }
+                onOnlineSyncRecorded()
+                Toast.makeText(context, text.backupComplete, Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {
+                Toast.makeText(context, text.backupFailed, Toast.LENGTH_SHORT).show()
+            } finally {
+                isBackupInProgress = false
             }
         }
     }
@@ -843,13 +911,54 @@ private fun SettingsScreen(
                 text = text.googleDriveBackup,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.testTag("online_sync_title"),
             )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = "G",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .background(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = text.onlineSyncProvider,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = if (onlineSyncTargetUri == null) {
+                            text.onlineSyncTargetMissing
+                        } else {
+                            text.onlineSyncTargetConnected
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("online_sync_target_status"),
+                    )
+                }
+            }
             Text(
                 text = text.backupTargetHint,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            lastBackupAt?.let { backedUpAt ->
+            Text(
+                text = text.syncNotesCount(notesCount),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.testTag("online_sync_note_count"),
+            )
+            lastOnlineSyncAt?.let { backedUpAt ->
                 Text(
                     text = "${text.lastBackup}: ${formatTime(backedUpAt, appLanguage)}",
                     style = MaterialTheme.typography.bodySmall,
@@ -857,7 +966,7 @@ private fun SettingsScreen(
                     modifier = Modifier.testTag("last_backup_status"),
                 )
             }
-            lastRestoreAt?.let { restoredAt ->
+            lastOnlineRestoreAt?.let { restoredAt ->
                 Text(
                     text = "${text.lastRestore}: ${formatTime(restoredAt, appLanguage)}",
                     style = MaterialTheme.typography.bodySmall,
@@ -878,17 +987,24 @@ private fun SettingsScreen(
                     )
                 }
             }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("online_sync_auto_row"),
+            ) {
+                Checkbox(
+                    checked = onlineSyncAutoOnStart,
+                    onCheckedChange = onOnlineSyncAutoOnStartChange,
+                    modifier = Modifier.testTag("online_sync_auto_checkbox"),
+                )
+                Text(
+                    text = text.autoSyncOnStart,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            }
             Button(
-                onClick = {
-                    scope.launch {
-                        try {
-                            pendingBackupJson = viewModel.exportBackupJson()
-                            createBackupLauncher.launch(BACKUP_FILE_NAME)
-                        } catch (_: Exception) {
-                            Toast.makeText(context, text.backupFailed, Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                },
+                onClick = { syncNow() },
                 enabled = !isBackupInProgress && !isRestoreInProgress,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -904,6 +1020,41 @@ private fun SettingsScreen(
                     .testTag("restore_button"),
             ) {
                 Text(text.restoreFromBackup)
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            try {
+                                pendingBackupJson = viewModel.exportBackupJson()
+                                createBackupLauncher.launch(BACKUP_FILE_NAME)
+                            } catch (_: Exception) {
+                                Toast.makeText(context, text.backupFailed, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    enabled = !isBackupInProgress && !isRestoreInProgress,
+                    modifier = Modifier.testTag("choose_sync_file_button"),
+                ) {
+                    Text(if (onlineSyncTargetUri == null) text.chooseGoogleDriveSyncFile else text.changeGoogleDriveSyncFile)
+                }
+                TextButton(
+                    onClick = { showAccountSettingsDialog = true },
+                    modifier = Modifier.testTag("account_settings_button"),
+                ) {
+                    Text(text.accountSettings)
+                }
+            }
+            if (onlineSyncTargetUri != null) {
+                TextButton(
+                    onClick = { showDisconnectDialog = true },
+                    modifier = Modifier.testTag("disconnect_sync_button"),
+                ) {
+                    Text(text.disconnectSync)
+                }
             }
         }
     }
@@ -921,6 +1072,40 @@ private fun SettingsScreen(
                 restoreBackupLauncher.launch(
                     arrayOf("application/json", "text/plain", "*/*"),
                 )
+            },
+        )
+    }
+
+    if (showAccountSettingsDialog) {
+        AlertDialog(
+            onDismissRequest = { showAccountSettingsDialog = false },
+            title = { Text(text.accountSettings) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(text.googleDriveHandledByFiles)
+                    Text("${text.syncTarget}: ${onlineSyncTargetUri ?: text.onlineSyncTargetMissing}")
+                    Text("${text.connectedDevices}: ${text.thisDevice} ${Build.MODEL.orEmpty()}".trim())
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAccountSettingsDialog = false }) {
+                    Text(text.back)
+                }
+            },
+        )
+    }
+
+    if (showDisconnectDialog) {
+        ConfirmDialog(
+            title = text.disconnectSyncTitle,
+            body = text.disconnectSyncBody,
+            confirmText = text.disconnectSync,
+            cancelText = text.cancel,
+            destructive = true,
+            onDismiss = { showDisconnectDialog = false },
+            onConfirm = {
+                showDisconnectDialog = false
+                onOnlineSyncDisconnect()
             },
         )
     }
@@ -4182,4 +4367,18 @@ private fun readTextFromUri(context: Context, uri: Uri): String {
     return inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
         reader.readText()
     }
+}
+
+private fun persistUriPermission(context: Context, uri: Uri, modeFlags: Int) {
+    listOf(Intent.FLAG_GRANT_READ_URI_PERMISSION, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        .filter { modeFlags and it != 0 }
+        .forEach { flag ->
+            try {
+                context.contentResolver.takePersistableUriPermission(uri, flag)
+            } catch (_: SecurityException) {
+                // Some providers grant only one-time access for this flag. The immediate action can still proceed.
+            } catch (_: IllegalArgumentException) {
+                // File providers that do not support persistable permissions are still valid for one-time use.
+            }
+        }
 }

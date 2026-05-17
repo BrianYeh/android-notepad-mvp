@@ -374,6 +374,20 @@ class TextInputTest {
     }
 
     @Test
+    fun settingsExposeOnlineSyncControls() {
+        composeRule.onNodeWithTag("settings_button").performClick()
+
+        composeRule.onNodeWithTag("online_sync_title").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("online_sync_target_status").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("online_sync_note_count").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("online_sync_auto_checkbox").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("backup_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("restore_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("choose_sync_file_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("account_settings_button").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun addMenuShowsOcrFromImageAction() {
         composeRule.onNodeWithTag("add_note_button").performClick()
         waitForTag("ocr_from_image_menu_item")
