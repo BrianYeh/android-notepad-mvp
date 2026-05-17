@@ -43,6 +43,13 @@ object ReminderScheduler {
         notes.forEach { note -> schedule(context, note) }
     }
 
+    suspend fun cancelFutureReminders(context: Context) {
+        val notes = NotepadDatabase.getInstance(context)
+            .notepadDao()
+            .getFutureReminderNotes(System.currentTimeMillis())
+        notes.forEach { note -> cancel(context, note.id) }
+    }
+
     fun ensureNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
 

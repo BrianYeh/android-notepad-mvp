@@ -1,4 +1,4 @@
-# Local Notepad
+# Claw Notes
 
 Native Android notepad MVP built with Kotlin, Jetpack Compose, Room, and MVVM.
 
@@ -92,8 +92,8 @@ Open a text note and tap `Share` to send the title, folder, reminder time when s
 
 Open a drawing note and use the drawing toolbar to choose pen or pixel-style eraser, size, and pen color. Pen sizes stay tuned for drawing lines; eraser sizes are much larger and show a square preview while pressing or dragging. The eraser stores real `ERASER` strokes and clears previous pixels during editing and PNG rendering; it is not a white pen. Undo and redo work at the stroke level, including eraser strokes. Tap `Share PNG` to send a PNG image through the Android share sheet, or `Export PNG` to save a PNG image to a destination such as Downloads or Google Drive. Drawing stroke JSON stays inside the app and is not included in shared content.
 
-From another Android app, share plain text to `Local Notepad`. The app creates a new text note in `Uncategorized` using the shared subject when available, otherwise a preview of the shared text.
+From another Android app, share plain text to `Claw Notes`. The app creates a new text note in `Uncategorized` using the shared subject when available, otherwise a preview of the shared text.
 
 ## OCR
 
-Use `OCR from image` from the add menu to pick a photo or screenshot without storage permission. The app uses on-device ML Kit Text Recognition to turn images such as whiteboards, receipts, and book pages into searchable text notes, then opens the new text note for editing.
+Use `Scan text from image` from the add menu to pick a photo or screenshot without storage permission. The app uses on-device ML Kit Text Recognition to turn images such as whiteboards, receipts, and book pages into searchable text notes, then opens the new text note for editing.

@@ -46,6 +46,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -165,7 +166,7 @@ private sealed interface AppScreen {
     data class DrawingEditor(val noteId: Long) : AppScreen
 }
 
-private const val BACKUP_FILE_NAME = "local-notepad-backup.json"
+private const val BACKUP_FILE_NAME = "claw-notes-backup.json"
 private const val DEFAULT_DRAWING_EXPORT_WIDTH = 1080
 private const val DEFAULT_DRAWING_EXPORT_HEIGHT = 1440
 private const val MAX_DRAWING_EXPORT_DIMENSION = 4096
@@ -324,6 +325,7 @@ fun NotepadApp(
 
         AppScreen.Settings -> SettingsScreen(
             text = text,
+            appLanguage = appLanguage,
             editorFontSize = editorFontSize,
             viewModel = viewModel,
             onEditorFontSizeChange = viewModel::setEditorFontSize,
@@ -465,7 +467,7 @@ private fun MainScreen(
                             onClick = { selectedNotesToDelete = selectedNoteIds },
                             modifier = Modifier.testTag("delete_selected_notes_button"),
                         ) {
-                            Text(if (isTrash) text.permanentlyDelete else text.deleteSelected)
+                            Text(if (isTrash) text.permanentlyDelete else text.moveToTrash)
                         }
                     },
                 )
@@ -663,6 +665,7 @@ private fun MainScreen(
             body = text.deleteFolderBody(folderDisplayName(folder, text)),
             confirmText = text.delete,
             cancelText = text.cancel,
+            destructive = true,
             onDismiss = { folderToDelete = null },
             onConfirm = {
                 onDeleteFolder(folder.id)
@@ -688,8 +691,9 @@ private fun MainScreen(
         ConfirmDialog(
             title = text.deleteNote,
             body = text.deleteNoteBody,
-            confirmText = text.delete,
+            confirmText = text.moveToTrash,
             cancelText = text.cancel,
+            destructive = true,
             onDismiss = { noteToDelete = null },
             onConfirm = {
                 onDeleteNote(note.id)
@@ -704,6 +708,7 @@ private fun MainScreen(
             body = text.permanentlyDeleteNoteBody,
             confirmText = text.permanentlyDelete,
             cancelText = text.cancel,
+            destructive = true,
             onDismiss = { noteToPermanentlyDelete = null },
             onConfirm = {
                 onPermanentlyDeleteNote(note.id)
@@ -716,8 +721,9 @@ private fun MainScreen(
         ConfirmDialog(
             title = if (isTrash) text.permanentlyDeleteSelectedNotes else text.deleteSelectedNotes,
             body = if (isTrash) text.permanentlyDeleteSelectedNotesBody else text.deleteSelectedNotesBody,
-            confirmText = if (isTrash) text.permanentlyDelete else text.delete,
+            confirmText = if (isTrash) text.permanentlyDelete else text.moveToTrash,
             cancelText = text.cancel,
+            destructive = true,
             onDismiss = { selectedNotesToDelete = null },
             onConfirm = {
                 if (isTrash) {
@@ -735,6 +741,7 @@ private fun MainScreen(
 @Composable
 private fun SettingsScreen(
     text: UiText,
+    appLanguage: AppLanguage,
     editorFontSize: EditorFontSize,
     viewModel: NotepadViewModel,
     onEditorFontSizeChange: (EditorFontSize) -> Unit,
@@ -743,6 +750,11 @@ private fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingBackupJson by remember { mutableStateOf<String?>(null) }
+    var lastBackupAt by remember { mutableStateOf<Long?>(null) }
+    var lastRestoreAt by remember { mutableStateOf<Long?>(null) }
+    var showRestoreConfirmDialog by remember { mutableStateOf(false) }
+    var isBackupInProgress by remember { mutableStateOf(false) }
+    var isRestoreInProgress by remember { mutableStateOf(false) }
 
     val createBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
@@ -752,13 +764,17 @@ private fun SettingsScreen(
         if (uri == null || backupJson == null) return@rememberLauncherForActivityResult
 
         scope.launch {
+            isBackupInProgress = true
             try {
                 withContext(Dispatchers.IO) {
                     writeTextToUri(context, uri, backupJson)
                 }
+                lastBackupAt = System.currentTimeMillis()
                 Toast.makeText(context, text.backupComplete, Toast.LENGTH_SHORT).show()
             } catch (_: Exception) {
                 Toast.makeText(context, text.backupFailed, Toast.LENGTH_SHORT).show()
+            } finally {
+                isBackupInProgress = false
             }
         }
     }
@@ -769,15 +785,18 @@ private fun SettingsScreen(
         if (uri == null) return@rememberLauncherForActivityResult
 
         scope.launch {
+            isRestoreInProgress = true
             try {
                 val backupJson = withContext(Dispatchers.IO) {
                     readTextFromUri(context, uri)
                 }
                 viewModel.importBackupJson(backupJson)
+                lastRestoreAt = System.currentTimeMillis()
                 Toast.makeText(context, text.restoreComplete, Toast.LENGTH_SHORT).show()
-                onBack()
             } catch (_: Exception) {
                 Toast.makeText(context, text.restoreFailed, Toast.LENGTH_SHORT).show()
+            } finally {
+                isRestoreInProgress = false
             }
         }
     }
@@ -800,6 +819,7 @@ private fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -824,6 +844,40 @@ private fun SettingsScreen(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
+            Text(
+                text = text.backupTargetHint,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            lastBackupAt?.let { backedUpAt ->
+                Text(
+                    text = "${text.lastBackup}: ${formatTime(backedUpAt, appLanguage)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("last_backup_status"),
+                )
+            }
+            lastRestoreAt?.let { restoredAt ->
+                Text(
+                    text = "${text.lastRestore}: ${formatTime(restoredAt, appLanguage)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("last_restore_status"),
+                )
+            }
+            if (isBackupInProgress || isRestoreInProgress) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.testTag("backup_restore_progress"),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                    Text(
+                        text = if (isBackupInProgress) text.backupInProgress else text.restoreInProgress,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
             Button(
                 onClick = {
                     scope.launch {
@@ -835,6 +889,7 @@ private fun SettingsScreen(
                         }
                     }
                 },
+                enabled = !isBackupInProgress && !isRestoreInProgress,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("backup_button"),
@@ -842,11 +897,8 @@ private fun SettingsScreen(
                 Text(text.backupToGoogleDrive)
             }
             Button(
-                onClick = {
-                    restoreBackupLauncher.launch(
-                        arrayOf("application/json", "text/plain", "*/*"),
-                    )
-                },
+                onClick = { showRestoreConfirmDialog = true },
+                enabled = !isBackupInProgress && !isRestoreInProgress,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("restore_button"),
@@ -854,6 +906,23 @@ private fun SettingsScreen(
                 Text(text.restoreFromBackup)
             }
         }
+    }
+
+    if (showRestoreConfirmDialog) {
+        ConfirmDialog(
+            title = text.restoreBackupConfirmTitle,
+            body = text.restoreBackupConfirmBody,
+            confirmText = text.restoreFromBackup,
+            cancelText = text.cancel,
+            destructive = true,
+            onDismiss = { showRestoreConfirmDialog = false },
+            onConfirm = {
+                showRestoreConfirmDialog = false
+                restoreBackupLauncher.launch(
+                    arrayOf("application/json", "text/plain", "*/*"),
+                )
+            },
+        )
     }
 }
 
@@ -1406,7 +1475,7 @@ private fun NoteRow(
                             Text(text.move)
                         }
                         TextButton(onClick = onDelete) {
-                            Text(text.delete)
+                            Text(text.moveToTrash)
                         }
                     }
                 }
@@ -1934,7 +2003,7 @@ private fun TextEditorScreen(
                                     },
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(text.delete) },
+                                    text = { Text(text.moveToTrash) },
                                     modifier = Modifier.testTag("delete_text_note_menu_item"),
                                     onClick = {
                                         isMoreMenuExpanded = false
@@ -2356,8 +2425,9 @@ private fun TextEditorScreen(
         ConfirmDialog(
             title = text.deleteNote,
             body = text.deleteNoteBody,
-            confirmText = text.delete,
+            confirmText = text.moveToTrash,
             cancelText = text.cancel,
+            destructive = true,
             onDismiss = { showDeleteDialog = false },
             onConfirm = {
                 viewModel.deleteNote(noteId)
@@ -2512,6 +2582,7 @@ private fun DrawingEditorScreen(
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var hasHandledInitialDrawingFocus by remember(noteId) { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showClearDialog by remember { mutableStateOf(false) }
     var pendingPngBytes by remember { mutableStateOf<ByteArray?>(null) }
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -2656,7 +2727,7 @@ private fun DrawingEditorScreen(
         viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(updatedStrokes))
     }
 
-    fun clearDrawing() {
+    fun clearDrawingNow() {
         strokes = emptyList()
         redoStrokes = emptyList()
         viewModel.saveDrawingNote(noteId, title, "[]")
@@ -2708,7 +2779,7 @@ private fun DrawingEditorScreen(
                     },
                     actions = {
                         TextButton(onClick = { showDeleteDialog = true }) {
-                            Text(text.delete)
+                            Text(text.moveToTrash)
                         }
                     },
                 )
@@ -2777,7 +2848,7 @@ private fun DrawingEditorScreen(
                     text = text,
                     onUndo = ::undoStroke,
                     onRedo = ::redoStroke,
-                    onClear = ::clearDrawing,
+                    onClear = { showClearDialog = true },
                     onSharePng = ::shareCurrentDrawingPng,
                     onExportPng = ::exportCurrentDrawingPng,
                     onToolChange = { selectedTool = it },
@@ -2848,7 +2919,7 @@ private fun DrawingEditorScreen(
                     text = text,
                     onUndo = ::undoStroke,
                     onRedo = ::redoStroke,
-                    onClear = ::clearDrawing,
+                    onClear = { showClearDialog = true },
                     onSharePng = ::shareCurrentDrawingPng,
                     onExportPng = ::exportCurrentDrawingPng,
                     onToolChange = { selectedTool = it },
@@ -2863,13 +2934,29 @@ private fun DrawingEditorScreen(
         ConfirmDialog(
             title = text.deleteNote,
             body = text.deleteNoteBody,
-            confirmText = text.delete,
+            confirmText = text.moveToTrash,
             cancelText = text.cancel,
+            destructive = true,
             onDismiss = { showDeleteDialog = false },
             onConfirm = {
                 viewModel.deleteNote(noteId)
                 showDeleteDialog = false
                 onDeleted()
+            },
+        )
+    }
+
+    if (showClearDialog) {
+        ConfirmDialog(
+            title = text.clearDrawing,
+            body = text.clearDrawingBody,
+            confirmText = text.clear,
+            cancelText = text.cancel,
+            destructive = true,
+            onDismiss = { showClearDialog = false },
+            onConfirm = {
+                clearDrawingNow()
+                showClearDialog = false
             },
         )
     }
@@ -2898,7 +2985,11 @@ private fun DrawingToolBar(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 2.dp),
+        ) {
             item {
                 Button(
                     onClick = onUndo,
@@ -2932,7 +3023,7 @@ private fun DrawingToolBar(
                         onClick = onSharePng,
                         modifier = Modifier.testTag("share_drawing_png_button"),
                     ) {
-                        Text(text.sharePng)
+                        Text(text.share)
                     }
                 }
                 item {
@@ -2940,13 +3031,17 @@ private fun DrawingToolBar(
                         onClick = onExportPng,
                         modifier = Modifier.testTag("export_drawing_png_button"),
                     ) {
-                        Text(text.exportPng)
+                        Text(text.export)
                     }
                 }
             }
         }
 
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 2.dp),
+        ) {
             DrawingTool.entries.forEach { tool ->
                 item {
                     FilterChip(
@@ -2959,11 +3054,10 @@ private fun DrawingToolBar(
             }
             DrawingBrushSize.entries.forEach { size ->
                 item {
-                    val sizeLabel = if (selectedTool == DrawingTool.Eraser) text.eraserSize else text.penSize
                     FilterChip(
                         selected = selectedBrushSize == size,
                         onClick = { onBrushSizeChange(size) },
-                        label = { Text("$sizeLabel: ${size.label(text, selectedTool)}") },
+                        label = { Text(size.label(text, selectedTool)) },
                         modifier = Modifier.testTag("drawing_brush_${size.name}"),
                     )
                 }
@@ -2971,7 +3065,11 @@ private fun DrawingToolBar(
         }
 
         if (selectedTool == DrawingTool.Pen) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 2.dp),
+            ) {
                 DrawingColorOption.entries.forEach { color ->
                     item {
                         FilterChip(
@@ -3380,11 +3478,6 @@ private fun ReminderControls(
             },
             modifier = Modifier.testTag("note_reminder_status"),
         )
-        Text(
-            text = text.notificationPermissionHint,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = ::openDateTimePicker,
@@ -3447,6 +3540,9 @@ private fun FolderNameDialog(
 ) {
     var name by remember(initialName) { mutableStateOf(initialName) }
     var error by remember { mutableStateOf<String?>(null) }
+    val trimmedName = name.trim()
+    val validationError = validateFolderName(trimmedName, folders, text, currentFolderId)
+    val showValidationError = name.isNotBlank() && validationError != null
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3464,7 +3560,7 @@ private fun FolderNameDialog(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.testTag("folder_name_input"),
                 )
-                error?.let {
+                (error ?: if (showValidationError) validationError else null)?.let {
                     Text(
                         text = it,
                         color = MaterialTheme.colorScheme.error,
@@ -3476,12 +3572,12 @@ private fun FolderNameDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    val trimmed = name.trim()
-                    error = validateFolderName(trimmed, folders, text, currentFolderId)
-                    if (error == null) onConfirm(trimmed)
+                    error = validationError
+                    if (error == null) onConfirm(trimmedName)
                 },
+                enabled = validationError == null,
             ) {
-                Text(text.save)
+                Text(if (currentFolderId == null) text.create else text.save)
             }
         },
         dismissButton = {
@@ -3535,6 +3631,7 @@ private fun ConfirmDialog(
     body: String,
     confirmText: String,
     cancelText: String,
+    destructive: Boolean = false,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -3545,6 +3642,11 @@ private fun ConfirmDialog(
         confirmButton = {
             TextButton(
                 onClick = onConfirm,
+                colors = if (destructive) {
+                    ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                } else {
+                    ButtonDefaults.textButtonColors()
+                },
                 modifier = Modifier.testTag("confirm_dialog_confirm_button"),
             ) {
                 Text(confirmText)

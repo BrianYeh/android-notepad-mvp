@@ -296,6 +296,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     }
 
     suspend fun importBackupJson(json: String) {
+        ReminderScheduler.cancelFutureReminders(getApplication())
         repository.importBackupJson(json)
         ReminderScheduler.rescheduleFutureReminders(getApplication())
     }
