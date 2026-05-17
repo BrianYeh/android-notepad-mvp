@@ -7,6 +7,7 @@ import androidx.room.PrimaryKey
 
 const val DEFAULT_FOLDER_ID = 1L
 const val DEFAULT_FOLDER_NAME = "Uncategorized"
+const val DEFAULT_FOLDER_SYNC_ID = "folder:default"
 const val ALL_NOTES_FILTER_NAME = "All Notes"
 
 object NoteTypes {
@@ -46,13 +47,19 @@ enum class ReminderFilter {
     Upcoming,
 }
 
-@Entity(tableName = "folders")
+@Entity(
+    tableName = "folders",
+    indices = [Index("syncId")],
+)
 data class FolderEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    val syncId: String = SyncIds.newFolderSyncId(),
     val name: String,
     val createdAt: Long,
     val updatedAt: Long,
+    val isDeleted: Boolean = false,
+    val deletedAt: Long? = null,
 )
 
 @Entity(
@@ -65,11 +72,12 @@ data class FolderEntity(
             onDelete = ForeignKey.RESTRICT,
         ),
     ],
-    indices = [Index("folderId")],
+    indices = [Index("folderId"), Index("syncId")],
 )
 data class NoteEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    val syncId: String = SyncIds.newNoteSyncId(),
     val folderId: Long,
     val type: String,
     val title: String,

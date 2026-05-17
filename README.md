@@ -1,6 +1,6 @@
 # Just Notes
 
-Native Android notepad MVP built with Kotlin, Jetpack Compose, Room, and MVVM.
+Native Android notepad built with Kotlin, Jetpack Compose, Room, and MVVM.
 
 ## Features
 
@@ -30,8 +30,9 @@ Native Android notepad MVP built with Kotlin, Jetpack Compose, Room, and MVVM.
 - Receive `text/plain` shares from other apps and create a new text note in `Uncategorized`
 - Drawing data is stored locally in Room as serialized JSON stroke data
 - In-app language selector for English and Traditional Chinese
-- Manual JSON backup and restore from Settings; choose Google Drive in the Android file picker to store a backup
-- No automatic sync, login system, image export, or app-managed cloud storage
+- Manual JSON backup and restore from Settings; choose Google Drive in the Android file picker if you want the backup file stored there
+- Sync-ready local metadata for stable folder/note IDs and tombstones
+- No Google account sync, login system, or app-managed Drive storage until the OAuth/Drive setup in `GOOGLE_ACCOUNT_SYNC_SETUP.md` is completed
 
 ## Requirements
 
@@ -80,7 +81,11 @@ See `UI_OPTIMIZATIONS.md` for the current UI optimization checklist and manual/A
 
 ## Storage
 
-All notes and folders are stored in the local Room database `local_notepad.db`. Deleted notes stay in the local database until permanently deleted from Trash. Android cloud backup is disabled for the app. Manual backups are user-created JSON exports saved to a location selected in the Android file picker.
+All notes and folders are stored in the local Room database `local_notepad.db`. Deleted notes stay in the local database until permanently deleted from Trash. Deleted folders are retained as local tombstones for future sync safety. Android cloud backup is disabled for the app. Manual backups are user-created JSON exports saved to a location selected in the Android file picker.
+
+## Google Account Sync
+
+True Google account sync is intentionally blocked in this repository until Google Cloud OAuth and Drive API credentials are configured. See `GOOGLE_ACCOUNT_SYNC_SETUP.md` for the required package name, debug signing fingerprints, Drive scopes, dependencies, and local configuration files. The current Settings screen is labeled as manual backup so a Drive file-picker backup is not presented as account sync.
 
 ## Notifications
 

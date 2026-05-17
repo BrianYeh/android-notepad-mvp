@@ -19,7 +19,7 @@ class NotepadRepository(
     fun observeNote(noteId: Long): Flow<NoteEntity?> = dao.observeNote(noteId)
 
     suspend fun ensureDefaultFolder() {
-        dao.ensureDefaultFolder()
+        dao.ensureSyncMetadata()
     }
 
     suspend fun createFolder(name: String): Long {
@@ -156,7 +156,7 @@ class NotepadRepository(
     }
 
     suspend fun exportBackupJson(): String {
-        dao.ensureDefaultFolder()
+        dao.ensureSyncMetadata()
         return BackupJson.encode(
             folders = dao.getAllFolders(),
             notes = dao.getAllNotes(),

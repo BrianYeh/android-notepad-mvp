@@ -374,7 +374,7 @@ class TextInputTest {
     }
 
     @Test
-    fun settingsExposeOnlineSyncControls() {
+    fun settingsExposeManualBackupControls() {
         composeRule.onNodeWithTag("settings_button").performClick()
 
         composeRule.onNodeWithTag("online_sync_title").performScrollTo().assertIsDisplayed()

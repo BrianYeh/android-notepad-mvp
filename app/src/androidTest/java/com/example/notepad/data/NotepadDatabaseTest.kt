@@ -183,6 +183,8 @@ class NotepadDatabaseTest {
                 reminderAt = 10_000L,
             ),
         )
+        val originalFolderSyncId = dao.getFolder(folderId)?.syncId
+        val originalNoteSyncId = dao.getNote(noteId)?.syncId
         val backupJson = repository.exportBackupJson()
 
         val extraFolderId = dao.insertFolder(
@@ -207,7 +209,9 @@ class NotepadDatabaseTest {
         repository.importBackupJson(backupJson)
 
         assertEquals(listOf(DEFAULT_FOLDER_ID, folderId), dao.getAllFolders().map { it.id })
+        assertEquals(originalFolderSyncId, dao.getAllFolders().first { it.id == folderId }.syncId)
         assertEquals(noteId, dao.getAllNotes().single().id)
+        assertEquals(originalNoteSyncId, dao.getAllNotes().single().syncId)
         assertEquals("Draft", dao.getAllNotes().single().textContent)
         assertEquals(10_000L, dao.getAllNotes().single().reminderAt)
     }

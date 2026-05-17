@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 abstract class NotepadDao {
-    @Query("SELECT * FROM folders ORDER BY CASE WHEN id = :defaultFolderId THEN 0 ELSE 1 END, name COLLATE NOCASE ASC")
+    @Query("SELECT * FROM folders WHERE isDeleted = 0 ORDER BY CASE WHEN id = :defaultFolderId THEN 0 ELSE 1 END, name COLLATE NOCASE ASC")
     abstract fun observeFolders(defaultFolderId: Long = DEFAULT_FOLDER_ID): Flow<List<FolderEntity>>
 
     @Query("SELECT * FROM notes ORDER BY updatedAt DESC")
@@ -34,7 +34,7 @@ abstract class NotepadDao {
     @Query("SELECT * FROM notes WHERE isDeleted = 0 AND reminderAt IS NOT NULL AND reminderAt > :now ORDER BY reminderAt ASC")
     abstract suspend fun getFutureReminderNotes(now: Long): List<NoteEntity>
 
-    @Query("SELECT * FROM folders WHERE id = :folderId")
+    @Query("SELECT * FROM folders WHERE id = :folderId AND isDeleted = 0")
     abstract suspend fun getFolder(folderId: Long): FolderEntity?
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -55,8 +55,8 @@ abstract class NotepadDao {
     @Query("UPDATE folders SET name = :name, updatedAt = :updatedAt WHERE id = :folderId")
     abstract suspend fun renameFolder(folderId: Long, name: String, updatedAt: Long)
 
-    @Query("DELETE FROM folders WHERE id = :folderId")
-    abstract suspend fun deleteFolderById(folderId: Long)
+    @Query("UPDATE folders SET isDeleted = 1, deletedAt = :deletedAt, updatedAt = :deletedAt WHERE id = :folderId")
+    abstract suspend fun softDeleteFolder(folderId: Long, deletedAt: Long)
 
     @Query("UPDATE notes SET folderId = :targetFolderId, updatedAt = :updatedAt WHERE folderId = :sourceFolderId")
     abstract suspend fun moveNotesToFolder(sourceFolderId: Long, targetFolderId: Long, updatedAt: Long)
@@ -85,11 +85,24 @@ abstract class NotepadDao {
     @Query("DELETE FROM folders")
     abstract suspend fun deleteAllFolders()
 
+    @Query("SELECT id FROM folders WHERE syncId = ''")
+    abstract suspend fun getFolderIdsMissingSyncIds(): List<Long>
+
+    @Query("SELECT id FROM notes WHERE syncId = ''")
+    abstract suspend fun getNoteIdsMissingSyncIds(): List<Long>
+
+    @Query("UPDATE folders SET syncId = :syncId WHERE id = :folderId")
+    abstract suspend fun updateFolderSyncId(folderId: Long, syncId: String)
+
+    @Query("UPDATE notes SET syncId = :syncId WHERE id = :noteId")
+    abstract suspend fun updateNoteSyncId(noteId: Long, syncId: String)
+
     @Transaction
     open suspend fun ensureDefaultFolder(now: Long = System.currentTimeMillis()) {
         insertFolder(
             FolderEntity(
                 id = DEFAULT_FOLDER_ID,
+                syncId = DEFAULT_FOLDER_SYNC_ID,
                 name = DEFAULT_FOLDER_NAME,
                 createdAt = now,
                 updatedAt = now,
@@ -102,7 +115,25 @@ abstract class NotepadDao {
         if (folderId == DEFAULT_FOLDER_ID) return
         ensureDefaultFolder(now)
         moveNotesToFolder(folderId, DEFAULT_FOLDER_ID, now)
-        deleteFolderById(folderId)
+        softDeleteFolder(folderId, now)
+    }
+
+    @Transaction
+    open suspend fun ensureSyncMetadata(now: Long = System.currentTimeMillis()) {
+        ensureDefaultFolder(now)
+        getFolderIdsMissingSyncIds().forEach { folderId ->
+            updateFolderSyncId(
+                folderId = folderId,
+                syncId = if (folderId == DEFAULT_FOLDER_ID) {
+                    DEFAULT_FOLDER_SYNC_ID
+                } else {
+                    SyncIds.newFolderSyncId()
+                },
+            )
+        }
+        getNoteIdsMissingSyncIds().forEach { noteId ->
+            updateNoteSyncId(noteId, SyncIds.newNoteSyncId())
+        }
     }
 
     @Transaction
@@ -111,6 +142,6 @@ abstract class NotepadDao {
         deleteAllFolders()
         restoreFolders(backupData.folders)
         restoreNotes(backupData.notes)
-        ensureDefaultFolder()
+        ensureSyncMetadata()
     }
 }

@@ -9,7 +9,7 @@ data class BackupData(
 )
 
 object BackupJson {
-    private const val VERSION = 3
+    private const val VERSION = 4
 
     fun encode(folders: List<FolderEntity>, notes: List<NoteEntity>): String {
         return JSONObject()
@@ -20,9 +20,12 @@ object BackupJson {
                     put(
                         JSONObject()
                             .put("id", folder.id)
+                            .put("syncId", folder.syncId)
                             .put("name", folder.name)
                             .put("createdAt", folder.createdAt)
-                            .put("updatedAt", folder.updatedAt),
+                            .put("updatedAt", folder.updatedAt)
+                            .put("isDeleted", folder.isDeleted)
+                            .putNullableLong("deletedAt", folder.deletedAt),
                     )
                 }
             })
@@ -31,6 +34,7 @@ object BackupJson {
                     put(
                         JSONObject()
                             .put("id", note.id)
+                            .put("syncId", note.syncId)
                             .put("folderId", note.folderId)
                             .put("type", note.type)
                             .put("title", note.title)
@@ -60,18 +64,28 @@ object BackupJson {
 
             folders[id] = FolderEntity(
                 id = id,
+                syncId = folderJson.optionalString("syncId")
+                    ?: if (id == DEFAULT_FOLDER_ID) DEFAULT_FOLDER_SYNC_ID else SyncIds.newFolderSyncId(),
                 name = folderJson.optString("name").ifBlank {
                     if (id == DEFAULT_FOLDER_ID) DEFAULT_FOLDER_NAME else "Folder $id"
                 },
                 createdAt = folderJson.optLong("createdAt", now),
                 updatedAt = folderJson.optLong("updatedAt", now),
+                isDeleted = folderJson.optBoolean("isDeleted", false),
+                deletedAt = folderJson.optionalLong("deletedAt"),
             )
         }
 
         folders[DEFAULT_FOLDER_ID] = folders[DEFAULT_FOLDER_ID]
-            ?.copy(name = DEFAULT_FOLDER_NAME)
+            ?.copy(
+                syncId = DEFAULT_FOLDER_SYNC_ID,
+                name = DEFAULT_FOLDER_NAME,
+                isDeleted = false,
+                deletedAt = null,
+            )
             ?: FolderEntity(
                 id = DEFAULT_FOLDER_ID,
+                syncId = DEFAULT_FOLDER_SYNC_ID,
                 name = DEFAULT_FOLDER_NAME,
                 createdAt = now,
                 updatedAt = now,
@@ -95,6 +109,7 @@ object BackupJson {
 
             notes[id] = NoteEntity(
                 id = id,
+                syncId = noteJson.optionalString("syncId") ?: SyncIds.newNoteSyncId(),
                 folderId = folderId,
                 type = type,
                 title = noteJson.optString("title"),
