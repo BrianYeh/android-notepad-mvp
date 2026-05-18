@@ -85,6 +85,7 @@ data class RemoteNote(
     val deletedAt: Long? = null,
     val isPinned: Boolean = false,
     val reminderAt: Long? = null,
+    val purged: Boolean = false,
 )
 
 interface DriveSyncClient {
@@ -112,6 +113,7 @@ object SyncMerge {
         remote: RemoteSyncSnapshot?,
         now: Long,
         conflictWindowMillis: Long = 0L,
+        conflictModifiedAfterMillis: Long? = null,
         conflictSyncIdFactory: (String) -> String = SyncIds::newConflictNoteSyncId,
     ): SyncMergeResult {
         if (remote == null) {
@@ -130,6 +132,7 @@ object SyncMerge {
             remote = remote.notes,
             now = now,
             conflictWindowMillis = conflictWindowMillis,
+            conflictModifiedAfterMillis = conflictModifiedAfterMillis,
             conflictSyncIdFactory = conflictSyncIdFactory,
         )
 
@@ -192,6 +195,7 @@ object SyncMerge {
         remote: List<RemoteNote>,
         now: Long,
         conflictWindowMillis: Long,
+        conflictModifiedAfterMillis: Long?,
         conflictSyncIdFactory: (String) -> String,
     ): NoteMerge {
         val allSyncIds = (local.map { it.syncId } + remote.map { it.syncId }).toSortedSet()
@@ -209,6 +213,7 @@ object SyncMerge {
                     remote = remoteNote,
                     now = now,
                     conflictWindowMillis = conflictWindowMillis,
+                    conflictModifiedAfterMillis = conflictModifiedAfterMillis,
                     conflictSyncIdFactory = conflictSyncIdFactory,
                 ).also { mergedNote ->
                     mergedNote.conflictCopy?.let(conflicts::add)
@@ -232,8 +237,11 @@ object SyncMerge {
         remote: RemoteNote,
         now: Long,
         conflictWindowMillis: Long,
+        conflictModifiedAfterMillis: Long?,
         conflictSyncIdFactory: (String) -> String,
     ): MergedNote {
+        purgedWinnerOrNull(local, remote)?.let { return MergedNote(it, null) }
+
         val deletionWinner = newerDeletionOrNull(
             localUpdatedAt = local.updatedAt,
             localDeletedAt = local.deletedAt,
@@ -243,9 +251,17 @@ object SyncMerge {
         if (deletionWinner == DeletionWinner.Local) return MergedNote(local, null)
         if (deletionWinner == DeletionWinner.Remote) return MergedNote(remote, null)
 
-        if (!local.hasSameUserContent(remote) && abs(local.updatedAt - remote.updatedAt) <= conflictWindowMillis) {
+        val bothChangedSinceLastSync = conflictModifiedAfterMillis != null &&
+            local.updatedAt > conflictModifiedAfterMillis &&
+            remote.updatedAt > conflictModifiedAfterMillis
+        val changedInsideConflictWindow = abs(local.updatedAt - remote.updatedAt) <= conflictWindowMillis
+
+        if (!local.hasSameUserContent(remote) && (bothChangedSinceLastSync || changedInsideConflictWindow)) {
             val winner = if (local.updatedAt >= remote.updatedAt) local else remote
             val loser = if (winner == local) remote else local
+            if (loser.deletedAt != null || loser.purged) {
+                return MergedNote(winner, null)
+            }
             return MergedNote(
                 note = winner,
                 conflictCopy = loser.copy(
@@ -254,6 +270,7 @@ object SyncMerge {
                     createdAt = now,
                     updatedAt = now,
                     deletedAt = null,
+                    purged = false,
                 ),
             )
         }
@@ -262,6 +279,26 @@ object SyncMerge {
             note = if (local.updatedAt >= remote.updatedAt) local else remote,
             conflictCopy = null,
         )
+    }
+
+    private fun purgedWinnerOrNull(local: RemoteNote, remote: RemoteNote): RemoteNote? {
+        val localPurgedAt = local.purgedAt()
+        val remotePurgedAt = remote.purgedAt()
+        return if (localPurgedAt == null) {
+            remotePurgedAt?.let { remote.asPersistablePurge(it) }
+        } else if (remotePurgedAt == null || localPurgedAt >= remotePurgedAt) {
+            local.asPersistablePurge(localPurgedAt)
+        } else {
+            remote.asPersistablePurge(remotePurgedAt)
+        }
+    }
+
+    private fun RemoteNote.purgedAt(): Long? {
+        return if (purged) deletedAt ?: updatedAt else null
+    }
+
+    private fun RemoteNote.asPersistablePurge(purgedAt: Long): RemoteNote {
+        return if (deletedAt != null) this else copy(deletedAt = purgedAt)
     }
 
     private enum class DeletionWinner {
@@ -291,11 +328,125 @@ object SyncMerge {
             drawingData == other.drawingData &&
             isPinned == other.isPinned &&
             reminderAt == other.reminderAt &&
-            deletedAt == other.deletedAt
+            deletedAt == other.deletedAt &&
+            purged == other.purged
     }
 
     private fun RemoteNote.conflictCopyTitle(): String {
         val baseTitle = title.ifBlank { "Untitled note" }
         return "$baseTitle (conflict copy)"
+    }
+}
+
+object RemoteSnapshotConsolidator {
+    fun consolidate(
+        snapshots: List<RemoteSyncSnapshot>,
+        now: Long,
+        conflictSyncIdFactory: (String) -> String = SyncIds::newConflictNoteSyncId,
+    ): RemoteSyncSnapshot? {
+        val orderedSnapshots = snapshots.sortedWith(
+            compareBy<RemoteSyncSnapshot> { it.exportedAt }
+                .thenBy { it.snapshotId },
+        )
+        val base = orderedSnapshots.reduceOrNull { merged, next ->
+            SyncMerge.mergeSnapshots(
+                local = merged,
+                remote = next,
+                now = now,
+            ).snapshot
+        } ?: return null
+        val conflictCopies = concurrentConflictCopies(
+            snapshots = orderedSnapshots,
+            winners = base.notes.associateBy { it.syncId },
+            now = now,
+            conflictSyncIdFactory = conflictSyncIdFactory,
+        )
+        if (conflictCopies.isEmpty()) return base
+        return base.copy(
+            notes = (base.notes + conflictCopies).sortedWith(
+                compareBy<RemoteNote> { it.deletedAt != null }.thenBy { it.syncId },
+            ),
+        )
+    }
+
+    private data class SnapshotNote(
+        val snapshot: RemoteSyncSnapshot,
+        val note: RemoteNote,
+    )
+
+    private fun concurrentConflictCopies(
+        snapshots: List<RemoteSyncSnapshot>,
+        winners: Map<String, RemoteNote>,
+        now: Long,
+        conflictSyncIdFactory: (String) -> String,
+    ): List<RemoteNote> {
+        val versionsBySyncId = snapshots
+            .flatMap { snapshot -> snapshot.notes.map { note -> SnapshotNote(snapshot, note) } }
+            .groupBy { it.note.syncId }
+
+        return versionsBySyncId.flatMap { (syncId, versions) ->
+            val winner = winners[syncId] ?: return@flatMap emptyList()
+            val winnerVersion = versions
+                .filter { it.note.hasSameUserContentAs(winner) }
+                .maxWithOrNull(compareBy<SnapshotNote> { it.snapshot.exportedAt }.thenBy { it.snapshot.snapshotId })
+                ?: return@flatMap emptyList()
+
+            versions
+                .filterNot { it.note.hasSameUserContentAs(winner) }
+                .filterNot { winnerVersion.snapshot.hasSeen(it.snapshot) }
+                .filter { it.note.deletedAt == null }
+                .distinctBy { it.note.conflictContentKey() }
+                .map { version ->
+                    version.note.copy(
+                        syncId = conflictSyncIdFactory(version.note.syncId),
+                        title = version.note.conflictCopyTitle(),
+                        createdAt = now,
+                        updatedAt = now,
+                        deletedAt = null,
+                    )
+                }
+        }
+    }
+
+    private fun RemoteSyncSnapshot.hasSeen(other: RemoteSyncSnapshot): Boolean {
+        if (sourceDevice.deviceId == other.sourceDevice.deviceId && exportedAt >= other.exportedAt) {
+            return true
+        }
+        return devices
+            .firstOrNull { it.deviceId == other.sourceDevice.deviceId }
+            ?.lastSyncAt
+            ?.let { it >= other.exportedAt }
+            ?: false
+    }
+
+    private fun RemoteNote.hasSameUserContentAs(other: RemoteNote): Boolean {
+        return folderSyncId == other.folderSyncId &&
+            type == other.type &&
+            title == other.title &&
+            textContent == other.textContent &&
+            drawingData == other.drawingData &&
+            isPinned == other.isPinned &&
+            reminderAt == other.reminderAt &&
+            deletedAt == other.deletedAt &&
+            purged == other.purged
+    }
+
+    private fun RemoteNote.conflictCopyTitle(): String {
+        val baseTitle = title.ifBlank { "Untitled note" }
+        return "$baseTitle (conflict copy)"
+    }
+
+    private fun RemoteNote.conflictContentKey(): String {
+        return listOf(
+            folderSyncId,
+            type,
+            title,
+            textContent,
+            drawingData,
+            isPinned,
+            reminderAt,
+            deletedAt,
+            purged,
+        ).joinToString("|")
     }
 }

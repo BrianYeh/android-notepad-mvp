@@ -8,8 +8,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [FolderEntity::class, NoteEntity::class],
-    version = 4,
+    entities = [FolderEntity::class, NoteEntity::class, NoteTombstoneEntity::class],
+    version = 5,
     exportSchema = false,
 )
 abstract class NotepadDatabase : RoomDatabase() {
@@ -26,7 +26,7 @@ abstract class NotepadDatabase : RoomDatabase() {
                     NotepadDatabase::class.java,
                     "local_notepad.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { instance = it }
             }
@@ -55,6 +55,17 @@ abstract class NotepadDatabase : RoomDatabase() {
                 db.execSQL("UPDATE folders SET syncId = '$DEFAULT_FOLDER_SYNC_ID' WHERE id = $DEFAULT_FOLDER_ID")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_folders_syncId ON folders(syncId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_syncId ON notes(syncId)")
+            }
+        }
+
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS note_tombstones (" +
+                        "syncId TEXT NOT NULL PRIMARY KEY, " +
+                        "deletedAt INTEGER NOT NULL" +
+                        ")",
+                )
             }
         }
     }

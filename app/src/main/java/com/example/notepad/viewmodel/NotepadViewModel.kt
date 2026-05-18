@@ -2,11 +2,15 @@ package com.example.notepad.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.notepad.data.AppLanguage
+import com.example.notepad.data.DriveSyncResult
 import com.example.notepad.data.EditorFontSize
+import com.example.notepad.data.GoogleDriveSyncClient
 import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NoteQuickFilter
 import com.example.notepad.data.NoteListMode
@@ -16,23 +20,41 @@ import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
 import com.example.notepad.data.ReminderFilter
+import com.example.notepad.data.SyncDevice
+import com.example.notepad.data.SyncError
+import com.example.notepad.data.SyncErrorCode
+import com.example.notepad.data.SyncMerge
+import com.example.notepad.data.SyncMetadata
+import com.example.notepad.data.SyncStatus
 import com.example.notepad.data.buildSharedNoteTitle
 import com.example.notepad.ocr.MlKitOcrTextRecognizer
 import com.example.notepad.ocr.OcrNoteResult
 import com.example.notepad.ocr.OcrNoteUseCase
 import com.example.notepad.reminder.ReminderScheduler
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.util.UUID
 
 class NotepadViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("ui_settings", Context.MODE_PRIVATE)
     private val repository = NotepadRepository(
         NotepadDatabase.getInstance(application).notepadDao(),
     )
+    private val driveSyncClient = GoogleDriveSyncClient(application)
+    private val googleSyncMutex = Mutex()
+    private val deviceId = preferences.getString("sync_device_id", null) ?: UUID.randomUUID().toString().also {
+        preferences.edit().putString("sync_device_id", it).apply()
+    }
     private val ocrNoteUseCase = OcrNoteUseCase(
         recognizer = MlKitOcrTextRecognizer(application),
         repository = repository,
@@ -72,6 +94,21 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         preferences.getLong("last_online_restore_at", 0L).takeIf { it > 0L },
     )
     val lastOnlineRestoreAt: StateFlow<Long?> = _lastOnlineRestoreAt
+    private val _lastGoogleSyncAt = MutableStateFlow(
+        preferences.getLong("last_google_sync_at", 0L).takeIf {
+            it > 0L && preferences.getString("last_google_sync_account", null) == driveSyncClient.accountEmail
+        },
+    )
+    private val _syncMetadata = MutableStateFlow(
+        SyncMetadata(
+            deviceId = deviceId,
+            deviceName = currentDeviceName(),
+            accountEmail = driveSyncClient.accountEmail,
+            lastSyncedAt = _lastGoogleSyncAt.value,
+            status = if (driveSyncClient.accountEmail == null) SyncStatus.SignedOut else SyncStatus.Idle,
+        ),
+    )
+    val syncMetadata: StateFlow<SyncMetadata> = _syncMetadata
     private val _isRecognizingText = MutableStateFlow(false)
     val isRecognizingText: StateFlow<Boolean> = _isRecognizingText
 
@@ -192,6 +229,19 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             .apply()
     }
 
+    private fun recordGoogleSync(timestamp: Long = System.currentTimeMillis()) {
+        _lastGoogleSyncAt.value = timestamp
+        _syncMetadata.value = _syncMetadata.value.copy(
+            lastSyncedAt = timestamp,
+            status = SyncStatus.Succeeded,
+            lastError = null,
+        )
+        preferences.edit()
+            .putLong("last_google_sync_at", timestamp)
+            .putString("last_google_sync_account", driveSyncClient.accountEmail)
+            .apply()
+    }
+
     fun recordOnlineRestore(timestamp: Long = System.currentTimeMillis()) {
         _lastOnlineRestoreAt.value = timestamp
         preferences.edit()
@@ -210,6 +260,117 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             .remove("last_online_restore_at")
             .putBoolean("online_sync_auto_on_start", false)
             .apply()
+    }
+
+    fun googleSignInIntent(): Intent {
+        return driveSyncClient.signInIntent()
+    }
+
+    fun connectGoogleAccountFromIntent(data: Intent?): Boolean {
+        val account = try {
+            GoogleSignIn.getSignedInAccountFromIntent(data).getResult(ApiException::class.java)
+        } catch (_: ApiException) {
+            null
+        } ?: return false
+
+        val previousAccount = _syncMetadata.value.accountEmail
+        driveSyncClient.connect(account)
+        if (previousAccount != account.email) {
+            _lastGoogleSyncAt.value = null
+            preferences.edit()
+                .remove("last_google_sync_at")
+                .putString("last_google_sync_account", account.email)
+                .apply()
+        }
+        _syncMetadata.value = _syncMetadata.value.copy(
+            accountEmail = account.email,
+            lastSyncedAt = _lastGoogleSyncAt.value,
+            status = SyncStatus.Idle,
+            lastError = null,
+        )
+        return true
+    }
+
+    fun signOutGoogleAccount() {
+        driveSyncClient.disconnect()
+        _lastGoogleSyncAt.value = null
+        preferences.edit()
+            .remove("last_google_sync_at")
+            .remove("last_google_sync_account")
+            .apply()
+        _syncMetadata.value = _syncMetadata.value.copy(
+            accountEmail = null,
+            lastSyncedAt = null,
+            status = SyncStatus.SignedOut,
+            lastError = null,
+        )
+    }
+
+    suspend fun syncGoogleDrive(): DriveSyncResult<Unit> = googleSyncMutex.withLock {
+        val now = System.currentTimeMillis()
+        _syncMetadata.value = _syncMetadata.value.copy(status = SyncStatus.Syncing, lastError = null)
+        val sourceDevice = SyncDevice(
+            deviceId = deviceId,
+            deviceName = currentDeviceName(),
+            lastSyncAt = now,
+        )
+        val localExport = repository.exportRemoteSyncSnapshotWithFingerprint(
+            sourceDevice = sourceDevice,
+            accountEmail = driveSyncClient.accountEmail,
+            now = now,
+        )
+        val remoteSnapshot = when (val result = withContext(Dispatchers.IO) { driveSyncClient.readSnapshot() }) {
+            is DriveSyncResult.Success -> result.value
+            is DriveSyncResult.Failure -> {
+                updateSyncFailure(result.error)
+                return result
+            }
+        }
+        val mergeResult = SyncMerge.mergeSnapshots(
+            local = localExport.snapshot,
+            remote = remoteSnapshot,
+            now = now,
+            conflictModifiedAfterMillis = _lastGoogleSyncAt.value ?: if (remoteSnapshot != null) Long.MIN_VALUE else null,
+        )
+        return when (val result = withContext(Dispatchers.IO) { driveSyncClient.writeSnapshot(mergeResult.snapshot) }) {
+            is DriveSyncResult.Success -> {
+                val oldReminderNotes = repository.getFutureReminderNotes()
+                val localReplaceSucceeded = repository.replaceWithRemoteSyncSnapshot(
+                    snapshot = mergeResult.snapshot,
+                    expectedFingerprint = localExport.fingerprint,
+                )
+                if (!localReplaceSucceeded) {
+                    val error = SyncError(
+                        code = SyncErrorCode.Conflict,
+                        message = "Local notes changed during sync. Sync again.",
+                    )
+                    updateSyncFailure(error)
+                    return DriveSyncResult.Failure(error)
+                }
+                oldReminderNotes.forEach { note ->
+                    ReminderScheduler.cancel(getApplication(), note.id)
+                }
+                ReminderScheduler.rescheduleFutureReminders(getApplication())
+                recordGoogleSync(now)
+                _syncMetadata.value = _syncMetadata.value.copy(
+                    accountEmail = driveSyncClient.accountEmail,
+                    status = if (mergeResult.conflictCopies.isEmpty()) SyncStatus.Succeeded else SyncStatus.Conflict,
+                    lastError = null,
+                )
+                DriveSyncResult.Success(Unit)
+            }
+            is DriveSyncResult.Failure -> {
+                updateSyncFailure(result.error)
+                result
+            }
+        }
+    }
+
+    private fun updateSyncFailure(error: SyncError) {
+        _syncMetadata.value = _syncMetadata.value.copy(
+            status = SyncStatus.Failed,
+            lastError = error,
+        )
     }
 
     fun createFolder(name: String) {
@@ -397,4 +558,11 @@ private fun List<NoteEntity>.sortedFor(filters: NoteListFilters): List<NoteEntit
     } else {
         sorted
     }
+}
+
+private fun currentDeviceName(): String {
+    return listOf(Build.MANUFACTURER, Build.MODEL)
+        .filter { it.isNotBlank() }
+        .joinToString(" ")
+        .ifBlank { "Android device" }
 }

@@ -31,6 +31,9 @@ abstract class NotepadDao {
     @Query("SELECT * FROM notes ORDER BY id ASC")
     abstract suspend fun getAllNotes(): List<NoteEntity>
 
+    @Query("SELECT * FROM note_tombstones ORDER BY syncId ASC")
+    abstract suspend fun getNoteTombstones(): List<NoteTombstoneEntity>
+
     @Query("SELECT * FROM notes WHERE isDeleted = 0 AND reminderAt IS NOT NULL AND reminderAt > :now ORDER BY reminderAt ASC")
     abstract suspend fun getFutureReminderNotes(now: Long): List<NoteEntity>
 
@@ -48,6 +51,9 @@ abstract class NotepadDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun restoreNotes(notes: List<NoteEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun upsertNoteTombstones(tombstones: List<NoteTombstoneEntity>)
 
     @Update
     abstract suspend fun updateNote(note: NoteEntity)
@@ -81,6 +87,9 @@ abstract class NotepadDao {
 
     @Query("DELETE FROM notes")
     abstract suspend fun deleteAllNotes()
+
+    @Query("DELETE FROM note_tombstones")
+    abstract suspend fun deleteAllNoteTombstones()
 
     @Query("DELETE FROM folders")
     abstract suspend fun deleteAllFolders()
@@ -140,8 +149,46 @@ abstract class NotepadDao {
     open suspend fun replaceAllData(backupData: BackupData) {
         deleteAllNotes()
         deleteAllFolders()
+        deleteAllNoteTombstones()
         restoreFolders(backupData.folders)
         restoreNotes(backupData.notes)
         ensureSyncMetadata()
+    }
+
+    @Transaction
+    open suspend fun permanentlyDeleteNote(noteId: Long, now: Long = System.currentTimeMillis()) {
+        ensureSyncMetadata(now)
+        val note = getNote(noteId) ?: return
+        upsertNoteTombstones(listOf(NoteTombstoneEntity(syncId = note.syncId, deletedAt = now)))
+        deleteNote(noteId)
+    }
+
+    @Transaction
+    open suspend fun getSyncData(now: Long = System.currentTimeMillis()): BackupData {
+        ensureSyncMetadata(now)
+        return BackupData(
+            folders = getAllFolders(),
+            notes = getAllNotes(),
+        )
+    }
+
+    @Transaction
+    open suspend fun replaceAllDataIfFingerprintMatches(
+        backupData: BackupData,
+        noteTombstones: List<NoteTombstoneEntity>,
+        expectedFingerprint: Int,
+    ): Boolean {
+        val current = getSyncData()
+        if (SyncFingerprint.calculate(current.folders, current.notes, getNoteTombstones()) != expectedFingerprint) {
+            return false
+        }
+        deleteAllNotes()
+        deleteAllFolders()
+        deleteAllNoteTombstones()
+        restoreFolders(backupData.folders)
+        restoreNotes(backupData.notes)
+        upsertNoteTombstones(noteTombstones)
+        ensureSyncMetadata()
+        return true
     }
 }

@@ -1,6 +1,6 @@
 # Google Account Sync Setup
 
-True Google account sync is blocked until this checklist is complete. The app must not present manual Drive file-picker backup as account sync.
+True Google account sync now has Android-side implementation, but real account validation is blocked until the Google Cloud checklist is complete. The app must keep manual Drive file-picker backup separate from account sync.
 
 ## Current Phase 0 Findings
 
@@ -10,9 +10,9 @@ True Google account sync is blocked until this checklist is complete. The app mu
   - Store: `C:\Users\sbyai\.android\debug.keystore`
   - SHA-1: `0D:7D:F6:AB:E9:79:27:82:91:F8:E0:E5:1B:95:62:DF:71:63:8C:81`
   - SHA-256: `C8:95:F4:4A:37:BE:74:81:B6:B5:60:BF:F4:AC:73:DF:14:BD:25:86:B3:63:E1:4D:00:E6:7C:A4:BB:62:8D:02`
-- No `google-services.json`, OAuth client file, release keystore, or Drive API client configuration is present in the repo.
-- Gradle currently has no Google Sign-In or Google Drive REST dependencies.
-- The manifest currently has no `android.permission.INTERNET` permission, which real Drive sync will need.
+- No `google-services.json`, release keystore, or release OAuth client configuration is present in the repo.
+- Gradle now includes Google Sign-In and Google Drive REST dependencies.
+- The manifest includes `android.permission.INTERNET` for Drive sync.
 - Existing Settings backup is a manual JSON backup through Android's file picker. It is not account sync.
 
 ## Google Cloud Checklist
@@ -31,20 +31,28 @@ True Google account sync is blocked until this checklist is complete. The app mu
 5. Choose the Drive storage scope:
    - Preferred: `https://www.googleapis.com/auth/drive.appdata` for `appDataFolder`
    - Fallback only with product approval: `https://www.googleapis.com/auth/drive.file` for an app-managed visible Drive file
-6. Download and add required local configuration:
-   - If using the Google Services Gradle plugin, place `google-services.json` at `app/google-services.json`.
-   - If not using the plugin, store the OAuth client id in a local, non-committed config resource generated from `local.properties` or a secrets plugin.
+6. Add required local configuration only if the chosen Google auth flow requires it:
+   - The current Android implementation uses Google Sign-In + Drive `appDataFolder`; it needs the Android OAuth client registered with the package name and SHA-1.
+   - A `google-services.json` file is not committed and is not required by the current code path unless the app later adopts the Google Services Gradle plugin or Firebase-backed config.
    - Do not commit private release keystores or secrets.
 
 ## Implementation Checklist After Setup
 
-- Add Google Sign-In/Credential Manager and Drive API dependencies.
-- Add `android.permission.INTERNET` to the manifest.
-- Implement a real `DriveSyncClient` for `appDataFolder` or the approved app-managed Drive file.
-- Use existing stable `syncId` fields for folders and notes.
-- Preserve `deletedAt` tombstones so deletes do not revive on another device.
-- Show signed-in email, last sync time, current sync status, retryable errors, and clear sign-out behavior.
+- Google Sign-In and Drive API dependencies are present.
+- `android.permission.INTERNET` is present.
+- `GoogleDriveSyncClient` writes append-only `just-notes-sync-v1-*.json` snapshots in Drive `appDataFolder` and merges all matching snapshots on read.
+- Remote snapshots are never overwritten, which avoids Drive ETag availability issues and concurrent-device overwrite risk.
+- Existing stable `syncId` fields are used for folders and notes.
+- `deletedAt` tombstones are preserved for normal soft deletes.
+- Permanent note deletes are retained as lightweight sync tombstones so another device cannot revive a purged note.
+- Settings shows signed-in email, current sync status, retryable errors, and sign-out behavior.
 - Keep manual backup/restore separate from sync because restore replaces local data.
+
+## Remaining Product Risks
+
+- Google Sign-In uses the legacy Play Services API because it is the smallest compatible path for Drive scope consent in this app. It compiles with deprecation warnings; a future pass should evaluate Credential Manager if Drive scope support fits the UX.
+- appDataFolder can accumulate multiple small sync snapshots over time. A future cleanup pass can compact old snapshots after connected-device validation.
+- Remote corrupt JSON, permission revocation, and network failure are surfaced as sync errors, but they still need real-device UX validation.
 
 ## Validation Gate Before Calling This Account Sync
 

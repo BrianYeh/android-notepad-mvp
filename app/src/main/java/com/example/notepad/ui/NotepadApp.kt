@@ -131,6 +131,7 @@ import com.example.notepad.data.DrawingJson
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
 import com.example.notepad.data.DrawingTools
+import com.example.notepad.data.DriveSyncResult
 import com.example.notepad.data.EditorFontSize
 import com.example.notepad.data.FolderEntity
 import com.example.notepad.data.NoteEntity
@@ -140,6 +141,8 @@ import com.example.notepad.data.NoteSortOption
 import com.example.notepad.data.NoteTypeFilter
 import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.ReminderFilter
+import com.example.notepad.data.SyncMetadata
+import com.example.notepad.data.SyncStatus
 import com.example.notepad.data.renderDrawingPng
 import com.example.notepad.viewmodel.NotepadViewModel
 import java.io.File
@@ -242,6 +245,7 @@ fun NotepadApp(
     val onlineSyncAutoOnStart by viewModel.onlineSyncAutoOnStart.collectAsStateWithLifecycle()
     val lastOnlineSyncAt by viewModel.lastOnlineSyncAt.collectAsStateWithLifecycle()
     val lastOnlineRestoreAt by viewModel.lastOnlineRestoreAt.collectAsStateWithLifecycle()
+    val syncMetadata by viewModel.syncMetadata.collectAsStateWithLifecycle()
     var onlineSyncAutoAttempted by remember { mutableStateOf(false) }
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -352,6 +356,7 @@ fun NotepadApp(
             onlineSyncAutoOnStart = onlineSyncAutoOnStart,
             lastOnlineSyncAt = lastOnlineSyncAt,
             lastOnlineRestoreAt = lastOnlineRestoreAt,
+            syncMetadata = syncMetadata,
             viewModel = viewModel,
             onEditorFontSizeChange = viewModel::setEditorFontSize,
             onOnlineSyncTargetChange = viewModel::setOnlineSyncTargetUri,
@@ -778,6 +783,7 @@ private fun SettingsScreen(
     onlineSyncAutoOnStart: Boolean,
     lastOnlineSyncAt: Long?,
     lastOnlineRestoreAt: Long?,
+    syncMetadata: SyncMetadata,
     viewModel: NotepadViewModel,
     onEditorFontSizeChange: (EditorFontSize) -> Unit,
     onOnlineSyncTargetChange: (String?) -> Unit,
@@ -793,8 +799,44 @@ private fun SettingsScreen(
     var showRestoreConfirmDialog by remember { mutableStateOf(false) }
     var showAccountSettingsDialog by remember { mutableStateOf(false) }
     var showDisconnectDialog by remember { mutableStateOf(false) }
+    var showGoogleSignOutDialog by remember { mutableStateOf(false) }
     var isBackupInProgress by remember { mutableStateOf(false) }
     var isRestoreInProgress by remember { mutableStateOf(false) }
+    var isGoogleSyncInProgress by remember { mutableStateOf(false) }
+
+    suspend fun runGoogleSync() {
+        isGoogleSyncInProgress = true
+        try {
+            when (val result = viewModel.syncGoogleDrive()) {
+                is DriveSyncResult.Success -> Toast.makeText(context, text.syncComplete, Toast.LENGTH_SHORT).show()
+                is DriveSyncResult.Failure -> Toast.makeText(
+                    context,
+                    result.error.message.ifBlank { text.syncFailed },
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        } finally {
+            isGoogleSyncInProgress = false
+        }
+    }
+
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (viewModel.connectGoogleAccountFromIntent(result.data)) {
+            scope.launch { runGoogleSync() }
+        } else {
+            Toast.makeText(context, text.syncFailed, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun startGoogleSync() {
+        if (syncMetadata.accountEmail == null) {
+            googleSignInLauncher.launch(viewModel.googleSignInIntent())
+        } else {
+            scope.launch { runGoogleSync() }
+        }
+    }
 
     val createBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
@@ -908,6 +950,96 @@ private fun SettingsScreen(
             )
             HorizontalDivider()
             Text(
+                text = text.googleAccountSync,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.testTag("google_account_sync_title"),
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = "G",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .background(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = syncMetadata.accountEmail?.let(text::signedInAsAccount) ?: text.notSignedIn,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.testTag("google_account_status"),
+                    )
+                    Text(
+                        text = "${text.syncStatus}: ${syncMetadata.status.label(text)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Text(
+                text = text.googleAccountSyncHint,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            syncMetadata.lastSyncedAt?.let { syncedAt ->
+                Text(
+                    text = "${text.lastSync}: ${formatTime(syncedAt, appLanguage)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("google_last_sync_status"),
+                )
+            }
+            if (isGoogleSyncInProgress || syncMetadata.status == SyncStatus.Syncing) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.testTag("google_sync_progress"),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                    Text(
+                        text = text.syncStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            syncMetadata.lastError?.let { error ->
+                Text(
+                    text = error.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag("google_sync_error"),
+                )
+            }
+            Button(
+                onClick = { startGoogleSync() },
+                enabled = !isGoogleSyncInProgress && !isBackupInProgress && !isRestoreInProgress,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("google_sync_button"),
+            ) {
+                Text(if (syncMetadata.accountEmail == null) text.signInWithGoogle else text.syncNow)
+            }
+            if (syncMetadata.accountEmail != null) {
+                TextButton(
+                    onClick = { showGoogleSignOutDialog = true },
+                    enabled = !isGoogleSyncInProgress,
+                    modifier = Modifier.testTag("google_sign_out_button"),
+                ) {
+                    Text(text.signOut)
+                }
+            }
+            HorizontalDivider()
+            Text(
                 text = text.googleDriveBackup,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
@@ -958,7 +1090,7 @@ private fun SettingsScreen(
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.testTag("online_sync_note_count"),
             )
-            lastOnlineSyncAt?.let { backedUpAt ->
+            if (onlineSyncTargetUri != null) lastOnlineSyncAt?.let { backedUpAt ->
                 Text(
                     text = "${text.lastBackup}: ${formatTime(backedUpAt, appLanguage)}",
                     style = MaterialTheme.typography.bodySmall,
@@ -1106,6 +1238,21 @@ private fun SettingsScreen(
             onConfirm = {
                 showDisconnectDialog = false
                 onOnlineSyncDisconnect()
+            },
+        )
+    }
+
+    if (showGoogleSignOutDialog) {
+        ConfirmDialog(
+            title = text.signOutGoogleTitle,
+            body = text.signOutGoogleBody,
+            confirmText = text.signOut,
+            cancelText = text.cancel,
+            destructive = false,
+            onDismiss = { showGoogleSignOutDialog = false },
+            onConfirm = {
+                showGoogleSignOutDialog = false
+                viewModel.signOutGoogleAccount()
             },
         )
     }
@@ -4381,4 +4528,16 @@ private fun persistUriPermission(context: Context, uri: Uri, modeFlags: Int) {
                 // File providers that do not support persistable permissions are still valid for one-time use.
             }
         }
+}
+
+private fun SyncStatus.label(text: UiText): String {
+    return when (this) {
+        SyncStatus.SetupRequired -> text.notSignedIn
+        SyncStatus.SignedOut -> text.notSignedIn
+        SyncStatus.Idle -> text.syncNow
+        SyncStatus.Syncing -> text.syncStatus
+        SyncStatus.Succeeded -> text.syncComplete
+        SyncStatus.Failed -> text.syncFailed
+        SyncStatus.Conflict -> text.syncConflict
+    }
 }

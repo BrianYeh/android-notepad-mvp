@@ -90,3 +90,10 @@ data class NoteEntity(
     val isPinned: Boolean = false,
     val reminderAt: Long? = null,
 )
+
+@Entity(tableName = "note_tombstones")
+data class NoteTombstoneEntity(
+    @PrimaryKey
+    val syncId: String,
+    val deletedAt: Long,
+)

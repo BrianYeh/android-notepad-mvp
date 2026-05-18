@@ -139,7 +139,7 @@ class NotepadRepository(
     }
 
     suspend fun permanentlyDeleteNote(noteId: Long) {
-        dao.deleteNote(noteId)
+        dao.permanentlyDeleteNote(noteId)
     }
 
     suspend fun setNotePinned(noteId: Long, isPinned: Boolean) {
@@ -165,5 +165,210 @@ class NotepadRepository(
 
     suspend fun importBackupJson(json: String) {
         dao.replaceAllData(BackupJson.decode(json))
+    }
+
+    suspend fun syncFingerprint(): Int {
+        val syncData = dao.getSyncData()
+        return SyncFingerprint.calculate(syncData.folders, syncData.notes, dao.getNoteTombstones())
+    }
+
+    suspend fun exportRemoteSyncSnapshotWithFingerprint(
+        sourceDevice: SyncDevice,
+        accountEmail: String?,
+        now: Long = System.currentTimeMillis(),
+    ): LocalSyncExport {
+        val syncData = dao.getSyncData(now)
+        val folders = syncData.folders
+        val notes = syncData.notes
+        val tombstones = dao.getNoteTombstones()
+        val folderSyncIdsById = folders.associate { it.id to it.syncId }
+        return LocalSyncExport(
+            snapshot = RemoteSyncSnapshot(
+                exportedAt = now,
+                sourceDevice = sourceDevice.copy(lastSyncAt = now),
+                devices = listOf(sourceDevice.copy(lastSyncAt = now)),
+                folders = folders.map { folder ->
+                    RemoteFolder(
+                        syncId = folder.syncId,
+                        name = folder.name,
+                        createdAt = folder.createdAt,
+                        updatedAt = folder.updatedAt,
+                        deletedAt = folder.deletedAt,
+                    )
+                },
+                notes = notes.map { note ->
+                    RemoteNote(
+                        syncId = note.syncId,
+                        folderSyncId = folderSyncIdsById[note.folderId] ?: DEFAULT_FOLDER_SYNC_ID,
+                        type = note.type,
+                        title = note.title,
+                        textContent = note.textContent,
+                        drawingData = note.drawingData,
+                        createdAt = note.createdAt,
+                        updatedAt = note.updatedAt,
+                        deletedAt = note.deletedAt,
+                        isPinned = note.isPinned,
+                        reminderAt = note.reminderAt,
+                    )
+                } + tombstones.map { tombstone ->
+                    RemoteNote(
+                        syncId = tombstone.syncId,
+                        folderSyncId = DEFAULT_FOLDER_SYNC_ID,
+                        type = NoteTypes.TEXT,
+                        title = "",
+                        textContent = "",
+                        drawingData = null,
+                        createdAt = tombstone.deletedAt,
+                        updatedAt = tombstone.deletedAt,
+                        deletedAt = tombstone.deletedAt,
+                        purged = true,
+                    )
+                },
+            ),
+            fingerprint = SyncFingerprint.calculate(folders, notes, tombstones),
+        )
+    }
+
+    suspend fun replaceWithRemoteSyncSnapshot(
+        snapshot: RemoteSyncSnapshot,
+        expectedFingerprint: Int,
+    ): Boolean {
+        dao.ensureSyncMetadata()
+        val existingFolders = dao.getAllFolders()
+        val existingNotes = dao.getAllNotes()
+        val existingFolderIdsBySyncId = existingFolders.associate { it.syncId to it.id }
+        val existingNoteIdsBySyncId = existingNotes.associate { it.syncId to it.id }
+        var nextFolderId = (existingFolders.maxOfOrNull { it.id } ?: DEFAULT_FOLDER_ID) + 1L
+        var nextNoteId = (existingNotes.maxOfOrNull { it.id } ?: 0L) + 1L
+
+        val remoteFolders = (snapshot.folders + defaultRemoteFolderIfMissing(snapshot))
+            .distinctBy { it.syncId }
+        val folderIdsBySyncId = mutableMapOf<String, Long>()
+        val deletedFolderSyncIds = remoteFolders
+            .filter { it.deletedAt != null && it.syncId != DEFAULT_FOLDER_SYNC_ID }
+            .map { it.syncId }
+            .toSet()
+        val folders = remoteFolders.map { remoteFolder ->
+            val folderId = when (remoteFolder.syncId) {
+                DEFAULT_FOLDER_SYNC_ID -> DEFAULT_FOLDER_ID
+                else -> existingFolderIdsBySyncId[remoteFolder.syncId] ?: nextFolderId++
+            }
+            folderIdsBySyncId[remoteFolder.syncId] = folderId
+            FolderEntity(
+                id = folderId,
+                syncId = remoteFolder.syncId,
+                name = if (remoteFolder.syncId == DEFAULT_FOLDER_SYNC_ID) {
+                    DEFAULT_FOLDER_NAME
+                } else {
+                    remoteFolder.name.ifBlank { "Folder $folderId" }
+                },
+                createdAt = remoteFolder.createdAt,
+                updatedAt = remoteFolder.updatedAt,
+                isDeleted = remoteFolder.deletedAt != null && remoteFolder.syncId != DEFAULT_FOLDER_SYNC_ID,
+                deletedAt = remoteFolder.deletedAt.takeIf { remoteFolder.syncId != DEFAULT_FOLDER_SYNC_ID },
+            )
+        }
+
+        val noteTombstones = snapshot.notes
+            .filter { it.purged && it.deletedAt != null }
+            .map { remoteNote ->
+                NoteTombstoneEntity(
+                    syncId = remoteNote.syncId,
+                    deletedAt = remoteNote.deletedAt ?: remoteNote.updatedAt,
+                )
+            }
+        val notes = snapshot.notes.filterNot { it.purged }.map { remoteNote ->
+            val noteId = existingNoteIdsBySyncId[remoteNote.syncId] ?: nextNoteId++
+            val type = when (remoteNote.type) {
+                NoteTypes.DRAWING -> NoteTypes.DRAWING
+                else -> NoteTypes.TEXT
+            }
+            NoteEntity(
+                id = noteId,
+                syncId = remoteNote.syncId,
+                folderId = if (remoteNote.deletedAt == null && remoteNote.folderSyncId in deletedFolderSyncIds) {
+                    DEFAULT_FOLDER_ID
+                } else {
+                    folderIdsBySyncId[remoteNote.folderSyncId] ?: DEFAULT_FOLDER_ID
+                },
+                type = type,
+                title = remoteNote.title,
+                textContent = if (type == NoteTypes.TEXT) remoteNote.textContent.orEmpty() else null,
+                drawingData = if (type == NoteTypes.DRAWING) remoteNote.drawingData ?: "[]" else null,
+                createdAt = remoteNote.createdAt,
+                updatedAt = remoteNote.updatedAt,
+                isDeleted = remoteNote.deletedAt != null,
+                deletedAt = remoteNote.deletedAt,
+                isPinned = remoteNote.isPinned,
+                reminderAt = remoteNote.reminderAt,
+            )
+        }
+
+        return dao.replaceAllDataIfFingerprintMatches(
+            backupData = BackupData(folders = folders, notes = notes),
+            noteTombstones = noteTombstones,
+            expectedFingerprint = expectedFingerprint,
+        )
+    }
+
+    private fun defaultRemoteFolderIfMissing(snapshot: RemoteSyncSnapshot): List<RemoteFolder> {
+        if (snapshot.folders.any { it.syncId == DEFAULT_FOLDER_SYNC_ID }) return emptyList()
+        val now = System.currentTimeMillis()
+        return listOf(
+            RemoteFolder(
+                syncId = DEFAULT_FOLDER_SYNC_ID,
+                name = DEFAULT_FOLDER_NAME,
+                createdAt = now,
+                updatedAt = now,
+            ),
+        )
+    }
+}
+
+data class LocalSyncExport(
+    val snapshot: RemoteSyncSnapshot,
+    val fingerprint: Int,
+)
+
+object SyncFingerprint {
+    fun calculate(
+        folders: List<FolderEntity>,
+        notes: List<NoteEntity>,
+        noteTombstones: List<NoteTombstoneEntity> = emptyList(),
+    ): Int {
+        val folderPart = folders
+            .sortedBy { it.syncId }
+            .joinToString("|") { folder ->
+                listOf(
+                    folder.syncId,
+                    folder.name,
+                    folder.updatedAt,
+                    folder.deletedAt,
+                    folder.isDeleted,
+                ).joinToString(":")
+            }
+        val notePart = notes
+            .sortedBy { it.syncId }
+            .joinToString("|") { note ->
+                listOf(
+                    note.syncId,
+                    note.folderId,
+                    note.type,
+                    note.title,
+                    note.textContent,
+                    note.drawingData,
+                    note.updatedAt,
+                    note.deletedAt,
+                    note.isDeleted,
+                    note.isPinned,
+                    note.reminderAt,
+                ).joinToString(":")
+            }
+        val tombstonePart = noteTombstones
+            .sortedBy { it.syncId }
+            .joinToString("|") { tombstone ->
+                listOf(tombstone.syncId, tombstone.deletedAt).joinToString(":")
+            }
+        return "$folderPart\n$notePart\n$tombstonePart".hashCode()
     }
 }
