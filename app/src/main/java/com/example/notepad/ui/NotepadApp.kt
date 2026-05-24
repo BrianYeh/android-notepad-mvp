@@ -1678,17 +1678,19 @@ private fun NoteRow(
     onPermanentlyDelete: () -> Unit,
     onTogglePinned: () -> Unit,
 ) {
+    fun handleClick() {
+        if (isSelectionMode) {
+            onToggleSelection()
+        } else if (!note.isDeleted) {
+            onOpen()
+        }
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
-                onClick = {
-                    if (isSelectionMode) {
-                        onToggleSelection()
-                    } else if (!note.isDeleted) {
-                        onOpen()
-                    }
-                },
+                onClick = ::handleClick,
                 onLongClick = onStartSelection,
             )
             .testTag("note_card_${note.id}"),
@@ -1726,7 +1728,12 @@ private fun NoteRow(
                     ),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .combinedClickable(
+                            onClick = ::handleClick,
+                            onLongClick = onStartSelection,
+                        ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -2166,6 +2173,8 @@ private fun TextEditorScreen(
     }
 
     fun insertIntoContent(prefix: String) {
+        isFocusWriting = true
+        isMetadataExpanded = false
         val currentContent = contentField.text
         val selection = contentField.selection
         val start = selection.min.coerceIn(0, currentContent.length)

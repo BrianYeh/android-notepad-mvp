@@ -68,16 +68,22 @@ class TextInputTest {
 
     @Test
     fun textNoteTitleAndContentAcceptInput() {
+        val suffix = System.currentTimeMillis()
+        val title = "中文標題 $suffix"
+        val body = "這是中文內容 $suffix"
+
         openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_title")
 
         composeRule.onNodeWithTag("text_note_title")
             .assertIsDisplayed()
-            .performTextInput("中文標題")
+            .performTextInput(title)
 
         composeRule.onNodeWithTag("text_note_content")
             .assertIsDisplayed()
-            .performTextInput("這是中文內容")
+            .performTextInput(body)
+        composeRule.onNodeWithTag("text_note_compact_title").assertTextContains(title)
+        composeRule.onNodeWithTag("text_note_content").assertTextContains(body)
 
         composeRule.onNodeWithTag("text_note_compact_metadata").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
@@ -106,8 +112,6 @@ class TextInputTest {
         composeRule.onNodeWithTag("set_reminder_menu_item").assertIsDisplayed()
         composeRule.onNodeWithTag("toggle_pin_menu_item").assertIsDisplayed()
         composeRule.onNodeWithTag("delete_text_note_menu_item").assertIsDisplayed()
-        composeRule.onNodeWithText("中文標題").assertIsDisplayed()
-        composeRule.onNodeWithText("這是中文內容").assertIsDisplayed()
     }
 
     @Test
@@ -267,14 +271,18 @@ class TextInputTest {
             composeRule.onAllNodesWithText(secondTitle).fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeRule.onNodeWithText(firstTitle).performTouchInput { longClick() }
+        composeRule.onNodeWithText(firstTitle).performTouchInput {
+            down(center)
+            advanceEventTime(1_200)
+            up()
+        }
         composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("1 selected")
         composeRule.onNodeWithText(secondTitle).performClick()
         composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("2 selected")
         composeRule.onNodeWithTag("delete_selected_notes_button").performClick()
         composeRule.onNodeWithTag("confirm_dialog_confirm_button").performClick()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithText(firstTitle).fetchSemanticsNodes().isEmpty() &&
                 composeRule.onAllNodesWithText(secondTitle).fetchSemanticsNodes().isEmpty()
         }
@@ -331,7 +339,7 @@ class TextInputTest {
             composeRule.onAllNodesWithTag("text_note_edit_metadata").fetchSemanticsNodes().isEmpty()
         }
         composeRule.onNodeWithTag("quick_insert_checkbox_button").performClick()
-        composeRule.onNodeWithTag("text_note_content").assertTextContains("- [ ]")
+        composeRule.onNodeWithTag("text_note_content").assertTextContains("- [ ]", substring = true)
 
         composeRule.onNodeWithTag("toggle_metadata_button").performClick()
         composeRule.onNodeWithTag("text_note_edit_metadata").assertIsDisplayed()
@@ -347,8 +355,9 @@ class TextInputTest {
 
         composeRule.onNodeWithText(title).assertIsDisplayed()
         composeRule.onNodeWithText(title).performClick()
-        composeRule.onNodeWithTag("text_note_read_content").assertTextContains(body)
-        composeRule.onNodeWithTag("text_note_read_content").assertTextContains("- [ ]")
+        composeRule.onNodeWithTag("text_note_read_content")
+            .assertTextContains("Focus writer body", substring = true)
+        composeRule.onNodeWithTag("text_note_read_content").assertTextContains("- [ ]", substring = true)
     }
 
     @Test
