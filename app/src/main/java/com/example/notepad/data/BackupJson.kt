@@ -8,6 +8,35 @@ data class BackupData(
     val notes: List<NoteEntity>,
 )
 
+data class DecodedBackup(
+    val data: BackupData,
+    val preview: BackupPreview,
+)
+
+data class BackupPreview(
+    val exportedAt: Long?,
+    val folderCount: Int,
+    val noteCount: Int,
+    val activeNoteCount: Int,
+    val deletedNoteCount: Int,
+) {
+    companion object {
+        fun from(
+            folders: List<FolderEntity>,
+            notes: List<NoteEntity>,
+            exportedAt: Long? = null,
+        ): BackupPreview {
+            return BackupPreview(
+                exportedAt = exportedAt,
+                folderCount = folders.count { !it.isDeleted },
+                noteCount = notes.size,
+                activeNoteCount = notes.count { !it.isDeleted },
+                deletedNoteCount = notes.count { it.isDeleted },
+            )
+        }
+    }
+}
+
 object BackupJson {
     private const val VERSION = 4
 
@@ -53,14 +82,29 @@ object BackupJson {
     }
 
     fun decode(json: String, now: Long = System.currentTimeMillis()): BackupData {
+        return decodeWithPreview(json, now).data
+    }
+
+    fun decodeWithPreview(json: String, now: Long = System.currentTimeMillis()): DecodedBackup {
         val root = JSONObject(json)
+        val version = root.requiredInt("version")
+        if (version !in 1..VERSION) {
+            throw IllegalArgumentException("Unsupported backup version: $version")
+        }
+        val exportedAt = root.optionalLong("exportedAt")?.takeIf { it > 0L }
         val folders = LinkedHashMap<Long, FolderEntity>()
-        val folderArray = root.optJSONArray("folders") ?: JSONArray()
+        val folderArray = root.requiredArray("folders")
 
         for (index in 0 until folderArray.length()) {
-            val folderJson = folderArray.optJSONObject(index) ?: continue
+            val folderJson = folderArray.optJSONObject(index)
+                ?: throw IllegalArgumentException("Backup folder entry must be an object.")
             val id = folderJson.optLong("id", 0L)
-            if (id <= 0L) continue
+            if (id <= 0L) {
+                throw IllegalArgumentException("Backup folder id must be positive.")
+            }
+            if (folders.containsKey(id)) {
+                throw IllegalArgumentException("Duplicate backup folder id: $id")
+            }
 
             folders[id] = FolderEntity(
                 id = id,
@@ -92,12 +136,18 @@ object BackupJson {
             )
 
         val notes = LinkedHashMap<Long, NoteEntity>()
-        val noteArray = root.optJSONArray("notes") ?: JSONArray()
+        val noteArray = root.requiredArray("notes")
 
         for (index in 0 until noteArray.length()) {
-            val noteJson = noteArray.optJSONObject(index) ?: continue
+            val noteJson = noteArray.optJSONObject(index)
+                ?: throw IllegalArgumentException("Backup note entry must be an object.")
             val id = noteJson.optLong("id", 0L)
-            if (id <= 0L) continue
+            if (id <= 0L) {
+                throw IllegalArgumentException("Backup note id must be positive.")
+            }
+            if (notes.containsKey(id)) {
+                throw IllegalArgumentException("Duplicate backup note id: $id")
+            }
 
             val type = when (noteJson.optString("type")) {
                 NoteTypes.DRAWING -> NoteTypes.DRAWING
@@ -132,12 +182,20 @@ object BackupJson {
             )
         }
 
-        return BackupData(
+        val backupData = BackupData(
             folders = folders.values.sortedWith(
                 compareBy<FolderEntity> { if (it.id == DEFAULT_FOLDER_ID) 0 else 1 }
                     .thenBy { it.id },
             ),
             notes = notes.values.sortedBy { it.id },
+        )
+        return DecodedBackup(
+            data = backupData,
+            preview = BackupPreview.from(
+                folders = backupData.folders,
+                notes = backupData.notes,
+                exportedAt = exportedAt,
+            ),
         )
     }
 }
@@ -156,4 +214,18 @@ private fun JSONObject.optionalString(name: String): String? {
 
 private fun JSONObject.optionalLong(name: String): Long? {
     return if (has(name) && !isNull(name)) getLong(name) else null
+}
+
+private fun JSONObject.requiredInt(name: String): Int {
+    if (!has(name) || isNull(name)) {
+        throw IllegalArgumentException("Backup is missing $name.")
+    }
+    return getInt(name)
+}
+
+private fun JSONObject.requiredArray(name: String): JSONArray {
+    if (!has(name) || isNull(name)) {
+        throw IllegalArgumentException("Backup is missing $name.")
+    }
+    return optJSONArray(name) ?: throw IllegalArgumentException("Backup $name must be an array.")
 }

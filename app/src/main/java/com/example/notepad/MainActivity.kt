@@ -28,6 +28,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val viewModel: NotepadViewModel = viewModel()
             val folders by viewModel.folders.collectAsStateWithLifecycle()
+            val allNotes by viewModel.allNotes.collectAsStateWithLifecycle()
             val notes by viewModel.notes.collectAsStateWithLifecycle()
             val selectedFolderId by viewModel.selectedFolderId.collectAsStateWithLifecycle()
             val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
@@ -43,6 +44,7 @@ class MainActivity : ComponentActivity() {
             LocalNotepadTheme {
                 NotepadApp(
                     folders = folders,
+                    allNotes = allNotes,
                     notes = notes,
                     selectedFolderId = selectedFolderId,
                     searchQuery = searchQuery,

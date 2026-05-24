@@ -163,8 +163,16 @@ class NotepadRepository(
         )
     }
 
+    fun decodeBackupJson(json: String): DecodedBackup {
+        return BackupJson.decodeWithPreview(json)
+    }
+
     suspend fun importBackupJson(json: String) {
-        dao.replaceAllData(BackupJson.decode(json))
+        importBackupData(BackupJson.decode(json))
+    }
+
+    suspend fun importBackupData(backupData: BackupData) {
+        dao.replaceAllData(backupData)
     }
 
     suspend fun syncFingerprint(): Int {

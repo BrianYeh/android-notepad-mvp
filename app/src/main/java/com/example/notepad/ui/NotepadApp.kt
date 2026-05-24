@@ -129,6 +129,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notepad.IncomingTextShare
 import com.example.notepad.data.ALL_NOTES_FILTER_NAME
 import com.example.notepad.data.AppLanguage
+import com.example.notepad.data.BackupData
+import com.example.notepad.data.BackupPreview
 import com.example.notepad.data.DEFAULT_FOLDER_ID
 import com.example.notepad.data.DEFAULT_FOLDER_NAME
 import com.example.notepad.data.DEFAULT_DRAWING_COLOR_ARGB
@@ -174,6 +176,11 @@ private sealed interface AppScreen {
     data class TextEditor(val noteId: Long) : AppScreen
     data class DrawingEditor(val noteId: Long) : AppScreen
 }
+
+private data class PendingRestoreBackup(
+    val data: BackupData,
+    val preview: BackupPreview,
+)
 
 private const val BACKUP_FILE_NAME = "just-notes-backup.json"
 private const val DEFAULT_DRAWING_EXPORT_WIDTH = 1080
@@ -229,6 +236,7 @@ fun LocalNotepadTheme(content: @Composable () -> Unit) {
 @Composable
 fun NotepadApp(
     folders: List<FolderEntity>,
+    allNotes: List<NoteEntity>,
     notes: List<NoteEntity>,
     selectedFolderId: Long?,
     searchQuery: String,
@@ -356,7 +364,7 @@ fun NotepadApp(
             text = text,
             appLanguage = appLanguage,
             editorFontSize = editorFontSize,
-            notesCount = notes.count { !it.isDeleted },
+            currentBackupPreview = BackupPreview.from(folders = folders, notes = allNotes),
             onlineSyncTargetUri = onlineSyncTargetUri,
             onlineSyncAutoOnStart = onlineSyncAutoOnStart,
             lastOnlineSyncAt = lastOnlineSyncAt,
@@ -791,7 +799,7 @@ private fun SettingsScreen(
     text: UiText,
     appLanguage: AppLanguage,
     editorFontSize: EditorFontSize,
-    notesCount: Int,
+    currentBackupPreview: BackupPreview,
     onlineSyncTargetUri: String?,
     onlineSyncAutoOnStart: Boolean,
     lastOnlineSyncAt: Long?,
@@ -809,7 +817,7 @@ private fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingBackupJson by remember { mutableStateOf<String?>(null) }
-    var showRestoreConfirmDialog by remember { mutableStateOf(false) }
+    var pendingRestoreBackup by remember { mutableStateOf<PendingRestoreBackup?>(null) }
     var showAccountSettingsDialog by remember { mutableStateOf(false) }
     var showDisconnectDialog by remember { mutableStateOf(false) }
     var showGoogleSignOutDialog by remember { mutableStateOf(false) }
@@ -885,12 +893,13 @@ private fun SettingsScreen(
             isRestoreInProgress = true
             try {
                 persistUriPermission(context, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                val backupJson = withContext(Dispatchers.IO) {
-                    readTextFromUri(context, uri)
+                val decodedBackup = withContext(Dispatchers.IO) {
+                    viewModel.decodeBackupJson(readTextFromUri(context, uri))
                 }
-                viewModel.importBackupJson(backupJson)
-                onOnlineRestoreRecorded()
-                Toast.makeText(context, text.restoreComplete, Toast.LENGTH_SHORT).show()
+                pendingRestoreBackup = PendingRestoreBackup(
+                    data = decodedBackup.data,
+                    preview = decodedBackup.preview,
+                )
             } catch (_: Exception) {
                 Toast.makeText(context, text.restoreFailed, Toast.LENGTH_SHORT).show()
             } finally {
@@ -1099,7 +1108,7 @@ private fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = text.syncNotesCount(notesCount),
+                text = text.syncNotesCount(currentBackupPreview.noteCount),
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.testTag("online_sync_note_count"),
             )
@@ -1158,7 +1167,11 @@ private fun SettingsScreen(
                 Text(text.backupToGoogleDrive)
             }
             Button(
-                onClick = { showRestoreConfirmDialog = true },
+                onClick = {
+                    restoreBackupLauncher.launch(
+                        arrayOf("application/json", "text/plain", "*/*"),
+                    )
+                },
                 enabled = !isBackupInProgress && !isRestoreInProgress,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1204,19 +1217,33 @@ private fun SettingsScreen(
         }
     }
 
-    if (showRestoreConfirmDialog) {
+    pendingRestoreBackup?.let { pendingRestore ->
         ConfirmDialog(
             title = text.restoreBackupConfirmTitle,
-            body = text.restoreBackupConfirmBody,
+            body = restoreBackupPreviewBody(
+                backupPreview = pendingRestore.preview,
+                currentPreview = currentBackupPreview,
+                text = text,
+                appLanguage = appLanguage,
+            ),
             confirmText = text.restoreFromBackup,
             cancelText = text.cancel,
             destructive = true,
-            onDismiss = { showRestoreConfirmDialog = false },
+            onDismiss = { pendingRestoreBackup = null },
             onConfirm = {
-                showRestoreConfirmDialog = false
-                restoreBackupLauncher.launch(
-                    arrayOf("application/json", "text/plain", "*/*"),
-                )
+                pendingRestoreBackup = null
+                scope.launch {
+                    isRestoreInProgress = true
+                    try {
+                        viewModel.importBackupData(pendingRestore.data)
+                        onOnlineRestoreRecorded()
+                        Toast.makeText(context, text.restoreComplete, Toast.LENGTH_SHORT).show()
+                    } catch (_: Exception) {
+                        Toast.makeText(context, text.restoreFailed, Toast.LENGTH_SHORT).show()
+                    } finally {
+                        isRestoreInProgress = false
+                    }
+                }
             },
         )
     }
@@ -4620,6 +4647,45 @@ private fun formatTime(timestamp: Long, language: AppLanguage): String {
     }
     return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale)
         .format(Date(timestamp))
+}
+
+private fun restoreBackupPreviewBody(
+    backupPreview: BackupPreview,
+    currentPreview: BackupPreview,
+    text: UiText,
+    appLanguage: AppLanguage,
+): String {
+    val exportedAt = backupPreview.exportedAt
+        ?.let { formatTime(it, appLanguage) }
+        ?: if (appLanguage == AppLanguage.TraditionalChinese) "未知" else "Unknown"
+
+    return if (appLanguage == AppLanguage.TraditionalChinese) {
+        buildString {
+            appendLine("備份檔：")
+            appendLine("記事：${backupPreview.activeNoteCount} 筆一般，${backupPreview.deletedNoteCount} 筆${text.trash}")
+            appendLine("資料夾：${backupPreview.folderCount} 個")
+            appendLine("匯出時間：$exportedAt")
+            appendLine()
+            appendLine("此裝置目前：")
+            appendLine("記事：${currentPreview.activeNoteCount} 筆一般，${currentPreview.deletedNoteCount} 筆${text.trash}")
+            appendLine("資料夾：${currentPreview.folderCount} 個")
+            appendLine()
+            append("還原會用這份備份取代目前所有本機記事與資料夾。")
+        }
+    } else {
+        buildString {
+            appendLine("Backup file:")
+            appendLine("Notes: ${backupPreview.activeNoteCount} active, ${backupPreview.deletedNoteCount} in Trash")
+            appendLine("Folders: ${backupPreview.folderCount}")
+            appendLine("Exported: $exportedAt")
+            appendLine()
+            appendLine("This device now:")
+            appendLine("Notes: ${currentPreview.activeNoteCount} active, ${currentPreview.deletedNoteCount} in Trash")
+            appendLine("Folders: ${currentPreview.folderCount}")
+            appendLine()
+            append("Restoring will replace all current local notes and folders with this backup.")
+        }
+    }
 }
 
 private fun buildTextNoteDocumentText(

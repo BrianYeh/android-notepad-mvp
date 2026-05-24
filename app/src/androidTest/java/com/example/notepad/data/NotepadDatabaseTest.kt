@@ -13,6 +13,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -214,6 +216,132 @@ class NotepadDatabaseTest {
         assertEquals(originalNoteSyncId, dao.getAllNotes().single().syncId)
         assertEquals("Draft", dao.getAllNotes().single().textContent)
         assertEquals(10_000L, dao.getAllNotes().single().reminderAt)
+    }
+
+    @Test
+    fun backupJsonRejectsNonBackupJsonWithoutReplacingExistingNotes() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = dao.insertNote(
+            NoteEntity(
+                folderId = DEFAULT_FOLDER_ID,
+                type = NoteTypes.TEXT,
+                title = "Keep me",
+                textContent = "This should survive a bad restore.",
+                drawingData = null,
+                createdAt = 2L,
+                updatedAt = 2L,
+            ),
+        )
+
+        try {
+            repository.importBackupJson("""{"name":"not a Just Notes backup"}""")
+            fail("Expected invalid backup JSON to be rejected.")
+        } catch (_: IllegalArgumentException) {
+        }
+
+        val note = dao.getNote(noteId)
+        assertEquals("Keep me", note?.title)
+        assertEquals("This should survive a bad restore.", note?.textContent)
+    }
+
+    @Test
+    fun backupJsonRejectsUnsupportedVersionWithoutReplacingExistingNotes() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = dao.insertNote(
+            NoteEntity(
+                folderId = DEFAULT_FOLDER_ID,
+                type = NoteTypes.TEXT,
+                title = "Version guard",
+                textContent = "Body",
+                drawingData = null,
+                createdAt = 2L,
+                updatedAt = 2L,
+            ),
+        )
+
+        try {
+            repository.importBackupJson("""{"version":999,"folders":[],"notes":[]}""")
+            fail("Expected unsupported backup version to be rejected.")
+        } catch (_: IllegalArgumentException) {
+        }
+
+        assertEquals("Version guard", dao.getNote(noteId)?.title)
+    }
+
+    @Test
+    fun backupJsonRejectsMissingVersionWithoutReplacingExistingNotes() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = dao.insertNote(
+            NoteEntity(
+                folderId = DEFAULT_FOLDER_ID,
+                type = NoteTypes.TEXT,
+                title = "Missing version guard",
+                textContent = "Body",
+                drawingData = null,
+                createdAt = 2L,
+                updatedAt = 2L,
+            ),
+        )
+
+        try {
+            repository.importBackupJson("""{"folders":[],"notes":[]}""")
+            fail("Expected backup JSON without a version to be rejected.")
+        } catch (_: IllegalArgumentException) {
+        }
+
+        assertEquals("Missing version guard", dao.getNote(noteId)?.title)
+    }
+
+    @Test
+    fun backupJsonPreviewSummarizesBackupContents() = runTest {
+        dao.ensureDefaultFolder(now = 1L)
+        val folderId = dao.insertFolder(
+            FolderEntity(
+                name = "Projects",
+                createdAt = 2L,
+                updatedAt = 2L,
+            ),
+        )
+        dao.insertNote(
+            NoteEntity(
+                folderId = folderId,
+                type = NoteTypes.TEXT,
+                title = "Active",
+                textContent = "Body",
+                drawingData = null,
+                createdAt = 3L,
+                updatedAt = 3L,
+            ),
+        )
+        dao.insertNote(
+            NoteEntity(
+                folderId = folderId,
+                type = NoteTypes.TEXT,
+                title = "Deleted",
+                textContent = "Trash",
+                drawingData = null,
+                createdAt = 4L,
+                updatedAt = 5L,
+                isDeleted = true,
+                deletedAt = 5L,
+            ),
+        )
+
+        val decodedBackup = BackupJson.decodeWithPreview(
+            BackupJson.encode(
+                folders = dao.getAllFolders(),
+                notes = dao.getAllNotes(),
+            ),
+        )
+
+        assertEquals(2, decodedBackup.preview.folderCount)
+        assertEquals(2, decodedBackup.preview.noteCount)
+        assertEquals(1, decodedBackup.preview.activeNoteCount)
+        assertEquals(1, decodedBackup.preview.deletedNoteCount)
+        assertTrue(decodedBackup.preview.exportedAt != null)
     }
 
     @Test

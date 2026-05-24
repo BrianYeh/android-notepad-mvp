@@ -10,6 +10,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.notepad.data.DriveSyncResult
 import com.example.notepad.data.EditorFontSize
 import com.example.notepad.data.GoogleDriveSyncClient
+import com.example.notepad.data.BackupData
+import com.example.notepad.data.DecodedBackup
 import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NoteQuickFilter
 import com.example.notepad.data.NoteListMode
@@ -113,6 +115,12 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         initialValue = emptyList(),
     )
 
+    val allNotes = repository.allNotes.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList(),
+    )
+
     private val baseNoteFilters = combine(
         selectedFolderId,
         searchQuery,
@@ -131,7 +139,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     private val noteFilters = baseNoteFilters
 
-    val notes = repository.allNotes
+    val notes = allNotes
         .combine(noteFilters) { notes, filters ->
             notes
                 .asSequence()
@@ -501,10 +509,21 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         return repository.exportBackupJson()
     }
 
+    fun decodeBackupJson(json: String): DecodedBackup {
+        return repository.decodeBackupJson(json)
+    }
+
     suspend fun importBackupJson(json: String) {
+        importBackupData(repository.decodeBackupJson(json).data)
+    }
+
+    suspend fun importBackupData(backupData: BackupData) {
         ReminderScheduler.cancelFutureReminders(getApplication())
-        repository.importBackupJson(json)
-        ReminderScheduler.rescheduleFutureReminders(getApplication())
+        try {
+            repository.importBackupData(backupData)
+        } finally {
+            ReminderScheduler.rescheduleFutureReminders(getApplication())
+        }
     }
 }
 
