@@ -214,6 +214,37 @@ class NotepadRepository(
         )
     }
 
+    suspend fun exportBatchZip(): ByteArray {
+        dao.ensureSyncMetadata()
+        return BatchPortability.exportZip(
+            folders = dao.getAllFolders(),
+            notes = dao.getAllNotes(),
+        )
+    }
+
+    suspend fun importTextFiles(files: List<TextImportFile>): Int {
+        dao.ensureDefaultFolder()
+        var imported = 0
+        files.forEach { file ->
+            val content = file.content.trimEnd()
+            if (content.isBlank()) return@forEach
+            val now = System.currentTimeMillis()
+            dao.insertNote(
+                NoteEntity(
+                    folderId = DEFAULT_FOLDER_ID,
+                    type = NoteTypes.TEXT,
+                    title = BatchPortability.titleFromFileName(file.name),
+                    textContent = content,
+                    drawingData = null,
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
+            imported += 1
+        }
+        return imported
+    }
+
     suspend fun currentBackupData(): BackupData {
         dao.ensureSyncMetadata()
         return BackupData(

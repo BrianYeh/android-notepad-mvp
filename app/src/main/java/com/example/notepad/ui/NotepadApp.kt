@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -164,6 +165,8 @@ import com.example.notepad.data.ReminderFilter
 import com.example.notepad.data.ReminderRepeat
 import com.example.notepad.data.SyncMetadata
 import com.example.notepad.data.SyncStatus
+import com.example.notepad.data.TextImportFile
+import com.example.notepad.data.defaultBatchExportFileName
 import com.example.notepad.data.normalizedReminderRepeat
 import com.example.notepad.data.renderDrawingPng
 import com.example.notepad.viewmodel.NotepadViewModel
@@ -1371,6 +1374,7 @@ private fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingBackupJson by remember { mutableStateOf<String?>(null) }
+    var pendingBatchExportZip by remember { mutableStateOf<ByteArray?>(null) }
     var pendingRestoreBackup by remember { mutableStateOf<PendingRestoreBackup?>(null) }
     var pendingRestoreRollback by remember { mutableStateOf<DecodedBackup?>(null) }
     var showAccountSettingsDialog by remember { mutableStateOf(false) }
@@ -1384,6 +1388,7 @@ private fun SettingsScreen(
         if (isPrivacyLocked) {
             pendingRestoreBackup = null
             pendingRestoreRollback = null
+            pendingBatchExportZip = null
             showAccountSettingsDialog = false
             showDisconnectDialog = false
             showGoogleSignOutDialog = false
@@ -1467,6 +1472,60 @@ private fun SettingsScreen(
                 )
             } catch (_: Exception) {
                 Toast.makeText(context, text.restoreFailed, Toast.LENGTH_SHORT).show()
+            } finally {
+                isRestoreInProgress = false
+            }
+        }
+    }
+
+    val batchExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        val exportZip = pendingBatchExportZip
+        pendingBatchExportZip = null
+        if (uri == null || exportZip == null) return@rememberLauncherForActivityResult
+
+        scope.launch {
+            isBackupInProgress = true
+            try {
+                withContext(Dispatchers.IO) {
+                    writeBytesToUri(context, uri, exportZip)
+                }
+                Toast.makeText(context, text.batchExportComplete, Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {
+                Toast.makeText(context, text.batchExportFailed, Toast.LENGTH_SHORT).show()
+            } finally {
+                isBackupInProgress = false
+            }
+        }
+    }
+
+    val batchTextImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+
+        scope.launch {
+            isRestoreInProgress = true
+            try {
+                val files = withContext(Dispatchers.IO) {
+                    uris.mapNotNull { uri ->
+                        runCatching {
+                            TextImportFile(
+                                name = displayNameForUri(context, uri),
+                                content = readTextFromUri(context, uri),
+                            )
+                        }.getOrNull()
+                    }
+                }
+                val imported = viewModel.importTextFiles(files)
+                if (imported > 0) {
+                    Toast.makeText(context, text.batchImportComplete(imported), Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, text.batchImportFailed, Toast.LENGTH_SHORT).show()
+                }
+            } catch (_: Exception) {
+                Toast.makeText(context, text.batchImportFailed, Toast.LENGTH_SHORT).show()
             } finally {
                 isRestoreInProgress = false
             }
@@ -1825,6 +1884,42 @@ private fun SettingsScreen(
                     .testTag("restore_button"),
             ) {
                 Text(text.restoreFromBackup)
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            try {
+                                pendingBatchExportZip = viewModel.exportBatchZip()
+                                batchExportLauncher.launch(defaultBatchExportFileName())
+                            } catch (_: Exception) {
+                                Toast.makeText(context, text.batchExportFailed, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    enabled = !isBackupInProgress && !isRestoreInProgress,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("batch_export_button"),
+                ) {
+                    Text(text.batchExportNotes)
+                }
+                Button(
+                    onClick = {
+                        batchTextImportLauncher.launch(
+                            arrayOf("text/plain", "text/*", "*/*"),
+                        )
+                    },
+                    enabled = !isBackupInProgress && !isRestoreInProgress,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("batch_import_button"),
+                ) {
+                    Text(text.batchImportTextFiles)
+                }
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -6331,6 +6426,24 @@ private fun readTextFromUri(context: Context, uri: Uri): String {
     return inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
         reader.readText()
     }
+}
+
+private fun displayNameForUri(context: Context, uri: Uri): String {
+    context.contentResolver.query(
+        uri,
+        arrayOf(OpenableColumns.DISPLAY_NAME),
+        null,
+        null,
+        null,
+    )?.use { cursor ->
+        if (cursor.moveToFirst()) {
+            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (index >= 0) {
+                return cursor.getString(index).orEmpty().ifBlank { uri.lastPathSegment.orEmpty() }
+            }
+        }
+    }
+    return uri.lastPathSegment.orEmpty().ifBlank { "Imported note.txt" }
 }
 
 private fun persistUriPermission(context: Context, uri: Uri, modeFlags: Int) {

@@ -616,6 +616,8 @@ class TextInputTest {
         composeRule.onNodeWithTag("online_sync_auto_checkbox").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("backup_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("restore_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("batch_export_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("batch_import_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("choose_sync_file_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("account_settings_button").performScrollTo().assertIsDisplayed()
     }

@@ -34,6 +34,7 @@ import com.example.notepad.data.SyncErrorCode
 import com.example.notepad.data.SyncMerge
 import com.example.notepad.data.SyncMetadata
 import com.example.notepad.data.SyncStatus
+import com.example.notepad.data.TextImportFile
 import com.example.notepad.data.buildSharedNoteTitle
 import com.example.notepad.data.normalizedReminderRepeat
 import com.example.notepad.ocr.MlKitOcrTextRecognizer
@@ -612,6 +613,18 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     suspend fun exportBackupJson(): String {
         return repository.exportBackupJson()
+    }
+
+    suspend fun exportBatchZip(): ByteArray {
+        return withContext(Dispatchers.IO) {
+            repository.exportBatchZip()
+        }
+    }
+
+    suspend fun importTextFiles(files: List<TextImportFile>): Int {
+        return repository.importTextFiles(files).also {
+            refreshWidgets()
+        }
     }
 
     fun decodeBackupJson(json: String): DecodedBackup {
