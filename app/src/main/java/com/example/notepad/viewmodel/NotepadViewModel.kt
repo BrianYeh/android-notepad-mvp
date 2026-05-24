@@ -37,6 +37,7 @@ import com.example.notepad.ocr.MlKitOcrTextRecognizer
 import com.example.notepad.ocr.OcrNoteResult
 import com.example.notepad.ocr.OcrNoteUseCase
 import com.example.notepad.reminder.ReminderScheduler
+import com.example.notepad.widget.NotepadWidgets
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -231,6 +232,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         preferences.edit()
             .putBoolean(PrivacyPreferences.REQUIRE_DEVICE_UNLOCK_KEY, enabled)
             .apply()
+        refreshWidgets()
     }
 
     fun setOnlineSyncTargetUri(uri: String?) {
@@ -381,6 +383,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
                     ReminderScheduler.cancelNotification(getApplication(), note.id)
                 }
                 ReminderScheduler.rescheduleFutureReminders(getApplication())
+                refreshWidgets()
                 recordGoogleSync(now)
                 _syncMetadata.value = _syncMetadata.value.copy(
                     accountEmail = driveSyncClient.accountEmail,
@@ -421,12 +424,14 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             if (_selectedFolderId.value == folderId) {
                 _selectedFolderId.value = null
             }
+            refreshWidgets()
         }
     }
 
     fun createTextNote(onCreated: (Long) -> Unit) {
         viewModelScope.launch {
             onCreated(repository.createTextNote(_selectedFolderId.value))
+            refreshWidgets()
         }
     }
 
@@ -439,6 +444,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val title = buildSharedNoteTitle(subject, sharedText, defaultTitle)
             onCreated(repository.createSharedTextNote(title, sharedText))
+            refreshWidgets()
         }
     }
 
@@ -458,7 +464,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
                         fallbackTitlePrefix = fallbackTitlePrefix,
                     )
                 ) {
-                    is OcrNoteResult.Created -> onCreated(result.noteId)
+                    is OcrNoteResult.Created -> {
+                        onCreated(result.noteId)
+                        refreshWidgets()
+                    }
                     OcrNoteResult.NoText -> onNoText()
                     OcrNoteResult.Failed -> onFailed()
                 }
@@ -471,48 +480,54 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     fun createDrawingNote(onCreated: (Long) -> Unit) {
         viewModelScope.launch {
             onCreated(repository.createDrawingNote(_selectedFolderId.value))
+            refreshWidgets()
         }
     }
 
     fun createChecklistNote(onCreated: (Long) -> Unit) {
         viewModelScope.launch {
             onCreated(repository.createChecklistNote(_selectedFolderId.value))
+            refreshWidgets()
         }
     }
 
     fun saveTextNote(noteId: Long, title: String, content: String) {
         viewModelScope.launch {
             repository.saveTextNote(noteId, title, content)
+            refreshWidgets()
         }
     }
 
     suspend fun saveTextNoteNow(noteId: Long, title: String, content: String): Long? {
-        return repository.saveTextNote(noteId, title, content)
+        return repository.saveTextNote(noteId, title, content).also { refreshWidgets() }
     }
 
     fun saveDrawingNote(noteId: Long, title: String, drawingData: String) {
         viewModelScope.launch {
             repository.saveDrawingNote(noteId, title, drawingData)
+            refreshWidgets()
         }
     }
 
     suspend fun saveDrawingNoteNow(noteId: Long, title: String, drawingData: String): Long? {
-        return repository.saveDrawingNote(noteId, title, drawingData)
+        return repository.saveDrawingNote(noteId, title, drawingData).also { refreshWidgets() }
     }
 
     fun saveChecklistNote(noteId: Long, title: String, checklistJson: String) {
         viewModelScope.launch {
             repository.saveChecklistNote(noteId, title, checklistJson)
+            refreshWidgets()
         }
     }
 
     suspend fun saveChecklistNoteNow(noteId: Long, title: String, checklistJson: String): Long? {
-        return repository.saveChecklistNote(noteId, title, checklistJson)
+        return repository.saveChecklistNote(noteId, title, checklistJson).also { refreshWidgets() }
     }
 
     fun moveNote(noteId: Long, folderId: Long) {
         viewModelScope.launch {
             repository.moveNote(noteId, folderId)
+            refreshWidgets()
         }
     }
 
@@ -521,6 +536,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             repository.deleteNote(noteId)
             ReminderScheduler.cancel(getApplication(), noteId)
             ReminderScheduler.cancelNotification(getApplication(), noteId)
+            refreshWidgets()
         }
     }
 
@@ -529,6 +545,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             repository.restoreNote(noteId)?.let {
                 ReminderScheduler.rescheduleFutureReminders(getApplication())
             }
+            refreshWidgets()
         }
     }
 
@@ -537,12 +554,14 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             ReminderScheduler.cancel(getApplication(), noteId)
             ReminderScheduler.cancelNotification(getApplication(), noteId)
             repository.permanentlyDeleteNote(noteId)
+            refreshWidgets()
         }
     }
 
     fun setNotePinned(noteId: Long, isPinned: Boolean) {
         viewModelScope.launch {
             repository.setNotePinned(noteId, isPinned)
+            refreshWidgets()
         }
     }
 
@@ -568,6 +587,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 ReminderScheduler.schedule(getApplication(), note)
             }
+            refreshWidgets()
         }
     }
 
@@ -593,6 +613,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             repository.importBackupData(backupData)
         } finally {
             ReminderScheduler.rescheduleFutureReminders(getApplication())
+            refreshWidgets()
         }
         return rollbackCheckpoint
     }
@@ -606,6 +627,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             restoreRollbackStore.clear()
         }
         _restoreRollbackCheckpoint.value = null
+        refreshWidgets()
     }
 
     suspend fun importBackupData(backupData: BackupData) {
@@ -614,7 +636,12 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             repository.importBackupData(backupData)
         } finally {
             ReminderScheduler.rescheduleFutureReminders(getApplication())
+            refreshWidgets()
         }
+    }
+
+    private fun refreshWidgets() {
+        NotepadWidgets.refresh(getApplication())
     }
 }
 

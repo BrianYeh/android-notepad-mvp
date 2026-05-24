@@ -2,4 +2,9 @@
     <string name="app_name">Just Notes</string>
     <string name="reminder_snooze_10_min">Snooze 10 min</string>
     <string name="reminder_clear">Clear</string>
+    <string name="widget_new_note">+</string>
+    <string name="widget_empty_notes">No notes yet</string>
+    <string name="widget_locked_notes">Unlock Just Notes to view notes</string>
+    <string name="widget_note_list_description">Recent Just Notes</string>
+    <string name="widget_pin">*</string>
 </resources>

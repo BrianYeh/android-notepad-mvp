@@ -40,6 +40,9 @@ abstract class NotepadDao {
     @Query("SELECT * FROM notes WHERE isDeleted = 0 AND (reminderAt IS NOT NULL OR reminderSnoozeUntil IS NOT NULL) ORDER BY reminderAt ASC")
     abstract suspend fun getReminderNotes(): List<NoteEntity>
 
+    @Query("SELECT * FROM notes WHERE isDeleted = 0 ORDER BY isPinned DESC, updatedAt DESC LIMIT :limit")
+    abstract suspend fun getWidgetNotes(limit: Int = 8): List<NoteEntity>
+
     @Query("SELECT * FROM folders WHERE id = :folderId AND isDeleted = 0")
     abstract suspend fun getFolder(folderId: Long): FolderEntity?
 

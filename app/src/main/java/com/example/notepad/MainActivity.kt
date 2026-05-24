@@ -37,18 +37,24 @@ import com.example.notepad.ui.NotepadApp
 import com.example.notepad.ui.PrivacyLockScreen
 import com.example.notepad.ui.uiTextFor
 import com.example.notepad.viewmodel.NotepadViewModel
+import com.example.notepad.widget.ACTION_WIDGET_NEW_TEXT_NOTE
+import com.example.notepad.widget.ACTION_WIDGET_OPEN_NOTE
+import com.example.notepad.widget.EXTRA_WIDGET_NOTE_ID
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val incomingTextShare = MutableStateFlow<IncomingTextShare?>(null)
+    private val pendingWidgetAction = MutableStateFlow<PendingWidgetAction?>(null)
     private var nextShareId = 0L
+    private var nextWidgetActionId = 0L
     private var lockOnStop: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureSystemBars()
         handleIncomingShareIntent(intent)
+        handleWidgetIntent(intent)
 
         setContent {
             val viewModel: NotepadViewModel = viewModel()
@@ -65,6 +71,7 @@ class MainActivity : ComponentActivity() {
             val editorFontSize by viewModel.editorFontSize.collectAsStateWithLifecycle()
             val isRecognizingText by viewModel.isRecognizingText.collectAsStateWithLifecycle()
             val sharedText by incomingTextShare.collectAsStateWithLifecycle()
+            val widgetAction by pendingWidgetAction.collectAsStateWithLifecycle()
             val requireDeviceUnlock by viewModel.requireDeviceUnlock.collectAsStateWithLifecycle()
             val keyguardManager = remember {
                 getSystemService(KEYGUARD_SERVICE) as KeyguardManager
@@ -167,11 +174,18 @@ class MainActivity : ComponentActivity() {
                             editorFontSize = editorFontSize,
                             isRecognizingText = isRecognizingText,
                             incomingTextShare = if (isLocked) null else sharedText,
+                            pendingWidgetAction = if (isLocked) null else widgetAction,
                             isPrivacyLocked = isLocked,
                             deviceUnlockAvailable = deviceUnlockAvailable,
                             onIncomingTextShareHandled = { handledId ->
                                 if (incomingTextShare.value?.id == handledId) {
                                     incomingTextShare.value = null
+                                    setIntent(Intent(Intent.ACTION_MAIN))
+                                }
+                            },
+                            onWidgetActionHandled = { handledId ->
+                                if (pendingWidgetAction.value?.id == handledId) {
+                                    pendingWidgetAction.value = null
                                     setIntent(Intent(Intent.ACTION_MAIN))
                                 }
                             },
@@ -218,6 +232,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncomingShareIntent(intent)
+        handleWidgetIntent(intent)
     }
 
     private fun handleIncomingShareIntent(intent: Intent?) {
@@ -243,6 +258,22 @@ class MainActivity : ComponentActivity() {
             text = text,
         )
     }
+
+    private fun handleWidgetIntent(intent: Intent?) {
+        val action = when (intent?.action) {
+            ACTION_WIDGET_NEW_TEXT_NOTE -> WidgetAction.NewTextNote
+            ACTION_WIDGET_OPEN_NOTE -> {
+                val noteId = intent.getLongExtra(EXTRA_WIDGET_NOTE_ID, 0L)
+                if (noteId <= 0L) return
+                WidgetAction.OpenNote(noteId)
+            }
+            else -> return
+        }
+        pendingWidgetAction.value = PendingWidgetAction(
+            id = ++nextWidgetActionId,
+            action = action,
+        )
+    }
 }
 
 data class IncomingTextShare(
@@ -250,3 +281,13 @@ data class IncomingTextShare(
     val subject: String?,
     val text: String,
 )
+
+data class PendingWidgetAction(
+    val id: Long,
+    val action: WidgetAction,
+)
+
+sealed interface WidgetAction {
+    data object NewTextNote : WidgetAction
+    data class OpenNote(val noteId: Long) : WidgetAction
+}

@@ -1,4 +1,9 @@
 <resources>
     <string name="reminder_snooze_10_min">延後 10 分鐘</string>
     <string name="reminder_clear">清除</string>
+    <string name="widget_new_note">+</string>
+    <string name="widget_empty_notes">還沒有筆記</string>
+    <string name="widget_locked_notes">解鎖 Just Notes 後查看筆記</string>
+    <string name="widget_note_list_description">最近的 Just Notes</string>
+    <string name="widget_pin">*</string>
 </resources>

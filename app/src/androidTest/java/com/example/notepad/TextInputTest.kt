@@ -74,6 +74,17 @@ class TextInputTest {
         composeRule.onNodeWithTag(menuItemTag).performClick()
     }
 
+    private fun exitInitialDrawingFocusModeIfNeeded() {
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("drawing_note_title").fetchSemanticsNodes().isNotEmpty() ||
+                composeRule.onAllNodesWithTag("exit_fullscreen_drawing_button").fetchSemanticsNodes().isNotEmpty()
+        }
+        if (composeRule.onAllNodesWithTag("exit_fullscreen_drawing_button").fetchSemanticsNodes().isNotEmpty()) {
+            composeRule.onNodeWithTag("exit_fullscreen_drawing_button").performClick()
+        }
+        waitForTag("drawing_note_title")
+    }
+
     @Test
     fun textNoteTitleAndContentAcceptInput() {
         val suffix = System.currentTimeMillis()
@@ -751,7 +762,7 @@ class TextInputTest {
         }
 
         openAddMenuItem("new_drawing_note_menu_item")
-        waitForTag("drawing_note_title")
+        exitInitialDrawingFocusModeIfNeeded()
         composeRule.onNodeWithTag("drawing_note_title").performTextInput(drawingTitle)
         composeRule.onNodeWithTag("back_button").performClick()
 

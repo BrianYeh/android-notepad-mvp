@@ -131,6 +131,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notepad.IncomingTextShare
+import com.example.notepad.PendingWidgetAction
+import com.example.notepad.WidgetAction
 import com.example.notepad.data.ALL_NOTES_FILTER_NAME
 import com.example.notepad.data.AppLanguage
 import com.example.notepad.data.BackupData
@@ -337,9 +339,11 @@ fun NotepadApp(
     editorFontSize: EditorFontSize,
     isRecognizingText: Boolean,
     incomingTextShare: IncomingTextShare?,
+    pendingWidgetAction: PendingWidgetAction?,
     isPrivacyLocked: Boolean,
     deviceUnlockAvailable: Boolean,
     onIncomingTextShareHandled: (Long) -> Unit,
+    onWidgetActionHandled: (Long) -> Unit,
     viewModel: NotepadViewModel,
 ) {
     var screen: AppScreen by remember { mutableStateOf(AppScreen.Main) }
@@ -383,6 +387,26 @@ fun NotepadApp(
         ) { noteId ->
             screen = AppScreen.TextEditor(noteId)
             onIncomingTextShareHandled(share.id)
+        }
+    }
+
+    LaunchedEffect(pendingWidgetAction?.id) {
+        val widgetAction = pendingWidgetAction ?: return@LaunchedEffect
+        if (widgetAction.action == WidgetAction.NewTextNote) {
+            onWidgetActionHandled(widgetAction.id)
+            viewModel.createTextNote { noteId ->
+                screen = AppScreen.TextEditor(noteId)
+            }
+        }
+    }
+
+    LaunchedEffect(pendingWidgetAction?.id, allNotes) {
+        val widgetAction = pendingWidgetAction ?: return@LaunchedEffect
+        val action = widgetAction.action as? WidgetAction.OpenNote ?: return@LaunchedEffect
+        val note = allNotes.firstOrNull { it.id == action.noteId && !it.isDeleted }
+        if (note != null) {
+            screen = note.toEditorScreen()
+            onWidgetActionHandled(widgetAction.id)
         }
     }
 
@@ -530,6 +554,14 @@ fun NotepadApp(
 
     if (isRecognizingText && !isPrivacyLocked) {
         OcrProgressDialog(text = text)
+    }
+}
+
+private fun NoteEntity.toEditorScreen(): AppScreen {
+    return when (type) {
+        NoteTypes.DRAWING -> AppScreen.DrawingEditor(id)
+        NoteTypes.CHECKLIST -> AppScreen.ChecklistEditor(id)
+        else -> AppScreen.TextEditor(id)
     }
 }
 
