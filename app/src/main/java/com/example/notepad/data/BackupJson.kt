@@ -38,11 +38,11 @@ data class BackupPreview(
 }
 
 object BackupJson {
-    private const val VERSION = 5
+    private const val VERSION = 6
 
     fun encode(folders: List<FolderEntity>, notes: List<NoteEntity>): String {
         return JSONObject()
-            .put("version", if (notes.any { it.type == NoteTypes.CHECKLIST }) VERSION else 4)
+            .put("version", backupVersionFor(notes))
             .put("exportedAt", System.currentTimeMillis())
             .put("folders", JSONArray().apply {
                 folders.forEach { folder ->
@@ -74,7 +74,8 @@ object BackupJson {
                             .put("isDeleted", note.isDeleted)
                             .putNullableLong("deletedAt", note.deletedAt)
                             .put("isPinned", note.isPinned)
-                            .putNullableLong("reminderAt", note.reminderAt),
+                            .putNullableLong("reminderAt", note.reminderAt)
+                            .put("reminderRepeat", normalizedReminderRepeat(note.reminderRepeat)),
                     )
                 }
             })
@@ -180,6 +181,7 @@ object BackupJson {
                 deletedAt = noteJson.optionalLong("deletedAt"),
                 isPinned = noteJson.optBoolean("isPinned", false),
                 reminderAt = noteJson.optionalLong("reminderAt"),
+                reminderRepeat = normalizedReminderRepeat(noteJson.optionalString("reminderRepeat")),
             )
         }
 
@@ -198,6 +200,14 @@ object BackupJson {
                 exportedAt = exportedAt,
             ),
         )
+    }
+
+    private fun backupVersionFor(notes: List<NoteEntity>): Int {
+        return when {
+            notes.any { normalizedReminderRepeat(it.reminderRepeat) != ReminderRepeat.None.code } -> 6
+            notes.any { it.type == NoteTypes.CHECKLIST } -> 5
+            else -> 4
+        }
     }
 }
 

@@ -14,7 +14,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NotepadMigrationTest {
     @Test
-    fun migration3To5PreservesRowsBackfillsSyncMetadataAndCreatesTombstones() = runTest {
+    fun migration3To6PreservesRowsBackfillsSyncMetadataAndCreatesTombstones() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val dbName = "migration-3-5-${System.currentTimeMillis()}.db"
         context.deleteDatabase(dbName)
@@ -64,7 +64,7 @@ class NotepadMigrationTest {
         }
 
         val database = Room.databaseBuilder(context, NotepadDatabase::class.java, dbName)
-            .addMigrations(NotepadDatabase.MIGRATION_3_4, NotepadDatabase.MIGRATION_4_5)
+            .addMigrations(NotepadDatabase.MIGRATION_3_4, NotepadDatabase.MIGRATION_4_5, NotepadDatabase.MIGRATION_5_6)
             .build()
 
         try {
@@ -80,6 +80,9 @@ class NotepadMigrationTest {
             val note = dao.getNote(10L)
             assertEquals("Plan", note?.title)
             assertTrue(note?.syncId?.startsWith("note:") == true)
+            assertEquals(ReminderRepeat.None.code, note?.reminderRepeat)
+            assertNull(note?.reminderSnoozeUntil)
+            assertNull(note?.activeReminderFiredAt)
 
             dao.deleteFolderAndMoveNotes(folderId = 2L, now = 50L)
 

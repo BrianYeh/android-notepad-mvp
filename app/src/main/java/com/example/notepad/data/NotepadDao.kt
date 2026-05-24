@@ -37,6 +37,9 @@ abstract class NotepadDao {
     @Query("SELECT * FROM notes WHERE isDeleted = 0 AND reminderAt IS NOT NULL AND reminderAt > :now ORDER BY reminderAt ASC")
     abstract suspend fun getFutureReminderNotes(now: Long): List<NoteEntity>
 
+    @Query("SELECT * FROM notes WHERE isDeleted = 0 AND (reminderAt IS NOT NULL OR reminderSnoozeUntil IS NOT NULL) ORDER BY reminderAt ASC")
+    abstract suspend fun getReminderNotes(): List<NoteEntity>
+
     @Query("SELECT * FROM folders WHERE id = :folderId AND isDeleted = 0")
     abstract suspend fun getFolder(folderId: Long): FolderEntity?
 
@@ -70,17 +73,52 @@ abstract class NotepadDao {
     @Query("UPDATE notes SET folderId = :folderId, updatedAt = :updatedAt WHERE id = :noteId")
     abstract suspend fun moveNote(noteId: Long, folderId: Long, updatedAt: Long)
 
-    @Query("UPDATE notes SET isDeleted = 1, deletedAt = :deletedAt, updatedAt = :deletedAt WHERE id = :noteId")
+    @Query("UPDATE notes SET isDeleted = 1, deletedAt = :deletedAt, updatedAt = :deletedAt, reminderSnoozeUntil = NULL, activeReminderFiredAt = NULL WHERE id = :noteId")
     abstract suspend fun softDeleteNote(noteId: Long, deletedAt: Long)
 
-    @Query("UPDATE notes SET isDeleted = 0, deletedAt = NULL, updatedAt = :updatedAt WHERE id = :noteId")
+    @Query("UPDATE notes SET isDeleted = 0, deletedAt = NULL, updatedAt = :updatedAt, reminderSnoozeUntil = NULL, activeReminderFiredAt = NULL WHERE id = :noteId")
     abstract suspend fun restoreNote(noteId: Long, updatedAt: Long)
 
     @Query("UPDATE notes SET isPinned = :isPinned, updatedAt = :updatedAt WHERE id = :noteId")
     abstract suspend fun setNotePinned(noteId: Long, isPinned: Boolean, updatedAt: Long)
 
-    @Query("UPDATE notes SET reminderAt = :reminderAt, updatedAt = :updatedAt WHERE id = :noteId")
-    abstract suspend fun setNoteReminder(noteId: Long, reminderAt: Long?, updatedAt: Long)
+    @Query("UPDATE notes SET reminderAt = :reminderAt, reminderRepeat = :reminderRepeat, reminderSnoozeUntil = NULL, activeReminderFiredAt = NULL, updatedAt = :updatedAt WHERE id = :noteId")
+    abstract suspend fun setNoteReminder(noteId: Long, reminderAt: Long?, reminderRepeat: String, updatedAt: Long)
+
+    @Query("UPDATE notes SET reminderAt = :reminderAt, reminderRepeat = :reminderRepeat, updatedAt = :updatedAt WHERE id = :noteId")
+    abstract suspend fun updateReminderOccurrence(noteId: Long, reminderAt: Long, reminderRepeat: String, updatedAt: Long)
+
+    @Query("UPDATE notes SET reminderAt = :reminderAt, reminderRepeat = :reminderRepeat, updatedAt = :updatedAt WHERE id = :noteId AND reminderAt = :expectedReminderAt AND reminderRepeat = :expectedReminderRepeat AND activeReminderFiredAt = :expectedActiveReminderFiredAt AND isDeleted = 0")
+    abstract suspend fun updateReminderOccurrenceIfCurrent(
+        noteId: Long,
+        expectedReminderAt: Long,
+        expectedReminderRepeat: String,
+        expectedActiveReminderFiredAt: Long,
+        reminderAt: Long,
+        reminderRepeat: String,
+        updatedAt: Long,
+    ): Int
+
+    @Query("UPDATE notes SET reminderSnoozeUntil = :snoozeUntil WHERE id = :noteId")
+    abstract suspend fun setReminderSnoozeUntil(noteId: Long, snoozeUntil: Long?)
+
+    @Query("UPDATE notes SET activeReminderFiredAt = :firedAt WHERE id = :noteId")
+    abstract suspend fun setActiveReminderFiredAt(noteId: Long, firedAt: Long?)
+
+    @Query("UPDATE notes SET activeReminderFiredAt = :firedAt WHERE id = :noteId AND reminderAt = :expectedReminderAt AND reminderRepeat = :expectedReminderRepeat AND isDeleted = 0")
+    abstract suspend fun setActiveReminderFiredAtIfCurrent(
+        noteId: Long,
+        expectedReminderAt: Long,
+        expectedReminderRepeat: String,
+        firedAt: Long?,
+    ): Int
+
+    @Query("UPDATE notes SET activeReminderFiredAt = :firedAt WHERE id = :noteId AND reminderSnoozeUntil = :expectedSnoozeUntil AND isDeleted = 0")
+    abstract suspend fun setActiveSnoozedReminderFiredAtIfCurrent(
+        noteId: Long,
+        expectedSnoozeUntil: Long,
+        firedAt: Long?,
+    ): Int
 
     @Query("DELETE FROM notes WHERE id = :noteId")
     abstract suspend fun deleteNote(noteId: Long)

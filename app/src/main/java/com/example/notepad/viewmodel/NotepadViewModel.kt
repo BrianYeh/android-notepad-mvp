@@ -23,6 +23,7 @@ import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
 import com.example.notepad.data.PrivacyPreferences
 import com.example.notepad.data.ReminderFilter
+import com.example.notepad.data.ReminderRepeat
 import com.example.notepad.data.RestoreRollbackStore
 import com.example.notepad.data.SyncDevice
 import com.example.notepad.data.SyncError
@@ -31,6 +32,7 @@ import com.example.notepad.data.SyncMerge
 import com.example.notepad.data.SyncMetadata
 import com.example.notepad.data.SyncStatus
 import com.example.notepad.data.buildSharedNoteTitle
+import com.example.notepad.data.normalizedReminderRepeat
 import com.example.notepad.ocr.MlKitOcrTextRecognizer
 import com.example.notepad.ocr.OcrNoteResult
 import com.example.notepad.ocr.OcrNoteUseCase
@@ -361,7 +363,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         )
         return when (val result = withContext(Dispatchers.IO) { driveSyncClient.writeSnapshot(mergeResult.snapshot) }) {
             is DriveSyncResult.Success -> {
-                val oldReminderNotes = repository.getFutureReminderNotes()
+                val oldReminderNotes = repository.getReminderNotes()
                 val localReplaceSucceeded = repository.replaceWithRemoteSyncSnapshot(
                     snapshot = mergeResult.snapshot,
                     expectedFingerprint = localExport.fingerprint,
@@ -376,6 +378,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
                 }
                 oldReminderNotes.forEach { note ->
                     ReminderScheduler.cancel(getApplication(), note.id)
+                    ReminderScheduler.cancelNotification(getApplication(), note.id)
                 }
                 ReminderScheduler.rescheduleFutureReminders(getApplication())
                 recordGoogleSync(now)
@@ -517,13 +520,14 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.deleteNote(noteId)
             ReminderScheduler.cancel(getApplication(), noteId)
+            ReminderScheduler.cancelNotification(getApplication(), noteId)
         }
     }
 
     fun restoreNote(noteId: Long) {
         viewModelScope.launch {
-            repository.restoreNote(noteId)?.let { note ->
-                ReminderScheduler.schedule(getApplication(), note)
+            repository.restoreNote(noteId)?.let {
+                ReminderScheduler.rescheduleFutureReminders(getApplication())
             }
         }
     }
@@ -531,6 +535,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     fun permanentlyDeleteNote(noteId: Long) {
         viewModelScope.launch {
             ReminderScheduler.cancel(getApplication(), noteId)
+            ReminderScheduler.cancelNotification(getApplication(), noteId)
             repository.permanentlyDeleteNote(noteId)
         }
     }
@@ -541,10 +546,24 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun setNoteReminder(noteId: Long, reminderAt: Long?) {
+    fun setNoteReminder(
+        noteId: Long,
+        reminderAt: Long?,
+        reminderRepeat: String = ReminderRepeat.None.code,
+    ) {
         viewModelScope.launch {
-            val note = repository.setNoteReminder(noteId, reminderAt)
-            if (note == null || reminderAt == null) {
+            ReminderScheduler.cancel(getApplication(), noteId)
+            ReminderScheduler.cancelNotification(getApplication(), noteId)
+            val normalizedRepeat = normalizedReminderRepeat(reminderRepeat)
+            val scheduledReminderAt = if (reminderAt == null) {
+                null
+            } else if (normalizedRepeat == ReminderRepeat.None.code) {
+                reminderAt
+            } else {
+                ReminderScheduler.nextRepeatTime(reminderAt, normalizedRepeat) ?: reminderAt
+            }
+            val note = repository.setNoteReminder(noteId, scheduledReminderAt, normalizedRepeat)
+            if (note == null || scheduledReminderAt == null) {
                 ReminderScheduler.cancel(getApplication(), noteId)
             } else {
                 ReminderScheduler.schedule(getApplication(), note)

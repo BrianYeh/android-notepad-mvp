@@ -40,6 +40,7 @@ object SyncSnapshotJson {
                             .putNullableLong("deletedAt", note.deletedAt)
                             .put("isPinned", note.isPinned)
                             .putNullableLong("reminderAt", note.reminderAt)
+                            .put("reminderRepeat", normalizedReminderRepeat(note.reminderRepeat))
                             .put("purged", note.purged),
                     )
                 }
@@ -120,6 +121,7 @@ object SyncSnapshotJson {
             deletedAt = optionalLong("deletedAt"),
             isPinned = optBoolean("isPinned", false),
             reminderAt = optionalLong("reminderAt"),
+            reminderRepeat = normalizedReminderRepeat(optionalString("reminderRepeat")),
             purged = optBoolean("purged", false),
         )
     }

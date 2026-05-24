@@ -1,6 +1,7 @@
 package com.example.notepad.data
 
 import kotlinx.coroutines.flow.Flow
+import java.util.Calendar
 
 class NotepadRepository(
     private val dao: NotepadDao,
@@ -179,13 +180,30 @@ class NotepadRepository(
         dao.setNotePinned(noteId, isPinned, System.currentTimeMillis())
     }
 
-    suspend fun setNoteReminder(noteId: Long, reminderAt: Long?): NoteEntity? {
-        dao.setNoteReminder(noteId, reminderAt, System.currentTimeMillis())
+    suspend fun setNoteReminder(
+        noteId: Long,
+        reminderAt: Long?,
+        reminderRepeat: String = ReminderRepeat.None.code,
+    ): NoteEntity? {
+        dao.setNoteReminder(
+            noteId = noteId,
+            reminderAt = reminderAt,
+            reminderRepeat = if (reminderAt == null) {
+                ReminderRepeat.None.code
+            } else {
+                normalizedReminderRepeat(reminderRepeat)
+            },
+            updatedAt = System.currentTimeMillis(),
+        )
         return dao.getNote(noteId)
     }
 
     suspend fun getFutureReminderNotes(): List<NoteEntity> {
         return dao.getFutureReminderNotes(System.currentTimeMillis())
+    }
+
+    suspend fun getReminderNotes(): List<NoteEntity> {
+        return dao.getReminderNotes()
     }
 
     suspend fun exportBackupJson(): String {
@@ -254,6 +272,7 @@ class NotepadRepository(
                 deletedAt = note.deletedAt,
                 isPinned = note.isPinned,
                 reminderAt = note.reminderAt,
+                reminderRepeat = normalizedReminderRepeat(note.reminderRepeat),
             )
         } + tombstones.map { tombstone ->
             RemoteNote(
@@ -266,6 +285,7 @@ class NotepadRepository(
                 createdAt = tombstone.deletedAt,
                 updatedAt = tombstone.deletedAt,
                 deletedAt = tombstone.deletedAt,
+                reminderRepeat = ReminderRepeat.None.code,
                 purged = true,
             )
         }
@@ -299,6 +319,7 @@ class NotepadRepository(
         val existingNotes = dao.getAllNotes()
         val existingFolderIdsBySyncId = existingFolders.associate { it.syncId to it.id }
         val existingNoteIdsBySyncId = existingNotes.associate { it.syncId to it.id }
+        val existingNotesBySyncId = existingNotes.associateBy { it.syncId }
         var nextFolderId = (existingFolders.maxOfOrNull { it.id } ?: DEFAULT_FOLDER_ID) + 1L
         var nextNoteId = (existingNotes.maxOfOrNull { it.id } ?: 0L) + 1L
 
@@ -338,6 +359,7 @@ class NotepadRepository(
                     deletedAt = remoteNote.deletedAt ?: remoteNote.updatedAt,
                 )
             }
+        val now = System.currentTimeMillis()
         val notes = snapshot.notes.filterNot { it.purged }.map { remoteNote ->
             val noteId = existingNoteIdsBySyncId[remoteNote.syncId] ?: nextNoteId++
             val type = when (remoteNote.type) {
@@ -345,6 +367,16 @@ class NotepadRepository(
                 NoteTypes.CHECKLIST -> NoteTypes.CHECKLIST
                 else -> NoteTypes.TEXT
             }
+            val reminderRepeat = normalizedReminderRepeat(remoteNote.reminderRepeat)
+            val existingNote = existingNotesBySyncId[remoteNote.syncId]
+            val preserveLocalReminderTransient = existingNote != null &&
+                normalizedReminderRepeat(existingNote.reminderRepeat) == reminderRepeat &&
+                sameReminderScheduleForLocalTransient(
+                    localReminderAt = existingNote.reminderAt,
+                    remoteReminderAt = remoteNote.reminderAt,
+                    reminderRepeat = reminderRepeat,
+                    now = now,
+                )
             NoteEntity(
                 id = noteId,
                 syncId = remoteNote.syncId,
@@ -363,6 +395,13 @@ class NotepadRepository(
                 deletedAt = remoteNote.deletedAt,
                 isPinned = remoteNote.isPinned,
                 reminderAt = remoteNote.reminderAt,
+                reminderRepeat = reminderRepeat,
+                reminderSnoozeUntil = existingNote?.reminderSnoozeUntil?.takeIf {
+                    preserveLocalReminderTransient
+                },
+                activeReminderFiredAt = existingNote?.activeReminderFiredAt?.takeIf {
+                    preserveLocalReminderTransient
+                },
             )
         }
 
@@ -385,6 +424,36 @@ class NotepadRepository(
             ),
         )
     }
+}
+
+private fun sameReminderScheduleForLocalTransient(
+    localReminderAt: Long?,
+    remoteReminderAt: Long?,
+    reminderRepeat: String,
+    now: Long,
+): Boolean {
+    if (localReminderAt == remoteReminderAt) return true
+    val repeat = normalizedReminderRepeat(reminderRepeat)
+    if (repeat == ReminderRepeat.None.code) return false
+    return nextReminderOccurrence(localReminderAt, repeat, now) ==
+        nextReminderOccurrence(remoteReminderAt, repeat, now)
+}
+
+private fun nextReminderOccurrence(reminderAt: Long?, reminderRepeat: String, now: Long): Long? {
+    reminderAt ?: return null
+    if (reminderAt > now) return reminderAt
+    val field = when (normalizedReminderRepeat(reminderRepeat)) {
+        ReminderRepeat.Daily.code -> Calendar.DAY_OF_YEAR
+        ReminderRepeat.Weekly.code -> Calendar.WEEK_OF_YEAR
+        ReminderRepeat.Monthly.code -> Calendar.MONTH
+        else -> return null
+    }
+    return Calendar.getInstance().apply {
+        timeInMillis = reminderAt
+        while (timeInMillis <= now) {
+            add(field, 1)
+        }
+    }.timeInMillis
 }
 
 data class LocalSyncExport(
@@ -424,6 +493,9 @@ object SyncFingerprint {
                     note.isDeleted,
                     note.isPinned,
                     note.reminderAt,
+                    normalizedReminderRepeat(note.reminderRepeat),
+                    note.reminderSnoozeUntil,
+                    note.activeReminderFiredAt,
                 ).joinToString(":")
             }
         val tombstonePart = noteTombstones

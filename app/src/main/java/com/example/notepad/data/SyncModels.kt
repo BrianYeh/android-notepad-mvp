@@ -3,10 +3,14 @@ package com.example.notepad.data
 import java.util.UUID
 import kotlin.math.abs
 
-const val REMOTE_SYNC_SNAPSHOT_VERSION = 2
+const val REMOTE_SYNC_SNAPSHOT_VERSION = 3
 
 fun remoteSyncSnapshotVersionFor(notes: List<RemoteNote>): Int {
-    return if (notes.any { it.type == NoteTypes.CHECKLIST }) 2 else 1
+    return when {
+        notes.any { normalizedReminderRepeat(it.reminderRepeat) != ReminderRepeat.None.code } -> 3
+        notes.any { it.type == NoteTypes.CHECKLIST } -> 2
+        else -> 1
+    }
 }
 
 object SyncIds {
@@ -89,6 +93,7 @@ data class RemoteNote(
     val deletedAt: Long? = null,
     val isPinned: Boolean = false,
     val reminderAt: Long? = null,
+    val reminderRepeat: String = ReminderRepeat.None.code,
     val purged: Boolean = false,
 )
 
@@ -334,6 +339,7 @@ object SyncMerge {
             drawingData == other.drawingData &&
             isPinned == other.isPinned &&
             reminderAt == other.reminderAt &&
+            normalizedReminderRepeat(reminderRepeat) == normalizedReminderRepeat(other.reminderRepeat) &&
             deletedAt == other.deletedAt &&
             purged == other.purged
     }
@@ -437,6 +443,7 @@ object RemoteSnapshotConsolidator {
             drawingData == other.drawingData &&
             isPinned == other.isPinned &&
             reminderAt == other.reminderAt &&
+            normalizedReminderRepeat(reminderRepeat) == normalizedReminderRepeat(other.reminderRepeat) &&
             deletedAt == other.deletedAt &&
             purged == other.purged
     }
@@ -455,6 +462,7 @@ object RemoteSnapshotConsolidator {
             drawingData,
             isPinned,
             reminderAt,
+            normalizedReminderRepeat(reminderRepeat),
             deletedAt,
             purged,
         ).joinToString("|")

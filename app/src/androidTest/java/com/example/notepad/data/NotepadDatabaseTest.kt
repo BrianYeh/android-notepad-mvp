@@ -13,6 +13,7 @@ import com.example.notepad.ocr.OcrTextRecognizer
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -492,13 +493,184 @@ class NotepadDatabaseTest {
         dao.ensureDefaultFolder(now = 1L)
         val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
 
-        repository.setNoteReminder(noteId, 10_000L)
+        repository.setNoteReminder(noteId, 10_000L, ReminderRepeat.Daily.code)
 
         assertEquals(10_000L, dao.getNote(noteId)?.reminderAt)
+        assertEquals(ReminderRepeat.Daily.code, dao.getNote(noteId)?.reminderRepeat)
 
         repository.setNoteReminder(noteId, null)
 
         assertNull(dao.getNote(noteId)?.reminderAt)
+        assertEquals(ReminderRepeat.None.code, dao.getNote(noteId)?.reminderRepeat)
+    }
+
+    @Test
+    fun settingReminderClearsTransientSnoozeAndNotificationToken() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+        repository.setNoteReminder(noteId, 10_000L, ReminderRepeat.Daily.code)
+        dao.setReminderSnoozeUntil(noteId, 20_000L)
+        dao.setActiveReminderFiredAt(noteId, 10_000L)
+
+        repository.setNoteReminder(noteId, 30_000L, ReminderRepeat.Weekly.code)
+
+        val note = dao.getNote(noteId)
+        assertEquals(30_000L, note?.reminderAt)
+        assertEquals(ReminderRepeat.Weekly.code, note?.reminderRepeat)
+        assertNull(note?.reminderSnoozeUntil)
+        assertNull(note?.activeReminderFiredAt)
+    }
+
+    @Test
+    fun transientReminderStateChangesSyncFingerprint() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+        repository.setNoteReminder(noteId, 10_000L, ReminderRepeat.Daily.code)
+        val before = repository.syncFingerprint()
+
+        dao.setActiveReminderFiredAt(noteId, 10_000L)
+
+        assertNotEquals(before, repository.syncFingerprint())
+    }
+
+    @Test
+    fun reminderOccurrenceUpdateRequiresCurrentReminderSchedule() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+        repository.setNoteReminder(noteId, 10_000L, ReminderRepeat.Daily.code)
+        repository.setNoteReminder(noteId, 20_000L, ReminderRepeat.Daily.code)
+
+        val updated = dao.updateReminderOccurrenceIfCurrent(
+            noteId = noteId,
+            expectedReminderAt = 10_000L,
+            expectedReminderRepeat = ReminderRepeat.Daily.code,
+            expectedActiveReminderFiredAt = 10_000L,
+            reminderAt = 30_000L,
+            reminderRepeat = ReminderRepeat.Daily.code,
+            updatedAt = 40_000L,
+        )
+
+        assertEquals(0, updated)
+        assertEquals(20_000L, dao.getNote(noteId)?.reminderAt)
+    }
+
+    @Test
+    fun reminderOccurrenceUpdateRequiresCurrentNotificationToken() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+        repository.setNoteReminder(noteId, 10_000L, ReminderRepeat.Daily.code)
+        dao.setActiveReminderFiredAt(noteId, null)
+
+        val updated = dao.updateReminderOccurrenceIfCurrent(
+            noteId = noteId,
+            expectedReminderAt = 10_000L,
+            expectedReminderRepeat = ReminderRepeat.Daily.code,
+            expectedActiveReminderFiredAt = 10_000L,
+            reminderAt = 20_000L,
+            reminderRepeat = ReminderRepeat.Daily.code,
+            updatedAt = 30_000L,
+        )
+
+        assertEquals(0, updated)
+        assertEquals(10_000L, dao.getNote(noteId)?.reminderAt)
+        assertNull(dao.getNote(noteId)?.activeReminderFiredAt)
+    }
+
+    @Test
+    fun deletingAndRestoringNoteClearsStaleReminderNotificationToken() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+        repository.setNoteReminder(noteId, 10_000L, ReminderRepeat.Daily.code)
+        dao.setReminderSnoozeUntil(noteId, 20_000L)
+        dao.setActiveReminderFiredAt(noteId, 10_000L)
+
+        repository.deleteNote(noteId)
+
+        assertNull(dao.getNote(noteId)?.reminderSnoozeUntil)
+        assertNull(dao.getNote(noteId)?.activeReminderFiredAt)
+
+        dao.setReminderSnoozeUntil(noteId, 20_000L)
+        dao.setActiveReminderFiredAt(noteId, 10_000L)
+        repository.restoreNote(noteId)
+
+        assertNull(dao.getNote(noteId)?.reminderSnoozeUntil)
+        assertNull(dao.getNote(noteId)?.activeReminderFiredAt)
+    }
+
+    @Test
+    fun syncReplacePreservesLocalReminderSnoozeAndNotificationTokenForSameSchedule() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+        repository.saveTextNote(noteId, "Daily", "Check")
+        repository.setNoteReminder(noteId, 10_000L, ReminderRepeat.Daily.code)
+        dao.setReminderSnoozeUntil(noteId, 20_000L)
+        dao.setActiveReminderFiredAt(noteId, 10_000L)
+        val export = repository.exportRemoteSyncSnapshotWithFingerprint(
+            sourceDevice = SyncDevice(deviceId = "device-1", deviceName = "Test device"),
+            accountEmail = null,
+            now = 30_000L,
+        )
+
+        assertTrue(repository.replaceWithRemoteSyncSnapshot(export.snapshot, export.fingerprint))
+
+        val note = dao.getNote(noteId)
+        assertEquals(20_000L, note?.reminderSnoozeUntil)
+        assertEquals(10_000L, note?.activeReminderFiredAt)
+    }
+
+    @Test
+    fun syncReplacePreservesLocalReminderTransientForEquivalentRecurringSchedule() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+        val now = System.currentTimeMillis()
+        val localReminderAt = now + 86_400_000L
+        val staleRemoteReminderAt = localReminderAt - 86_400_000L
+        repository.saveTextNote(noteId, "Daily", "Check")
+        repository.setNoteReminder(noteId, localReminderAt, ReminderRepeat.Daily.code)
+        dao.setReminderSnoozeUntil(noteId, now + 600_000L)
+        dao.setActiveReminderFiredAt(noteId, staleRemoteReminderAt)
+        val export = repository.exportRemoteSyncSnapshotWithFingerprint(
+            sourceDevice = SyncDevice(deviceId = "device-1", deviceName = "Test device"),
+            accountEmail = null,
+            now = now,
+        )
+        val snapshot = export.snapshot.copy(
+            notes = export.snapshot.notes.map { note ->
+                if (note.syncId == dao.getNote(noteId)?.syncId) {
+                    note.copy(reminderAt = staleRemoteReminderAt)
+                } else {
+                    note
+                }
+            },
+        )
+
+        assertTrue(repository.replaceWithRemoteSyncSnapshot(snapshot, export.fingerprint))
+
+        val note = dao.getNote(noteId)
+        assertEquals(now + 600_000L, note?.reminderSnoozeUntil)
+        assertEquals(staleRemoteReminderAt, note?.activeReminderFiredAt)
+    }
+
+    @Test
+    fun backupPreservesRecurringReminder() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+        repository.saveTextNote(noteId, "Standup", "Daily check")
+        repository.setNoteReminder(noteId, 10_000L, ReminderRepeat.Daily.code)
+
+        val backupJson = repository.exportBackupJson()
+        val decoded = BackupJson.decode(backupJson).notes.single()
+
+        assertTrue(backupJson.contains("\"version\":6"))
+        assertEquals(10_000L, decoded.reminderAt)
+        assertEquals(ReminderRepeat.Daily.code, decoded.reminderRepeat)
     }
 
     @Test

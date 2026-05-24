@@ -1,0 +1,4 @@
+<resources>
+    <string name="reminder_snooze_10_min">延後 10 分鐘</string>
+    <string name="reminder_clear">清除</string>
+</resources>

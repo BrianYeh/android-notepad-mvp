@@ -50,6 +50,17 @@ enum class ReminderFilter {
     Upcoming,
 }
 
+enum class ReminderRepeat(val code: String) {
+    None("NONE"),
+    Daily("DAILY"),
+    Weekly("WEEKLY"),
+    Monthly("MONTHLY"),
+}
+
+fun normalizedReminderRepeat(code: String?): String {
+    return ReminderRepeat.entries.firstOrNull { it.code == code }?.code ?: ReminderRepeat.None.code
+}
+
 @Entity(
     tableName = "folders",
     indices = [Index("syncId")],
@@ -92,6 +103,9 @@ data class NoteEntity(
     val deletedAt: Long? = null,
     val isPinned: Boolean = false,
     val reminderAt: Long? = null,
+    val reminderRepeat: String = ReminderRepeat.None.code,
+    val reminderSnoozeUntil: Long? = null,
+    val activeReminderFiredAt: Long? = null,
 )
 
 @Entity(tableName = "note_tombstones")

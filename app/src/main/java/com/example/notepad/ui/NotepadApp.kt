@@ -155,8 +155,10 @@ import com.example.notepad.data.NoteSortOption
 import com.example.notepad.data.NoteTypeFilter
 import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.ReminderFilter
+import com.example.notepad.data.ReminderRepeat
 import com.example.notepad.data.SyncMetadata
 import com.example.notepad.data.SyncStatus
+import com.example.notepad.data.normalizedReminderRepeat
 import com.example.notepad.data.renderDrawingPng
 import com.example.notepad.viewmodel.NotepadViewModel
 import java.io.File
@@ -2491,7 +2493,11 @@ private fun TextEditorScreen(
         contract = ActivityResultContracts.RequestPermission(),
     ) { _ ->
         pendingReminderAt?.let { reminderAt ->
-            viewModel.setNoteReminder(noteId, reminderAt)
+            viewModel.setNoteReminder(
+                noteId = noteId,
+                reminderAt = reminderAt,
+                reminderRepeat = note?.reminderRepeat ?: ReminderRepeat.None.code,
+            )
         }
         pendingReminderAt = null
     }
@@ -2759,7 +2765,11 @@ private fun TextEditorScreen(
             pendingReminderAt = reminderAt
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            viewModel.setNoteReminder(noteId, reminderAt)
+            viewModel.setNoteReminder(
+                noteId = noteId,
+                reminderAt = reminderAt,
+                reminderRepeat = note?.reminderRepeat ?: ReminderRepeat.None.code,
+            )
         }
     }
 
@@ -2973,6 +2983,18 @@ private fun TextEditorScreen(
                                     },
                                 )
                                 if (loaded.reminderAt != null) {
+                                    ReminderRepeat.entries.forEach { repeat ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(text.reminderRepeat + ": " + reminderRepeatLabel(repeat.code, text))
+                                            },
+                                            modifier = Modifier.testTag("text_reminder_repeat_" + repeat.name),
+                                            onClick = {
+                                                isMoreMenuExpanded = false
+                                                viewModel.setNoteReminder(noteId, loaded.reminderAt, repeat.code)
+                                            },
+                                        )
+                                    }
                                     DropdownMenuItem(
                                         text = { Text(text.clearReminder) },
                                         modifier = Modifier.testTag("clear_reminder_menu_item"),
@@ -3807,7 +3829,9 @@ private fun ChecklistEditorScreen(
                                 text = text,
                                 appLanguage = appLanguage,
                                 isPrivacyLocked = isPrivacyLocked,
-                                onSetReminder = { reminderAt -> viewModel.setNoteReminder(noteId, reminderAt) },
+                                onSetReminder = { reminderAt, repeat ->
+                                    viewModel.setNoteReminder(noteId, reminderAt, repeat)
+                                },
                                 onClearReminder = { viewModel.setNoteReminder(noteId, null) },
                             )
                         }
@@ -4219,7 +4243,9 @@ private fun DrawingEditorScreen(
                     text = text,
                     appLanguage = appLanguage,
                     isPrivacyLocked = isPrivacyLocked,
-                    onSetReminder = { reminderAt -> viewModel.setNoteReminder(noteId, reminderAt) },
+                    onSetReminder = { reminderAt, repeat ->
+                        viewModel.setNoteReminder(noteId, reminderAt, repeat)
+                    },
                     onClearReminder = { viewModel.setNoteReminder(noteId, null) },
                 )
                 DrawingCanvasWithFullscreenEntry(
@@ -4732,7 +4758,7 @@ private fun ReminderControls(
     text: UiText,
     appLanguage: AppLanguage,
     isPrivacyLocked: Boolean,
-    onSetReminder: (Long) -> Unit,
+    onSetReminder: (Long, String) -> Unit,
     onClearReminder: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -4752,7 +4778,7 @@ private fun ReminderControls(
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { _ ->
-        pendingReminderAt?.let(onSetReminder)
+        pendingReminderAt?.let { onSetReminder(it, note.reminderRepeat) }
         pendingReminderAt = null
     }
 
@@ -4768,7 +4794,13 @@ private fun ReminderControls(
             pendingReminderAt = reminderAt
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            onSetReminder(reminderAt)
+            onSetReminder(reminderAt, note.reminderRepeat)
+        }
+    }
+
+    fun setRepeat(repeat: ReminderRepeat) {
+        note.reminderAt?.let { reminderAt ->
+            onSetReminder(reminderAt, repeat.code)
         }
     }
 
@@ -4843,6 +4875,26 @@ private fun ReminderControls(
                     modifier = Modifier.testTag("clear_reminder_button"),
                 ) {
                     Text(text.clearReminder)
+                }
+            }
+        }
+        if (note.reminderAt != null) {
+            Text(
+                text = text.reminderRepeat + ": " + reminderRepeatLabel(note.reminderRepeat, text),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("reminder_repeat_status"),
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ReminderRepeat.entries.forEach { repeat ->
+                    item {
+                        FilterChip(
+                            selected = normalizedReminderRepeat(note.reminderRepeat) == repeat.code,
+                            onClick = { setRepeat(repeat) },
+                            label = { Text(reminderRepeatLabel(repeat.code, text)) },
+                            modifier = Modifier.testTag("reminder_repeat_" + repeat.name),
+                        )
+                    }
                 }
             }
         }
@@ -5539,6 +5591,15 @@ private fun ReminderFilter.label(text: UiText): String {
         ReminderFilter.WithReminder -> text.withReminder
         ReminderFilter.Overdue -> text.overdueReminders
         ReminderFilter.Upcoming -> text.upcomingReminders
+    }
+}
+
+private fun reminderRepeatLabel(reminderRepeat: String, text: UiText): String {
+    return when (normalizedReminderRepeat(reminderRepeat)) {
+        ReminderRepeat.Daily.code -> text.reminderRepeatDaily
+        ReminderRepeat.Weekly.code -> text.reminderRepeatWeekly
+        ReminderRepeat.Monthly.code -> text.reminderRepeatMonthly
+        else -> text.reminderRepeatNone
     }
 }
 
