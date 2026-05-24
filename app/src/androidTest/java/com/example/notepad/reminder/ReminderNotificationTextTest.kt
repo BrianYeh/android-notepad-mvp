@@ -2,6 +2,8 @@ package com.example.notepad.reminder
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.notepad.data.DEFAULT_FOLDER_ID
+import com.example.notepad.data.ChecklistItem
+import com.example.notepad.data.ChecklistJson
 import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NoteTypes
 import org.junit.Assert.assertEquals
@@ -36,6 +38,29 @@ class ReminderNotificationTextTest {
 
         assertEquals("Visible title", text.title)
         assertEquals("Visible body", text.body)
+    }
+
+    @Test
+    fun visibleChecklistReminderFormatsChecklistItems() {
+        val note = note(
+            title = "Groceries",
+            textContent = ChecklistJson.encode(
+                listOf(
+                    ChecklistItem(text = "Milk", checked = true),
+                    ChecklistItem(text = "Eggs", checked = false),
+                ),
+            ),
+            type = NoteTypes.CHECKLIST,
+        )
+
+        val text = reminderNotificationText(
+            note = note,
+            appName = "Just Notes",
+            hideContent = false,
+        )
+
+        assertEquals("Groceries", text.title)
+        assertEquals("[x] Milk\n[ ] Eggs", text.body)
     }
 
     private fun note(

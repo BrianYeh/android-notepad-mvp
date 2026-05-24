@@ -134,6 +134,8 @@ import com.example.notepad.data.ALL_NOTES_FILTER_NAME
 import com.example.notepad.data.AppLanguage
 import com.example.notepad.data.BackupData
 import com.example.notepad.data.BackupPreview
+import com.example.notepad.data.ChecklistItem
+import com.example.notepad.data.ChecklistJson
 import com.example.notepad.data.DEFAULT_FOLDER_ID
 import com.example.notepad.data.DEFAULT_FOLDER_NAME
 import com.example.notepad.data.DEFAULT_DRAWING_COLOR_ARGB
@@ -180,6 +182,7 @@ private sealed interface AppScreen {
     data object Premium : AppScreen
     data class TextEditor(val noteId: Long) : AppScreen
     data class DrawingEditor(val noteId: Long) : AppScreen
+    data class ChecklistEditor(val noteId: Long) : AppScreen
 }
 
 private data class PendingRestoreBackup(
@@ -426,14 +429,19 @@ fun NotepadApp(
                     screen = AppScreen.DrawingEditor(noteId)
                 }
             },
+            onCreateChecklistNote = {
+                viewModel.createChecklistNote { noteId ->
+                    screen = AppScreen.ChecklistEditor(noteId)
+                }
+            },
             onCreateOcrNote = {
                 imagePickerLauncher.launch("image/*")
             },
             onOpenNote = { note ->
-                screen = if (note.type == NoteTypes.DRAWING) {
-                    AppScreen.DrawingEditor(note.id)
-                } else {
-                    AppScreen.TextEditor(note.id)
+                screen = when (note.type) {
+                    NoteTypes.DRAWING -> AppScreen.DrawingEditor(note.id)
+                    NoteTypes.CHECKLIST -> AppScreen.ChecklistEditor(note.id)
+                    else -> AppScreen.TextEditor(note.id)
                 }
             },
             onMoveNote = viewModel::moveNote,
@@ -490,6 +498,17 @@ fun NotepadApp(
         )
 
         is AppScreen.DrawingEditor -> DrawingEditorScreen(
+            noteId = currentScreen.noteId,
+            folders = folders,
+            text = text,
+            appLanguage = appLanguage,
+            isPrivacyLocked = isPrivacyLocked,
+            viewModel = viewModel,
+            onBack = { screen = AppScreen.Main },
+            onDeleted = { screen = AppScreen.Main },
+        )
+
+        is AppScreen.ChecklistEditor -> ChecklistEditorScreen(
             noteId = currentScreen.noteId,
             folders = folders,
             text = text,
@@ -859,6 +878,7 @@ private fun MainScreen(
     onDeleteFolder: (Long) -> Unit,
     onCreateTextNote: () -> Unit,
     onCreateDrawingNote: () -> Unit,
+    onCreateChecklistNote: () -> Unit,
     onCreateOcrNote: () -> Unit,
     onOpenNote: (NoteEntity) -> Unit,
     onMoveNote: (Long, Long) -> Unit,
@@ -978,6 +998,14 @@ private fun MainScreen(
                             onClick = {
                                 addMenuExpanded = false
                                 onCreateTextNote()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(text.newChecklistNote) },
+                            modifier = Modifier.testTag("new_checklist_note_menu_item"),
+                            onClick = {
+                                addMenuExpanded = false
+                                onCreateChecklistNote()
                             },
                         )
                         DropdownMenuItem(
@@ -2324,7 +2352,7 @@ private fun NoteRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = if (note.type == NoteTypes.DRAWING) text.drawing else text.text,
+                    text = noteTypeLabel(note.type, text),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier
@@ -3550,6 +3578,308 @@ private fun TextEditorAccessoryBar(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun ChecklistEditorScreen(
+    noteId: Long,
+    folders: List<FolderEntity>,
+    text: UiText,
+    appLanguage: AppLanguage,
+    isPrivacyLocked: Boolean,
+    viewModel: NotepadViewModel,
+    onBack: () -> Unit,
+    onDeleted: () -> Unit,
+) {
+    val note by viewModel.observeNote(noteId).collectAsStateWithLifecycle(initialValue = null)
+    var title by remember(noteId) { mutableStateOf("") }
+    var items by remember(noteId) { mutableStateOf(ChecklistJson.emptyItems()) }
+    var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
+    var saveStatus by remember(noteId) { mutableStateOf(SaveStatus.Saved) }
+    var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var isSavingAndLeaving by remember(noteId) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val titleFocusRequester = remember(noteId) { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val autoSaveVersion = remember(noteId) { AtomicLong(0L) }
+    val checklistJson = remember(items) { ChecklistJson.encode(items) }
+    val latestNote by rememberUpdatedState(note)
+    val latestTitle by rememberUpdatedState(title)
+    val latestItems by rememberUpdatedState(items)
+    val latestLoadedNoteId by rememberUpdatedState(loadedNoteId)
+    val checkedCount = items.count { it.checked }
+    val visibleItemCount = items.count { it.text.isNotBlank() }.coerceAtLeast(items.size)
+
+    LaunchedEffect(note?.id) {
+        val loaded = note ?: return@LaunchedEffect
+        if (loadedNoteId == loaded.id) return@LaunchedEffect
+        title = loaded.title
+        items = ChecklistJson.decode(loaded.textContent)
+        loadedNoteId = loaded.id
+        lastSavedAt = loaded.updatedAt
+        saveStatus = SaveStatus.Saved
+    }
+
+    LaunchedEffect(noteId, loadedNoteId, title, checklistJson) {
+        if (loadedNoteId != noteId) return@LaunchedEffect
+        val current = note ?: return@LaunchedEffect
+        if (title == current.title && checklistJson == current.textContent.orEmpty()) {
+            saveStatus = SaveStatus.Saved
+            return@LaunchedEffect
+        }
+        val pendingVersion = autoSaveVersion.get()
+        saveStatus = SaveStatus.Saving
+        delay(500)
+        if (pendingVersion != autoSaveVersion.get()) return@LaunchedEffect
+        lastSavedAt = viewModel.saveChecklistNoteNow(noteId, title, checklistJson) ?: System.currentTimeMillis()
+        saveStatus = SaveStatus.Saved
+    }
+
+    fun hasUnsavedChecklist(
+        currentNote: NoteEntity? = latestNote,
+        titleValue: String = latestTitle,
+        checklistJsonValue: String = ChecklistJson.encode(latestItems),
+        loadedId: Long? = latestLoadedNoteId,
+    ): Boolean {
+        val current = currentNote ?: return false
+        return loadedId == noteId &&
+            (titleValue != current.title || checklistJsonValue != current.textContent.orEmpty())
+    }
+
+    fun savePendingChecklist() {
+        val titleToSave = latestTitle
+        val checklistJsonToSave = ChecklistJson.encode(latestItems)
+        if (hasUnsavedChecklist(latestNote, titleToSave, checklistJsonToSave, latestLoadedNoteId)) {
+            viewModel.saveChecklistNote(noteId, titleToSave, checklistJsonToSave)
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, noteId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                savePendingChecklist()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            savePendingChecklist()
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    fun saveAndBack() {
+        if (isSavingAndLeaving) return
+        isSavingAndLeaving = true
+        autoSaveVersion.incrementAndGet()
+        keyboardController?.hide()
+        scope.launch {
+            saveStatus = SaveStatus.Saving
+            lastSavedAt = viewModel.saveChecklistNoteNow(noteId, title, checklistJson) ?: lastSavedAt
+            saveStatus = SaveStatus.Saved
+            onBack()
+        }
+    }
+
+    fun updateItem(id: String, transform: (ChecklistItem) -> ChecklistItem) {
+        autoSaveVersion.incrementAndGet()
+        items = items.map { item -> if (item.id == id) transform(item) else item }
+    }
+
+    fun addItem() {
+        autoSaveVersion.incrementAndGet()
+        items = items + ChecklistItem(text = "")
+    }
+
+    fun deleteItem(id: String) {
+        autoSaveVersion.incrementAndGet()
+        items = items.filterNot { it.id == id }.ifEmpty { ChecklistJson.emptyItems() }
+    }
+
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) {
+            showDeleteDialog = false
+            keyboardController?.hide()
+        }
+    }
+
+    BackHandler(onBack = ::saveAndBack)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = title.ifBlank { text.untitledChecklist },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            saveStatus.label(text),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            modifier = Modifier.testTag("checklist_save_status"),
+                        )
+                    }
+                },
+                navigationIcon = {
+                    TextButton(
+                        onClick = ::saveAndBack,
+                        modifier = Modifier.testTag("back_button"),
+                    ) {
+                        Text(text.back)
+                    }
+                },
+                actions = {
+                    TextButton(
+                        onClick = { showDeleteDialog = true },
+                        modifier = Modifier.testTag("delete_checklist_note_button"),
+                    ) {
+                        Text(text.moveToTrash)
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        val currentNote = note
+        if (currentNote == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text.noteNotFound)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .imePadding()
+                    .testTag("checklist_editor"),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                item {
+                    Card(shape = RoundedCornerShape(8.dp)) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedTextField(
+                                value = title,
+                                onValueChange = {
+                                    autoSaveVersion.incrementAndGet()
+                                    title = it
+                                },
+                                label = { Text(text.title) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(titleFocusRequester)
+                                    .testTag("checklist_note_title"),
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                NoteFolderSelector(
+                                    folders = folders,
+                                    text = text,
+                                    currentFolderId = currentNote.folderId,
+                                    isPrivacyLocked = isPrivacyLocked,
+                                    onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
+                                )
+                                Text(
+                                    text = text.checkedItems(checkedCount, visibleItemCount),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.testTag("checklist_progress"),
+                                )
+                            }
+                            ReminderControls(
+                                note = currentNote,
+                                text = text,
+                                appLanguage = appLanguage,
+                                isPrivacyLocked = isPrivacyLocked,
+                                onSetReminder = { reminderAt -> viewModel.setNoteReminder(noteId, reminderAt) },
+                                onClearReminder = { viewModel.setNoteReminder(noteId, null) },
+                            )
+                        }
+                    }
+                }
+                items(items, key = { it.id }) { item ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("checklist_item_${item.id}"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Checkbox(
+                            checked = item.checked,
+                            onCheckedChange = { checked ->
+                                updateItem(item.id) { it.copy(checked = checked) }
+                            },
+                            modifier = Modifier.testTag("checklist_item_checkbox"),
+                        )
+                        OutlinedTextField(
+                            value = item.text,
+                            onValueChange = { value ->
+                                updateItem(item.id) { it.copy(text = value) }
+                            },
+                            singleLine = true,
+                            placeholder = { Text(text.checklist) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("checklist_item_text"),
+                        )
+                        TextButton(
+                            onClick = { deleteItem(item.id) },
+                            modifier = Modifier.testTag("delete_checklist_item_button"),
+                        ) {
+                            Text("x", maxLines = 1)
+                        }
+                    }
+                }
+                item {
+                    Button(
+                        onClick = ::addItem,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("add_checklist_item_button"),
+                    ) {
+                        Text(text.addChecklistItem)
+                    }
+                }
+            }
+        }
+    }
+
+    if (showDeleteDialog && !isPrivacyLocked) {
+        ConfirmDialog(
+            title = text.deleteNote,
+            body = text.deleteNoteBody,
+            confirmText = text.moveToTrash,
+            cancelText = text.cancel,
+            destructive = true,
+            onDismiss = { showDeleteDialog = false },
+            onConfirm = {
+                viewModel.deleteNote(noteId)
+                showDeleteDialog = false
+                onDeleted()
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun DrawingEditorScreen(
     noteId: Long,
     folders: List<FolderEntity>,
@@ -4729,17 +5059,22 @@ private fun folderDisplayNameById(
 
 private fun noteTitle(note: NoteEntity, text: UiText): String {
     return note.title.ifBlank {
-        if (note.type == NoteTypes.DRAWING) text.untitledDrawing else text.untitledTextNote
+        when (note.type) {
+            NoteTypes.DRAWING -> text.untitledDrawing
+            NoteTypes.CHECKLIST -> text.untitledChecklist
+            else -> text.untitledTextNote
+        }
     }
 }
 
 private fun notePreview(note: NoteEntity, query: String): String? {
-    if (note.type != NoteTypes.TEXT) return null
+    if (note.type != NoteTypes.TEXT && note.type != NoteTypes.CHECKLIST) return null
 
-    val content = note.textContent
-        .orEmpty()
-        .replace(Regex("\\s+"), " ")
-        .trim()
+    val content = if (note.type == NoteTypes.CHECKLIST) {
+        ChecklistJson.preview(note.textContent)
+    } else {
+        note.textContent.orEmpty()
+    }.replace(Regex("\\s+"), " ").trim()
     if (content.isBlank()) return null
 
     val trimmedQuery = query.trim()
@@ -5175,6 +5510,7 @@ private fun NoteTypeFilter.label(text: UiText): String {
         NoteTypeFilter.All -> text.allTypes
         NoteTypeFilter.Text -> text.textNotes
         NoteTypeFilter.Drawing -> text.drawingNotes
+        NoteTypeFilter.Checklist -> text.checklistNotes
     }
 }
 
@@ -5183,8 +5519,17 @@ private fun NoteQuickFilter.label(text: UiText): String {
         NoteQuickFilter.All -> text.all
         NoteQuickFilter.Text -> text.textNotes
         NoteQuickFilter.Drawing -> text.drawingNotes
+        NoteQuickFilter.Checklist -> text.checklistNotes
         NoteQuickFilter.HasReminder -> text.hasReminder
         NoteQuickFilter.Pinned -> text.pinned
+    }
+}
+
+private fun noteTypeLabel(type: String, text: UiText): String {
+    return when (type) {
+        NoteTypes.DRAWING -> text.drawing
+        NoteTypes.CHECKLIST -> text.checklist
+        else -> text.text
     }
 }
 

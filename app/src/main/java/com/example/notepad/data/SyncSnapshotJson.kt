@@ -6,7 +6,7 @@ import org.json.JSONObject
 object SyncSnapshotJson {
     fun encode(snapshot: RemoteSyncSnapshot): String {
         return JSONObject()
-            .put("formatVersion", snapshot.formatVersion)
+            .put("formatVersion", remoteSyncSnapshotVersionFor(snapshot.notes))
             .put("snapshotId", snapshot.snapshotId)
             .put("exportedAt", snapshot.exportedAt)
             .put("sourceDevice", snapshot.sourceDevice.toJson())
@@ -50,7 +50,7 @@ object SyncSnapshotJson {
     fun decode(json: String): RemoteSyncSnapshot {
         val root = JSONObject(json)
         val formatVersion = root.optInt("formatVersion", 0)
-        require(formatVersion == REMOTE_SYNC_SNAPSHOT_VERSION) {
+        require(formatVersion in 1..REMOTE_SYNC_SNAPSHOT_VERSION) {
             "Unsupported sync snapshot version: $formatVersion"
         }
 
@@ -109,6 +109,7 @@ object SyncSnapshotJson {
             folderSyncId = optionalString("folderSyncId") ?: DEFAULT_FOLDER_SYNC_ID,
             type = when (optionalString("type")) {
                 NoteTypes.DRAWING -> NoteTypes.DRAWING
+                NoteTypes.CHECKLIST -> NoteTypes.CHECKLIST
                 else -> NoteTypes.TEXT
             },
             title = optionalString("title").orEmpty(),

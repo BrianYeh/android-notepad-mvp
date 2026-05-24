@@ -11,6 +11,7 @@ import com.example.notepad.data.DriveSyncResult
 import com.example.notepad.data.EditorFontSize
 import com.example.notepad.data.GoogleDriveSyncClient
 import com.example.notepad.data.BackupData
+import com.example.notepad.data.ChecklistJson
 import com.example.notepad.data.DecodedBackup
 import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NoteQuickFilter
@@ -470,6 +471,12 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun createChecklistNote(onCreated: (Long) -> Unit) {
+        viewModelScope.launch {
+            onCreated(repository.createChecklistNote(_selectedFolderId.value))
+        }
+    }
+
     fun saveTextNote(noteId: Long, title: String, content: String) {
         viewModelScope.launch {
             repository.saveTextNote(noteId, title, content)
@@ -488,6 +495,16 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     suspend fun saveDrawingNoteNow(noteId: Long, title: String, drawingData: String): Long? {
         return repository.saveDrawingNote(noteId, title, drawingData)
+    }
+
+    fun saveChecklistNote(noteId: Long, title: String, checklistJson: String) {
+        viewModelScope.launch {
+            repository.saveChecklistNote(noteId, title, checklistJson)
+        }
+    }
+
+    suspend fun saveChecklistNoteNow(noteId: Long, title: String, checklistJson: String): Long? {
+        return repository.saveChecklistNote(noteId, title, checklistJson)
     }
 
     fun moveNote(noteId: Long, folderId: Long) {
@@ -592,7 +609,7 @@ private data class NoteListFilters(
 
 private fun NoteEntity.matchesSearch(query: String): Boolean {
     return title.contains(query, ignoreCase = true) ||
-        textContent.orEmpty().contains(query, ignoreCase = true)
+        searchableText().contains(query, ignoreCase = true)
 }
 
 private fun NoteEntity.matchesQuickFilter(filter: NoteQuickFilter): Boolean {
@@ -600,8 +617,17 @@ private fun NoteEntity.matchesQuickFilter(filter: NoteQuickFilter): Boolean {
         NoteQuickFilter.All -> true
         NoteQuickFilter.Text -> type == NoteTypes.TEXT
         NoteQuickFilter.Drawing -> type == NoteTypes.DRAWING
+        NoteQuickFilter.Checklist -> type == NoteTypes.CHECKLIST
         NoteQuickFilter.HasReminder -> reminderAt != null
         NoteQuickFilter.Pinned -> isPinned
+    }
+}
+
+private fun NoteEntity.searchableText(): String {
+    return if (type == NoteTypes.CHECKLIST) {
+        ChecklistJson.plainText(textContent)
+    } else {
+        textContent.orEmpty()
     }
 }
 

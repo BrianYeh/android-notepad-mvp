@@ -502,6 +502,27 @@ class NotepadDatabaseTest {
     }
 
     @Test
+    fun checklistNotePreservesStructuredItemsThroughBackup() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createChecklistNote(DEFAULT_FOLDER_ID)
+        val checklistItems = listOf(
+            ChecklistItem(text = "Milk", checked = true),
+            ChecklistItem(text = "Eggs", checked = false),
+        )
+
+        repository.saveChecklistNote(noteId, "Groceries", ChecklistJson.encode(checklistItems))
+        val backupJson = repository.exportBackupJson()
+        val decodedBackup = BackupJson.decode(backupJson)
+
+        val note = decodedBackup.notes.single()
+        assertTrue(backupJson.contains("\"version\":5"))
+        assertEquals(NoteTypes.CHECKLIST, note.type)
+        assertEquals("Groceries", note.title)
+        assertEquals(checklistItems.map { it.text }, ChecklistJson.decode(note.textContent).map { it.text })
+        assertEquals(listOf(true, false), ChecklistJson.decode(note.textContent).map { it.checked })
+    }
+
+    @Test
     fun sharedTextNoteUsesSubjectAndUncategorizedFolder() = runTest {
         val repository = NotepadRepository(dao)
         val title = buildSharedNoteTitle(

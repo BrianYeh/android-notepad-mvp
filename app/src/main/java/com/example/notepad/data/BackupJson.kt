@@ -38,11 +38,11 @@ data class BackupPreview(
 }
 
 object BackupJson {
-    private const val VERSION = 4
+    private const val VERSION = 5
 
     fun encode(folders: List<FolderEntity>, notes: List<NoteEntity>): String {
         return JSONObject()
-            .put("version", VERSION)
+            .put("version", if (notes.any { it.type == NoteTypes.CHECKLIST }) VERSION else 4)
             .put("exportedAt", System.currentTimeMillis())
             .put("folders", JSONArray().apply {
                 folders.forEach { folder ->
@@ -151,6 +151,7 @@ object BackupJson {
 
             val type = when (noteJson.optString("type")) {
                 NoteTypes.DRAWING -> NoteTypes.DRAWING
+                NoteTypes.CHECKLIST -> NoteTypes.CHECKLIST
                 else -> NoteTypes.TEXT
             }
             val folderId = noteJson.optLong("folderId", DEFAULT_FOLDER_ID)
@@ -163,7 +164,7 @@ object BackupJson {
                 folderId = folderId,
                 type = type,
                 title = noteJson.optString("title"),
-                textContent = if (type == NoteTypes.TEXT) {
+                textContent = if (type == NoteTypes.TEXT || type == NoteTypes.CHECKLIST) {
                     noteJson.optionalString("textContent").orEmpty()
                 } else {
                     null

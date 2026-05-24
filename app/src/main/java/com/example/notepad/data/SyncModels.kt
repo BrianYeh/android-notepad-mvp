@@ -3,7 +3,11 @@ package com.example.notepad.data
 import java.util.UUID
 import kotlin.math.abs
 
-const val REMOTE_SYNC_SNAPSHOT_VERSION = 1
+const val REMOTE_SYNC_SNAPSHOT_VERSION = 2
+
+fun remoteSyncSnapshotVersionFor(notes: List<RemoteNote>): Int {
+    return if (notes.any { it.type == NoteTypes.CHECKLIST }) 2 else 1
+}
 
 object SyncIds {
     fun newFolderSyncId(): String = "folder:${UUID.randomUUID()}"
@@ -119,6 +123,7 @@ object SyncMerge {
         if (remote == null) {
             return SyncMergeResult(
                 snapshot = local.copy(
+                    formatVersion = remoteSyncSnapshotVersionFor(local.notes),
                     exportedAt = now,
                     devices = listOf(local.sourceDevice.copy(lastSyncAt = now)),
                 ),
@@ -143,6 +148,7 @@ object SyncMerge {
 
         return SyncMergeResult(
             snapshot = local.copy(
+                formatVersion = remoteSyncSnapshotVersionFor(noteMerge.notes),
                 snapshotId = UUID.randomUUID().toString(),
                 exportedAt = now,
                 devices = devices,
@@ -361,11 +367,15 @@ object RemoteSnapshotConsolidator {
             now = now,
             conflictSyncIdFactory = conflictSyncIdFactory,
         )
-        if (conflictCopies.isEmpty()) return base
+        if (conflictCopies.isEmpty()) {
+            return base.copy(formatVersion = remoteSyncSnapshotVersionFor(base.notes))
+        }
+        val notes = (base.notes + conflictCopies).sortedWith(
+            compareBy<RemoteNote> { it.deletedAt != null }.thenBy { it.syncId },
+        )
         return base.copy(
-            notes = (base.notes + conflictCopies).sortedWith(
-                compareBy<RemoteNote> { it.deletedAt != null }.thenBy { it.syncId },
-            ),
+            formatVersion = remoteSyncSnapshotVersionFor(notes),
+            notes = notes,
         )
     }
 

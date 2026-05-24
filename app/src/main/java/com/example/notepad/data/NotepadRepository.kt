@@ -91,6 +91,22 @@ class NotepadRepository(
         )
     }
 
+    suspend fun createChecklistNote(folderId: Long?): Long {
+        dao.ensureDefaultFolder()
+        val now = System.currentTimeMillis()
+        return dao.insertNote(
+            NoteEntity(
+                folderId = folderId ?: DEFAULT_FOLDER_ID,
+                type = NoteTypes.CHECKLIST,
+                title = "",
+                textContent = ChecklistJson.encode(ChecklistJson.emptyItems()),
+                drawingData = null,
+                createdAt = now,
+                updatedAt = now,
+            ),
+        )
+    }
+
     suspend fun saveTextNote(noteId: Long, title: String, content: String): Long? {
         val current = dao.getNote(noteId) ?: return null
         if (current.title == title && current.textContent == content) return current.updatedAt
@@ -117,6 +133,23 @@ class NotepadRepository(
                 title = title,
                 textContent = null,
                 drawingData = drawingData,
+                updatedAt = now,
+            ),
+        )
+        return now
+    }
+
+    suspend fun saveChecklistNote(noteId: Long, title: String, checklistJson: String): Long? {
+        val current = dao.getNote(noteId) ?: return null
+        if (current.title == title && current.textContent == checklistJson) return current.updatedAt
+        val now = System.currentTimeMillis()
+
+        dao.updateNote(
+            current.copy(
+                title = title,
+                type = NoteTypes.CHECKLIST,
+                textContent = checklistJson,
+                drawingData = null,
                 updatedAt = now,
             ),
         )
@@ -208,8 +241,37 @@ class NotepadRepository(
         val notes = syncData.notes
         val tombstones = dao.getNoteTombstones()
         val folderSyncIdsById = folders.associate { it.id to it.syncId }
+        val remoteNotes = notes.map { note ->
+            RemoteNote(
+                syncId = note.syncId,
+                folderSyncId = folderSyncIdsById[note.folderId] ?: DEFAULT_FOLDER_SYNC_ID,
+                type = note.type,
+                title = note.title,
+                textContent = note.textContent,
+                drawingData = note.drawingData,
+                createdAt = note.createdAt,
+                updatedAt = note.updatedAt,
+                deletedAt = note.deletedAt,
+                isPinned = note.isPinned,
+                reminderAt = note.reminderAt,
+            )
+        } + tombstones.map { tombstone ->
+            RemoteNote(
+                syncId = tombstone.syncId,
+                folderSyncId = DEFAULT_FOLDER_SYNC_ID,
+                type = NoteTypes.TEXT,
+                title = "",
+                textContent = "",
+                drawingData = null,
+                createdAt = tombstone.deletedAt,
+                updatedAt = tombstone.deletedAt,
+                deletedAt = tombstone.deletedAt,
+                purged = true,
+            )
+        }
         return LocalSyncExport(
             snapshot = RemoteSyncSnapshot(
+                formatVersion = remoteSyncSnapshotVersionFor(remoteNotes),
                 exportedAt = now,
                 sourceDevice = sourceDevice.copy(lastSyncAt = now),
                 devices = listOf(sourceDevice.copy(lastSyncAt = now)),
@@ -222,34 +284,7 @@ class NotepadRepository(
                         deletedAt = folder.deletedAt,
                     )
                 },
-                notes = notes.map { note ->
-                    RemoteNote(
-                        syncId = note.syncId,
-                        folderSyncId = folderSyncIdsById[note.folderId] ?: DEFAULT_FOLDER_SYNC_ID,
-                        type = note.type,
-                        title = note.title,
-                        textContent = note.textContent,
-                        drawingData = note.drawingData,
-                        createdAt = note.createdAt,
-                        updatedAt = note.updatedAt,
-                        deletedAt = note.deletedAt,
-                        isPinned = note.isPinned,
-                        reminderAt = note.reminderAt,
-                    )
-                } + tombstones.map { tombstone ->
-                    RemoteNote(
-                        syncId = tombstone.syncId,
-                        folderSyncId = DEFAULT_FOLDER_SYNC_ID,
-                        type = NoteTypes.TEXT,
-                        title = "",
-                        textContent = "",
-                        drawingData = null,
-                        createdAt = tombstone.deletedAt,
-                        updatedAt = tombstone.deletedAt,
-                        deletedAt = tombstone.deletedAt,
-                        purged = true,
-                    )
-                },
+                notes = remoteNotes,
             ),
             fingerprint = SyncFingerprint.calculate(folders, notes, tombstones),
         )
@@ -307,6 +342,7 @@ class NotepadRepository(
             val noteId = existingNoteIdsBySyncId[remoteNote.syncId] ?: nextNoteId++
             val type = when (remoteNote.type) {
                 NoteTypes.DRAWING -> NoteTypes.DRAWING
+                NoteTypes.CHECKLIST -> NoteTypes.CHECKLIST
                 else -> NoteTypes.TEXT
             }
             NoteEntity(
@@ -319,7 +355,7 @@ class NotepadRepository(
                 },
                 type = type,
                 title = remoteNote.title,
-                textContent = if (type == NoteTypes.TEXT) remoteNote.textContent.orEmpty() else null,
+                textContent = if (type == NoteTypes.TEXT || type == NoteTypes.CHECKLIST) remoteNote.textContent.orEmpty() else null,
                 drawingData = if (type == NoteTypes.DRAWING) remoteNote.drawingData ?: "[]" else null,
                 createdAt = remoteNote.createdAt,
                 updatedAt = remoteNote.updatedAt,

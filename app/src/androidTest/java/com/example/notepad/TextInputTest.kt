@@ -115,6 +115,48 @@ class TextInputTest {
     }
 
     @Test
+    fun checklistNoteCanAddCheckAndPersistItems() {
+        val suffix = System.currentTimeMillis()
+        val title = "Checklist $suffix"
+        val firstItem = "Milk $suffix"
+        val secondItem = "Eggs $suffix"
+
+        openAddMenuItem("new_checklist_note_menu_item")
+        waitForTag("checklist_note_title")
+
+        composeRule.onNodeWithTag("checklist_note_title")
+            .assertIsDisplayed()
+            .performTextInput(title)
+        composeRule.onAllNodesWithTag("checklist_item_text")[0]
+            .assertIsDisplayed()
+            .performTextInput(firstItem)
+        composeRule.onNodeWithTag("add_checklist_item_button")
+            .performScrollTo()
+            .performClick()
+        composeRule.onAllNodesWithTag("checklist_item_text")[1]
+            .assertIsDisplayed()
+            .performTextInput(secondItem)
+        composeRule.onAllNodesWithTag("checklist_item_checkbox")[0]
+            .assertIsDisplayed()
+            .performClick()
+        composeRule.onNodeWithTag("checklist_progress").assertIsDisplayed()
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(title).assertIsDisplayed()
+        composeRule.onNodeWithTag("note_search_input").performTextInput(secondItem)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(title).performClick()
+        waitForTag("checklist_editor")
+        composeRule.onNodeWithText(firstItem).assertIsDisplayed()
+        composeRule.onNodeWithText(secondItem).assertIsDisplayed()
+    }
+
+    @Test
     fun settingsCanToggleHiddenReminderNotificationContent() {
         composeRule.onNodeWithTag("settings_button").performClick()
         waitForTag("hide_reminder_content_row")

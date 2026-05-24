@@ -13,6 +13,7 @@ const val ALL_NOTES_FILTER_NAME = "All Notes"
 object NoteTypes {
     const val TEXT = "TEXT"
     const val DRAWING = "DRAWING"
+    const val CHECKLIST = "CHECKLIST"
 }
 
 enum class NoteListMode {
@@ -30,12 +31,14 @@ enum class NoteTypeFilter {
     All,
     Text,
     Drawing,
+    Checklist,
 }
 
 enum class NoteQuickFilter {
     All,
     Text,
     Drawing,
+    Checklist,
     HasReminder,
     Pinned,
 }
