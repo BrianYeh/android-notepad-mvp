@@ -21,6 +21,7 @@ import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
 import com.example.notepad.data.ReminderFilter
+import com.example.notepad.data.RestoreRollbackStore
 import com.example.notepad.data.SyncDevice
 import com.example.notepad.data.SyncError
 import com.example.notepad.data.SyncErrorCode
@@ -44,12 +45,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.UUID
 
 class NotepadViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("ui_settings", Context.MODE_PRIVATE)
     private val repository = NotepadRepository(
         NotepadDatabase.getInstance(application).notepadDao(),
+    )
+    private val restoreRollbackStore = RestoreRollbackStore(
+        File(application.filesDir, "restore-rollback-checkpoint.json"),
     )
     private val driveSyncClient = GoogleDriveSyncClient(application)
     private val googleSyncMutex = Mutex()
@@ -91,6 +96,8 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         preferences.getLong("last_online_restore_at", 0L).takeIf { it > 0L },
     )
     val lastOnlineRestoreAt: StateFlow<Long?> = _lastOnlineRestoreAt
+    private val _restoreRollbackCheckpoint = MutableStateFlow(restoreRollbackStore.load())
+    val restoreRollbackCheckpoint: StateFlow<DecodedBackup?> = _restoreRollbackCheckpoint
     private val _lastGoogleSyncAt = MutableStateFlow(
         preferences.getLong("last_google_sync_at", 0L).takeIf {
             it > 0L && preferences.getString("last_google_sync_account", null) == driveSyncClient.accountEmail
@@ -517,13 +524,29 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         importBackupData(repository.decodeBackupJson(json).data)
     }
 
-    suspend fun importBackupDataWithRollbackCheckpoint(backupData: BackupData): BackupData {
+    suspend fun importBackupDataWithRollbackCheckpoint(backupData: BackupData): DecodedBackup {
+        val rollbackCheckpoint = withContext(Dispatchers.IO) {
+            restoreRollbackStore.save(repository.exportBackupJson())
+        }
+        _restoreRollbackCheckpoint.value = rollbackCheckpoint
         ReminderScheduler.cancelFutureReminders(getApplication())
         try {
-            return repository.importBackupDataWithRollbackCheckpoint(backupData)
+            repository.importBackupData(backupData)
         } finally {
             ReminderScheduler.rescheduleFutureReminders(getApplication())
         }
+        return rollbackCheckpoint
+    }
+
+    suspend fun restoreRollbackCheckpoint() {
+        val checkpoint = _restoreRollbackCheckpoint.value
+            ?: withContext(Dispatchers.IO) { restoreRollbackStore.load() }
+            ?: error("No restore rollback checkpoint is available.")
+        importBackupData(checkpoint.data)
+        withContext(Dispatchers.IO) {
+            restoreRollbackStore.clear()
+        }
+        _restoreRollbackCheckpoint.value = null
     }
 
     suspend fun importBackupData(backupData: BackupData) {

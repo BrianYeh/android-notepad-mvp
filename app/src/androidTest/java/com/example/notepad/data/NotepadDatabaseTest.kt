@@ -1,5 +1,6 @@
 package com.example.notepad.data
 
+import android.content.Context
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.net.Uri
@@ -18,6 +19,7 @@ import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class NotepadDatabaseTest {
@@ -268,6 +270,60 @@ class NotepadDatabaseTest {
         assertEquals(listOf(originalNoteId), restoredNotes.map { it.id })
         assertEquals("Original", restoredNotes.single().title)
         assertEquals("Keep this before restore.", restoredNotes.single().textContent)
+    }
+
+    @Test
+    fun restoreRollbackStorePersistsCheckpointAcrossInstances() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        dao.insertNote(
+            NoteEntity(
+                folderId = DEFAULT_FOLDER_ID,
+                type = NoteTypes.TEXT,
+                title = "Durable checkpoint",
+                textContent = "Saved to app-private storage.",
+                drawingData = null,
+                createdAt = 2L,
+                updatedAt = 2L,
+            ),
+        )
+        val checkpointFile = File(
+            ApplicationProvider.getApplicationContext<Context>().cacheDir,
+            "restore-rollback-${System.currentTimeMillis()}.json",
+        )
+
+        try {
+            RestoreRollbackStore(checkpointFile).save(repository.exportBackupJson())
+
+            val reloaded = RestoreRollbackStore(checkpointFile).load()
+
+            assertEquals("Durable checkpoint", reloaded?.data?.notes?.single()?.title)
+            assertEquals("Saved to app-private storage.", reloaded?.data?.notes?.single()?.textContent)
+
+            RestoreRollbackStore(checkpointFile).clear()
+
+            assertNull(RestoreRollbackStore(checkpointFile).load())
+        } finally {
+            checkpointFile.delete()
+        }
+    }
+
+    @Test
+    fun restoreRollbackStoreClearsCorruptCheckpoint() {
+        val checkpointFile = File(
+            ApplicationProvider.getApplicationContext<Context>().cacheDir,
+            "restore-rollback-corrupt-${System.currentTimeMillis()}.json",
+        )
+        checkpointFile.writeText("not a backup")
+
+        try {
+            val restored = RestoreRollbackStore(checkpointFile).load()
+
+            assertNull(restored)
+            assertEquals(false, checkpointFile.exists())
+        } finally {
+            checkpointFile.delete()
+        }
     }
 
     @Test

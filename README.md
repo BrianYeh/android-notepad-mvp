@@ -30,7 +30,7 @@ Native Android notepad built with Kotlin, Jetpack Compose, Room, and MVVM.
 - Receive `text/plain` shares from other apps and create a new text note in `Uncategorized`
 - Drawing data is stored locally in Room as serialized JSON stroke data
 - App language follows the Android system language, matching ColorNote-style behavior
-- Manual JSON backup and restore from Settings; restore validates the selected backup, previews note/folder counts, and creates a one-time local rollback checkpoint before replacing local data
+- Manual JSON backup and restore from Settings; restore validates the selected backup, previews note/folder counts, and saves a private rollback checkpoint before replacing local data
 - Sync-ready local metadata for stable folder/note IDs and tombstones
 - Google account sync foundation is implemented with Google Sign-In and Drive app data, but release readiness still depends on the OAuth/Drive setup and real-device hardening in `GOOGLE_ACCOUNT_SYNC_SETUP.md`
 

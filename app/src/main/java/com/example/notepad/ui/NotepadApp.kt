@@ -138,6 +138,7 @@ import com.example.notepad.data.DEFAULT_FOLDER_ID
 import com.example.notepad.data.DEFAULT_FOLDER_NAME
 import com.example.notepad.data.DEFAULT_DRAWING_COLOR_ARGB
 import com.example.notepad.data.DEFAULT_DRAWING_STROKE_WIDTH
+import com.example.notepad.data.DecodedBackup
 import com.example.notepad.data.DrawingJson
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
@@ -266,7 +267,6 @@ fun NotepadApp(
     viewModel: NotepadViewModel,
 ) {
     var screen: AppScreen by remember { mutableStateOf(AppScreen.Main) }
-    var pendingRestoreRollback by remember { mutableStateOf<PendingRestoreBackup?>(null) }
     val appLanguage = rememberSystemAppLanguage()
     val text = remember(appLanguage) { uiTextFor(appLanguage) }
     val context = LocalContext.current
@@ -274,6 +274,7 @@ fun NotepadApp(
     val onlineSyncAutoOnStart by viewModel.onlineSyncAutoOnStart.collectAsStateWithLifecycle()
     val lastOnlineSyncAt by viewModel.lastOnlineSyncAt.collectAsStateWithLifecycle()
     val lastOnlineRestoreAt by viewModel.lastOnlineRestoreAt.collectAsStateWithLifecycle()
+    val restoreRollbackCheckpoint by viewModel.restoreRollbackCheckpoint.collectAsStateWithLifecycle()
     val syncMetadata by viewModel.syncMetadata.collectAsStateWithLifecycle()
     var onlineSyncAutoAttempted by remember { mutableStateOf(false) }
     val imagePickerLauncher = rememberLauncherForActivityResult(
@@ -386,14 +387,13 @@ fun NotepadApp(
             lastOnlineSyncAt = lastOnlineSyncAt,
             lastOnlineRestoreAt = lastOnlineRestoreAt,
             syncMetadata = syncMetadata,
-            pendingRestoreRollback = pendingRestoreRollback,
+            restoreRollbackCheckpoint = restoreRollbackCheckpoint,
             viewModel = viewModel,
             onEditorFontSizeChange = viewModel::setEditorFontSize,
             onOnlineSyncTargetChange = viewModel::setOnlineSyncTargetUri,
             onOnlineSyncAutoOnStartChange = viewModel::setOnlineSyncAutoOnStart,
             onOnlineSyncRecorded = { viewModel.recordOnlineSync() },
             onOnlineRestoreRecorded = { viewModel.recordOnlineRestore() },
-            onPendingRestoreRollbackChange = { pendingRestoreRollback = it },
             onOnlineSyncDisconnect = viewModel::disconnectOnlineSync,
             onBack = { screen = AppScreen.Main },
         )
@@ -1128,14 +1128,13 @@ private fun SettingsScreen(
     lastOnlineSyncAt: Long?,
     lastOnlineRestoreAt: Long?,
     syncMetadata: SyncMetadata,
-    pendingRestoreRollback: PendingRestoreBackup?,
+    restoreRollbackCheckpoint: DecodedBackup?,
     viewModel: NotepadViewModel,
     onEditorFontSizeChange: (EditorFontSize) -> Unit,
     onOnlineSyncTargetChange: (String?) -> Unit,
     onOnlineSyncAutoOnStartChange: (Boolean) -> Unit,
     onOnlineSyncRecorded: () -> Unit,
     onOnlineRestoreRecorded: () -> Unit,
-    onPendingRestoreRollbackChange: (PendingRestoreBackup?) -> Unit,
     onOnlineSyncDisconnect: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -1143,6 +1142,7 @@ private fun SettingsScreen(
     val scope = rememberCoroutineScope()
     var pendingBackupJson by remember { mutableStateOf<String?>(null) }
     var pendingRestoreBackup by remember { mutableStateOf<PendingRestoreBackup?>(null) }
+    var pendingRestoreRollback by remember { mutableStateOf<DecodedBackup?>(null) }
     var showAccountSettingsDialog by remember { mutableStateOf(false) }
     var showDisconnectDialog by remember { mutableStateOf(false) }
     var showGoogleSignOutDialog by remember { mutableStateOf(false) }
@@ -1453,7 +1453,7 @@ private fun SettingsScreen(
                     modifier = Modifier.testTag("last_restore_status"),
                 )
             }
-            pendingRestoreRollback?.let { rollback ->
+            restoreRollbackCheckpoint?.let {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1468,21 +1468,7 @@ private fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(
-                        onClick = {
-                            scope.launch {
-                                isRestoreInProgress = true
-                                try {
-                                    viewModel.importBackupData(rollback.data)
-                                    onPendingRestoreRollbackChange(null)
-                                    onOnlineRestoreRecorded()
-                                    Toast.makeText(context, text.restoreRollbackComplete, Toast.LENGTH_SHORT).show()
-                                } catch (_: Exception) {
-                                    Toast.makeText(context, text.restoreRollbackFailed, Toast.LENGTH_SHORT).show()
-                                } finally {
-                                    isRestoreInProgress = false
-                                }
-                            }
-                        },
+                        onClick = { pendingRestoreRollback = restoreRollbackCheckpoint },
                         enabled = !isBackupInProgress && !isRestoreInProgress,
                         modifier = Modifier.testTag("restore_rollback_button"),
                     ) {
@@ -1597,20 +1583,42 @@ private fun SettingsScreen(
                 scope.launch {
                     isRestoreInProgress = true
                     try {
-                        val rollbackData = viewModel.importBackupDataWithRollbackCheckpoint(pendingRestore.data)
-                        onPendingRestoreRollbackChange(
-                            PendingRestoreBackup(
-                                data = rollbackData,
-                                preview = BackupPreview.from(
-                                    folders = rollbackData.folders,
-                                    notes = rollbackData.notes,
-                                ),
-                            ),
-                        )
+                        viewModel.importBackupDataWithRollbackCheckpoint(pendingRestore.data)
                         onOnlineRestoreRecorded()
                         Toast.makeText(context, text.restoreComplete, Toast.LENGTH_SHORT).show()
                     } catch (_: Exception) {
                         Toast.makeText(context, text.restoreFailed, Toast.LENGTH_SHORT).show()
+                    } finally {
+                        isRestoreInProgress = false
+                    }
+                }
+            },
+        )
+    }
+
+    pendingRestoreRollback?.let { rollback ->
+        ConfirmDialog(
+            title = text.undoRestore,
+            body = restoreRollbackPreviewBody(
+                rollbackPreview = rollback.preview,
+                currentPreview = currentBackupPreview,
+                text = text,
+                appLanguage = appLanguage,
+            ),
+            confirmText = text.undoRestore,
+            cancelText = text.cancel,
+            destructive = true,
+            onDismiss = { pendingRestoreRollback = null },
+            onConfirm = {
+                pendingRestoreRollback = null
+                scope.launch {
+                    isRestoreInProgress = true
+                    try {
+                        viewModel.restoreRollbackCheckpoint()
+                        onOnlineRestoreRecorded()
+                        Toast.makeText(context, text.restoreRollbackComplete, Toast.LENGTH_SHORT).show()
+                    } catch (_: Exception) {
+                        Toast.makeText(context, text.restoreRollbackFailed, Toast.LENGTH_SHORT).show()
                     } finally {
                         isRestoreInProgress = false
                     }
@@ -5042,7 +5050,7 @@ private fun restoreBackupPreviewBody(
             appendLine("資料夾：${currentPreview.folderCount} 個")
             appendLine()
             appendLine("還原會用這份備份取代目前所有本機記事與資料夾。")
-            append("還原前會先建立一次性檢查點，還原後可在關閉 App 或再次還原前復原。")
+            append("還原前會先在此裝置建立私有檢查點，還原後可在再次還原或復原前復原。")
         }
     } else {
         buildString {
@@ -5056,7 +5064,40 @@ private fun restoreBackupPreviewBody(
             appendLine("Folders: ${currentPreview.folderCount}")
             appendLine()
             appendLine("Restoring will replace all current local notes and folders with this backup.")
-            append("Just Notes will create a one-time checkpoint first, so you can undo this restore until the app closes or another restore runs.")
+            append("Just Notes will first save a private checkpoint on this device, so you can undo the restore until another restore runs or you undo it.")
+        }
+    }
+}
+
+private fun restoreRollbackPreviewBody(
+    rollbackPreview: BackupPreview,
+    currentPreview: BackupPreview,
+    text: UiText,
+    appLanguage: AppLanguage,
+): String {
+    return if (appLanguage == AppLanguage.TraditionalChinese) {
+        buildString {
+            appendLine("還原前檢查點：")
+            appendLine("記事：${rollbackPreview.activeNoteCount} 筆一般，${rollbackPreview.deletedNoteCount} 筆${text.trash}")
+            appendLine("資料夾：${rollbackPreview.folderCount} 個")
+            appendLine()
+            appendLine("此裝置目前：")
+            appendLine("記事：${currentPreview.activeNoteCount} 筆一般，${currentPreview.deletedNoteCount} 筆${text.trash}")
+            appendLine("資料夾：${currentPreview.folderCount} 個")
+            appendLine()
+            append("復原會用檢查點取代目前所有本機記事與資料夾。")
+        }
+    } else {
+        buildString {
+            appendLine("Restore checkpoint:")
+            appendLine("Notes: ${rollbackPreview.activeNoteCount} active, ${rollbackPreview.deletedNoteCount} in Trash")
+            appendLine("Folders: ${rollbackPreview.folderCount}")
+            appendLine()
+            appendLine("This device now:")
+            appendLine("Notes: ${currentPreview.activeNoteCount} active, ${currentPreview.deletedNoteCount} in Trash")
+            appendLine("Folders: ${currentPreview.folderCount}")
+            appendLine()
+            append("Undo restore will replace all current local notes and folders with the checkpoint.")
         }
     }
 }
