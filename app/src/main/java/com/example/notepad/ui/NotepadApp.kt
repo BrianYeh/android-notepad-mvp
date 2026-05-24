@@ -5,6 +5,7 @@ import android.Manifest
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.ClipData
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -18,6 +19,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -101,6 +103,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -112,6 +116,7 @@ import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -1823,6 +1828,7 @@ private fun TextEditorScreen(
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
     var pendingExportText by remember { mutableStateOf<String?>(null) }
     var pendingReminderAt by remember { mutableStateOf<Long?>(null) }
+    var titleFocusRequest by remember(noteId) { mutableStateOf(0) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
@@ -2178,13 +2184,40 @@ private fun TextEditorScreen(
         keyboardController?.show()
     }
 
-    LaunchedEffect(isEditing, isFocusWriting) {
+    fun editTitleFromReadMode() {
+        isFocusWriting = false
+        isMetadataExpanded = true
+        isEditing = true
+        titleFocusRequest += 1
+    }
+
+    fun focusTitleFromEditor() {
+        isFocusWriting = false
+        isContentFocused = false
+        isMetadataExpanded = true
+        titleFocusRequest += 1
+    }
+
+    fun editContentFromReadMode(tapOffset: Offset? = null) {
+        val tappedTextOffset = tapOffset?.let { readContentLayout?.getOffsetForPosition(it) }
+        if (tappedTextOffset != null) {
+            contentField = contentField.copy(
+                selection = TextRange(tappedTextOffset.coerceIn(0, contentField.text.length)),
+            )
+        }
+        isFocusWriting = true
+        isMetadataExpanded = false
+        isEditing = true
+    }
+
+    LaunchedEffect(isEditing, isFocusWriting, titleFocusRequest) {
         if (isEditing && loadedNoteId == noteId) {
             if (isFocusWriting) {
                 contentFocusRequester.requestFocus()
             } else {
                 titleFocusRequester.requestFocus()
             }
+            keyboardController?.show()
         } else if (!isEditing) {
             isFocusWriting = false
         }
@@ -2390,6 +2423,9 @@ private fun TextEditorScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .clickable { focusTitleFromEditor() }
+                                    .testTag("text_note_compact_title"),
                             )
                             Text(
                                 text = saveStatus.label(text),
@@ -2653,7 +2689,9 @@ private fun TextEditorScreen(
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.testTag("text_note_read_title"),
+                                modifier = Modifier
+                                    .clickable { editTitleFromReadMode() }
+                                    .testTag("text_note_read_title"),
                             )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2695,14 +2733,17 @@ private fun TextEditorScreen(
                                 modifier = Modifier.testTag("note_reminder_status"),
                             )
                             HorizontalDivider()
+                            val readContentText = findHighlightedLinkedText(
+                                value = content.ifBlank { text.content },
+                                query = findQuery,
+                                activeMatchIndex = currentFindIndex,
+                                matchColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
+                                linkColor = MaterialTheme.colorScheme.primary,
+                                linkifyUrls = content.isNotBlank(),
+                            )
                             Text(
-                                text = findHighlightedText(
-                                    value = content.ifBlank { text.content },
-                                    query = findQuery,
-                                    activeMatchIndex = currentFindIndex,
-                                    matchColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                    activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
-                                ),
+                                text = readContentText,
                                 style = MaterialTheme.typography.bodyLarge.copy(
                                     fontSize = editorFontSize.fontSizeSp.sp,
                                     lineHeight = (editorFontSize.fontSizeSp + 10).sp,
@@ -2714,11 +2755,31 @@ private fun TextEditorScreen(
                                 },
                                 onTextLayout = { readContentLayout = it },
                                 modifier = Modifier
+                                    .pointerInput(readContentLayout, readContentText, contentField.text) {
+                                        detectTapGestures { tapOffset ->
+                                            val tappedUrl = if (content.isNotBlank()) {
+                                                readContentLayout
+                                                    ?.getOffsetForPosition(tapOffset)
+                                                    ?.let(readContentText::webUrlAt)
+                                            } else {
+                                                null
+                                            }
+                                            if (tappedUrl == null || !openWebUrl(context, tappedUrl)) {
+                                                editContentFromReadMode(tapOffset)
+                                            }
+                                        }
+                                    }
                                     .onGloballyPositioned { coordinates ->
                                         readContentTopInScroll =
                                             coordinates.positionInRoot().y -
                                                 readViewportTopInRoot +
                                                 readScrollState.value
+                                    }
+                                    .semantics {
+                                        onClick {
+                                            editContentFromReadMode()
+                                            true
+                                        }
                                     }
                                     .testTag("text_note_read_content"),
                             )
@@ -4082,6 +4143,199 @@ fun findHighlightedText(
                 end = range.last + 1,
             )
         }
+    }
+}
+
+const val WEB_URL_STRING_ANNOTATION_TAG = "web_url"
+
+data class WebUrlRange(
+    val range: IntRange,
+    val normalizedUrl: String,
+)
+
+private val WebUrlRegex = Regex(
+    """(?i)\b(?:(?:https?://|www\.)[^\s<>]+|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?:/[^\s<>]*)?)""",
+)
+
+private val BareDomainAllowedTlds = setOf(
+    "ai",
+    "app",
+    "biz",
+    "ca",
+    "cn",
+    "co",
+    "com",
+    "de",
+    "dev",
+    "edu",
+    "fr",
+    "gov",
+    "info",
+    "io",
+    "jp",
+    "net",
+    "org",
+    "tw",
+    "uk",
+    "us",
+)
+
+private val ReverseDnsPackagePrefixes = setOf("com", "edu", "gov", "net", "org")
+
+private val UrlTrailingPunctuation = setOf('.', ',', '!', '?', ';', ':', '"', '\'')
+
+private val UrlClosingBrackets = mapOf(
+    ')' to '(',
+    ']' to '[',
+    '}' to '{',
+)
+
+fun findHighlightedLinkedText(
+    value: String,
+    query: String,
+    activeMatchIndex: Int,
+    matchColor: Color,
+    activeMatchColor: Color,
+    linkColor: Color,
+    linkifyUrls: Boolean = true,
+): AnnotatedString {
+    val matches = findInNoteMatches(value, query)
+    val urls = if (linkifyUrls) value.webUrlRanges() else emptyList()
+    if (matches.isEmpty() && urls.isEmpty()) return AnnotatedString(value)
+
+    val activeIndex = activeMatchIndex.normalizeFindMatchIndex(matches.size)
+    return buildAnnotatedString {
+        append(value)
+        matches.forEachIndexed { index, range ->
+            addStyle(
+                SpanStyle(
+                    background = if (index == activeIndex) activeMatchColor else matchColor,
+                    fontWeight = if (index == activeIndex) FontWeight.Bold else null,
+                ),
+                start = range.first,
+                end = range.last + 1,
+            )
+        }
+        urls.forEach { urlRange ->
+            addStyle(
+                SpanStyle(
+                    color = linkColor,
+                    textDecoration = TextDecoration.Underline,
+                ),
+                start = urlRange.range.first,
+                end = urlRange.range.last + 1,
+            )
+            addStringAnnotation(
+                tag = WEB_URL_STRING_ANNOTATION_TAG,
+                annotation = urlRange.normalizedUrl,
+                start = urlRange.range.first,
+                end = urlRange.range.last + 1,
+            )
+        }
+    }
+}
+
+fun String.webUrlRanges(): List<WebUrlRange> {
+    return WebUrlRegex.findAll(this).mapNotNull { match ->
+        if (match.range.first > 0 && this[match.range.first - 1] == '@') return@mapNotNull null
+
+        val matchEndExclusive = match.range.last + 1
+        if (matchEndExclusive < length && this[matchEndExclusive] == '@') return@mapNotNull null
+
+        val endExclusive = trimmedWebUrlEnd(match.range.first, matchEndExclusive)
+        if (endExclusive <= match.range.first) return@mapNotNull null
+
+        val rawUrl = substring(match.range.first, endExclusive)
+        if (!rawUrl.shouldLinkifyWebUrl()) return@mapNotNull null
+
+        val normalizedUrl = rawUrl.normalizedWebUrl()
+        if (!normalizedUrl.startsWith("http://", ignoreCase = true) &&
+            !normalizedUrl.startsWith("https://", ignoreCase = true)
+        ) {
+            null
+        } else {
+            WebUrlRange(
+                range = match.range.first until endExclusive,
+                normalizedUrl = normalizedUrl,
+            )
+        }
+    }.toList()
+}
+
+private fun String.shouldLinkifyWebUrl(): Boolean {
+    if (startsWith("http://", ignoreCase = true) ||
+        startsWith("https://", ignoreCase = true) ||
+        startsWith("www.", ignoreCase = true)
+    ) {
+        return true
+    }
+
+    val host = substringBefore('/')
+    val labels = host.split('.')
+    if (labels.size < 2) return false
+
+    val firstLabel = labels.first().lowercase()
+    val topLevelDomain = labels.last().lowercase()
+    return topLevelDomain in BareDomainAllowedTlds &&
+        !(labels.size >= 3 && firstLabel in ReverseDnsPackagePrefixes)
+}
+
+private fun String.trimmedWebUrlEnd(startInclusive: Int, endExclusive: Int): Int {
+    var trimmedEnd = endExclusive
+    while (trimmedEnd > startInclusive && this[trimmedEnd - 1] in UrlTrailingPunctuation) {
+        trimmedEnd -= 1
+    }
+    while (trimmedEnd > startInclusive && hasUnmatchedTrailingClosingBracket(startInclusive, trimmedEnd)) {
+        trimmedEnd -= 1
+    }
+    return trimmedEnd
+}
+
+private fun String.hasUnmatchedTrailingClosingBracket(startInclusive: Int, endExclusive: Int): Boolean {
+    val closingBracket = this[endExclusive - 1]
+    val openingBracket = UrlClosingBrackets[closingBracket] ?: return false
+    var balance = 0
+    for (index in startInclusive until endExclusive) {
+        when (this[index]) {
+            openingBracket -> balance += 1
+            closingBracket -> balance -= 1
+        }
+    }
+    return balance < 0
+}
+
+private fun String.normalizedWebUrl(): String {
+    return if (startsWith("http://", ignoreCase = true) ||
+        startsWith("https://", ignoreCase = true)
+    ) {
+        this
+    } else {
+        "https://$this"
+    }
+}
+
+fun AnnotatedString.webUrlAt(offset: Int): String? {
+    if (offset !in 0 until length) return null
+    return getStringAnnotations(
+        tag = WEB_URL_STRING_ANNOTATION_TAG,
+        start = offset,
+        end = offset + 1,
+    ).firstOrNull()?.item
+}
+
+private fun openWebUrl(context: Context, url: String): Boolean {
+    val uri = Uri.parse(url)
+    if (uri.scheme?.equals("http", ignoreCase = true) != true &&
+        uri.scheme?.equals("https", ignoreCase = true) != true
+    ) {
+        return false
+    }
+
+    return try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+        true
+    } catch (_: ActivityNotFoundException) {
+        false
     }
 }
 

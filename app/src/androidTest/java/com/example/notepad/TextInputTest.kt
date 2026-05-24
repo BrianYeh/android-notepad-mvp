@@ -1,6 +1,7 @@
 package com.example.notepad
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -25,12 +26,16 @@ import com.example.notepad.ui.cursorScrollTarget
 import com.example.notepad.ui.drawingExportCanvasSizePx
 import com.example.notepad.ui.drawingRequiredCanvasHeightPx
 import com.example.notepad.ui.drawingViewportScale
+import com.example.notepad.ui.findHighlightedLinkedText
 import com.example.notepad.ui.findMatchScrollTarget
 import com.example.notepad.ui.findInNoteMatches
 import com.example.notepad.ui.formatFindMatchStatus
 import com.example.notepad.ui.highlightRanges
 import com.example.notepad.ui.nextFindMatchIndex
 import com.example.notepad.ui.previousFindMatchIndex
+import com.example.notepad.ui.webUrlAt
+import com.example.notepad.ui.webUrlRanges
+import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -118,7 +123,8 @@ class TextInputTest {
         composeRule.onNodeWithTag("back_button").performClick()
 
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithTag("text_note_title").fetchSemanticsNodes().isEmpty() &&
+                composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
 
         composeRule.onNodeWithText(title).performClick()
@@ -132,6 +138,111 @@ class TextInputTest {
         composeRule.onNodeWithTag("edit_note_button").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().assertTextContains(title)
         composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().assertTextContains(body)
+    }
+
+    @Test
+    fun existingTextNoteCanEnterEditModeFromTitleAndContent() {
+        val suffix = System.currentTimeMillis()
+        val title = "Tap edit title $suffix"
+        val body = "Tap edit body $suffix"
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_title")
+        composeRule.onNodeWithTag("text_note_title").performTextInput(title)
+        composeRule.onNodeWithTag("text_note_content").performTextInput(body)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("text_note_title").fetchSemanticsNodes().isEmpty() &&
+                composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("text_note_read_mode").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_read_title").performClick()
+        composeRule.onNodeWithTag("text_note_title")
+            .assertIsDisplayed()
+            .assertTextContains(title)
+            .assertIsFocused()
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("text_note_title").fetchSemanticsNodes().isEmpty() &&
+                composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("text_note_read_mode").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_read_content").performClick()
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .assertTextContains(body)
+            .assertIsFocused()
+    }
+
+    @Test
+    fun noteContentUrlsAreAnnotatedForDirectOpening() {
+        val content = "Open https://example.com/path, then www.justnotes.app/help. Also justnotes.app."
+
+        val urlRanges = content.webUrlRanges()
+
+        assertEquals(3, urlRanges.size)
+        assertEquals("https://example.com/path", urlRanges[0].normalizedUrl)
+        assertEquals("www.justnotes.app/help", content.substring(urlRanges[1].range))
+        assertEquals("https://www.justnotes.app/help", urlRanges[1].normalizedUrl)
+        assertEquals("https://justnotes.app", urlRanges[2].normalizedUrl)
+    }
+
+    @Test
+    fun noteContentUrlsIgnoreDottedEmailLocalParts() {
+        val content = "Email user.name@example.com before visiting example.com"
+
+        val urlRanges = content.webUrlRanges()
+
+        assertEquals(1, urlRanges.size)
+        assertEquals("example.com", content.substring(urlRanges[0].range))
+        assertEquals("https://example.com", urlRanges[0].normalizedUrl)
+    }
+
+    @Test
+    fun noteContentUrlsIgnoreCommonDottedFileAndPackageText() {
+        val content = "Files README.md and app-debug.apk live near com.example.notepad, not example.com"
+
+        val urlRanges = content.webUrlRanges()
+
+        assertEquals(1, urlRanges.size)
+        assertEquals("example.com", content.substring(urlRanges[0].range))
+        assertEquals("https://example.com", urlRanges[0].normalizedUrl)
+    }
+
+    @Test
+    fun noteContentUrlsPreserveBalancedParenthesesAndTrimSentencePunctuation() {
+        val content = "Read https://en.wikipedia.org/wiki/Foo_(bar), then (https://example.com/path)."
+
+        val urlRanges = content.webUrlRanges()
+
+        assertEquals(2, urlRanges.size)
+        assertEquals("https://en.wikipedia.org/wiki/Foo_(bar)", content.substring(urlRanges[0].range))
+        assertEquals("https://example.com/path", content.substring(urlRanges[1].range))
+    }
+
+    @Test
+    fun highlightedLinkedTextKeepsClickableUrlAnnotation() {
+        val content = "Visit https://example.com/docs for docs"
+        val urlStart = content.indexOf("https://")
+        val annotated = findHighlightedLinkedText(
+            value = content,
+            query = "docs",
+            activeMatchIndex = 0,
+            matchColor = Color.Yellow,
+            activeMatchColor = Color.Green,
+            linkColor = Color.Blue,
+        )
+
+        assertEquals("https://example.com/docs", annotated.webUrlAt(urlStart))
+        assertEquals("https://example.com/docs", annotated.webUrlAt(urlStart + 10))
+        assertEquals(null, annotated.webUrlAt(content.indexOf("Visit")))
+        assertEquals(null, annotated.webUrlAt(content.length))
     }
 
     @Test
@@ -205,6 +316,10 @@ class TextInputTest {
         waitForTag("text_note_title")
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextInput(body)
+        composeRule.onNodeWithTag("text_note_compact_metadata").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_compact_title").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().assertIsFocused()
+        composeRule.onNodeWithTag("text_note_content").performClick()
         composeRule.onNodeWithTag("text_note_compact_metadata").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_save_status").assertIsDisplayed()
         composeRule.onNodeWithTag("text_editor_accessory_bar").assertIsDisplayed()
