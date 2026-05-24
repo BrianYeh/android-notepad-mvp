@@ -115,6 +115,19 @@ class TextInputTest {
     }
 
     @Test
+    fun settingsCanToggleHiddenReminderNotificationContent() {
+        composeRule.onNodeWithTag("settings_button").performClick()
+        waitForTag("hide_reminder_content_row")
+
+        composeRule.onNodeWithTag("hide_reminder_content_checkbox")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("hide_reminder_content_checkbox")
+            .performClick()
+            .performClick()
+    }
+
+    @Test
     fun newTextNoteStartsInEditModeAndExistingNoteStartsInReadMode() {
         val suffix = System.currentTimeMillis()
         val title = "Friendly read title $suffix"

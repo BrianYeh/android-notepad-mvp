@@ -11,8 +11,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import com.example.notepad.MainActivity
 import com.example.notepad.R
-import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.NotepadDatabase
+import com.example.notepad.data.PrivacyPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -53,11 +53,11 @@ class ReminderReceiver : BroadcastReceiver() {
             openAppIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val title = note.title.ifBlank { context.getString(R.string.app_name) }
-        val body = when (note.type) {
-            NoteTypes.DRAWING -> "Drawing note reminder"
-            else -> note.textContent.orEmpty().ifBlank { "Note reminder" }
-        }
+        val notificationText = reminderNotificationText(
+            note = note,
+            appName = context.getString(R.string.app_name),
+            hideContent = PrivacyPreferences.hideReminderNotificationContent(context),
+        )
 
         val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(context, ReminderScheduler.CHANNEL_ID)
@@ -66,8 +66,8 @@ class ReminderReceiver : BroadcastReceiver() {
             Notification.Builder(context)
         }
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(title)
-            .setContentText(body)
+            .setContentTitle(notificationText.title)
+            .setContentText(notificationText.body)
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .build()

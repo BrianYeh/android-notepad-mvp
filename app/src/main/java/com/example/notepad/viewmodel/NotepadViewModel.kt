@@ -20,6 +20,7 @@ import com.example.notepad.data.NoteTypeFilter
 import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
+import com.example.notepad.data.PrivacyPreferences
 import com.example.notepad.data.ReminderFilter
 import com.example.notepad.data.RestoreRollbackStore
 import com.example.notepad.data.SyncDevice
@@ -49,7 +50,7 @@ import java.io.File
 import java.util.UUID
 
 class NotepadViewModel(application: Application) : AndroidViewModel(application) {
-    private val preferences = application.getSharedPreferences("ui_settings", Context.MODE_PRIVATE)
+    private val preferences = application.getSharedPreferences(PrivacyPreferences.PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val repository = NotepadRepository(
         NotepadDatabase.getInstance(application).notepadDao(),
     )
@@ -84,6 +85,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         EditorFontSize.fromCode(preferences.getString("editor_font_size", EditorFontSize.Medium.code)),
     )
     val editorFontSize: StateFlow<EditorFontSize> = _editorFontSize
+    private val _hideReminderNotificationContent = MutableStateFlow(
+        PrivacyPreferences.hideReminderNotificationContent(application),
+    )
+    val hideReminderNotificationContent: StateFlow<Boolean> = _hideReminderNotificationContent
     private val _onlineSyncTargetUri = MutableStateFlow(preferences.getString("online_sync_target_uri", null))
     val onlineSyncTargetUri: StateFlow<String?> = _onlineSyncTargetUri
     private val _onlineSyncAutoOnStart = MutableStateFlow(preferences.getBoolean("online_sync_auto_on_start", false))
@@ -204,6 +209,13 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         _editorFontSize.value = fontSize
         preferences.edit()
             .putString("editor_font_size", fontSize.code)
+            .apply()
+    }
+
+    fun setHideReminderNotificationContent(enabled: Boolean) {
+        _hideReminderNotificationContent.value = enabled
+        preferences.edit()
+            .putBoolean(PrivacyPreferences.HIDE_REMINDER_NOTIFICATION_CONTENT_KEY, enabled)
             .apply()
     }
 

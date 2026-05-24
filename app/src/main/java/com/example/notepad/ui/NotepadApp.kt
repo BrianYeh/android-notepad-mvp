@@ -272,6 +272,7 @@ fun NotepadApp(
     val context = LocalContext.current
     val onlineSyncTargetUri by viewModel.onlineSyncTargetUri.collectAsStateWithLifecycle()
     val onlineSyncAutoOnStart by viewModel.onlineSyncAutoOnStart.collectAsStateWithLifecycle()
+    val hideReminderNotificationContent by viewModel.hideReminderNotificationContent.collectAsStateWithLifecycle()
     val lastOnlineSyncAt by viewModel.lastOnlineSyncAt.collectAsStateWithLifecycle()
     val lastOnlineRestoreAt by viewModel.lastOnlineRestoreAt.collectAsStateWithLifecycle()
     val restoreRollbackCheckpoint by viewModel.restoreRollbackCheckpoint.collectAsStateWithLifecycle()
@@ -381,6 +382,7 @@ fun NotepadApp(
             text = text,
             appLanguage = appLanguage,
             editorFontSize = editorFontSize,
+            hideReminderNotificationContent = hideReminderNotificationContent,
             currentBackupPreview = BackupPreview.from(folders = folders, notes = allNotes),
             onlineSyncTargetUri = onlineSyncTargetUri,
             onlineSyncAutoOnStart = onlineSyncAutoOnStart,
@@ -390,6 +392,7 @@ fun NotepadApp(
             restoreRollbackCheckpoint = restoreRollbackCheckpoint,
             viewModel = viewModel,
             onEditorFontSizeChange = viewModel::setEditorFontSize,
+            onHideReminderNotificationContentChange = viewModel::setHideReminderNotificationContent,
             onOnlineSyncTargetChange = viewModel::setOnlineSyncTargetUri,
             onOnlineSyncAutoOnStartChange = viewModel::setOnlineSyncAutoOnStart,
             onOnlineSyncRecorded = { viewModel.recordOnlineSync() },
@@ -1122,6 +1125,7 @@ private fun SettingsScreen(
     text: UiText,
     appLanguage: AppLanguage,
     editorFontSize: EditorFontSize,
+    hideReminderNotificationContent: Boolean,
     currentBackupPreview: BackupPreview,
     onlineSyncTargetUri: String?,
     onlineSyncAutoOnStart: Boolean,
@@ -1131,6 +1135,7 @@ private fun SettingsScreen(
     restoreRollbackCheckpoint: DecodedBackup?,
     viewModel: NotepadViewModel,
     onEditorFontSizeChange: (EditorFontSize) -> Unit,
+    onHideReminderNotificationContentChange: (Boolean) -> Unit,
     onOnlineSyncTargetChange: (String?) -> Unit,
     onOnlineSyncAutoOnStartChange: (Boolean) -> Unit,
     onOnlineSyncRecorded: () -> Unit,
@@ -1295,6 +1300,35 @@ private fun SettingsScreen(
                 text = text,
                 onEditorFontSizeChange = onEditorFontSizeChange,
             )
+            HorizontalDivider()
+            Text(
+                text = text.privacy,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("hide_reminder_content_row"),
+            ) {
+                Checkbox(
+                    checked = hideReminderNotificationContent,
+                    onCheckedChange = onHideReminderNotificationContentChange,
+                    modifier = Modifier.testTag("hide_reminder_content_checkbox"),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = text.hideReminderNotificationContent,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = text.hideReminderNotificationContentBody,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             HorizontalDivider()
             Text(
                 text = text.googleAccountSync,
