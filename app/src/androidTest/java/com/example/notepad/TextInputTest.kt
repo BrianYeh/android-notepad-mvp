@@ -22,6 +22,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
 import com.example.notepad.data.DrawingTools
+import com.example.notepad.data.DEFAULT_FOLDER_ID
+import com.example.notepad.data.NotepadDatabase
+import com.example.notepad.data.NotepadRepository
+import com.example.notepad.data.ReminderRepeat
 import com.example.notepad.ui.cursorScrollTarget
 import com.example.notepad.ui.drawingExportCanvasSizePx
 import com.example.notepad.ui.drawingRequiredCanvasHeightPx
@@ -40,6 +44,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 @RunWith(AndroidJUnit4::class)
 class TextInputTest {
@@ -170,6 +178,39 @@ class TextInputTest {
         composeRule.onNodeWithTag("require_device_unlock_checkbox")
             .performScrollTo()
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun reminderCalendarShowsTodayReminder() {
+        val suffix = System.currentTimeMillis()
+        val title = "Calendar reminder $suffix"
+        val todayReminderAt = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 12)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        runBlocking {
+            withContext(Dispatchers.IO) {
+                val repository = NotepadRepository(NotepadDatabase.getInstance(composeRule.activity).notepadDao())
+                repository.ensureDefaultFolder()
+                val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+                repository.saveTextNote(noteId, title, "Calendar reminder body")
+                repository.setNoteReminder(
+                    noteId = noteId,
+                    reminderAt = todayReminderAt,
+                    reminderRepeat = ReminderRepeat.None.code,
+                )
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("calendar_view_chip").performClick()
+        composeRule.onNodeWithTag("reminder_calendar").assertIsDisplayed()
+        composeRule.onNodeWithTag("calendar_selected_day_count").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(title).performScrollTo().assertIsDisplayed()
     }
 
     @Test

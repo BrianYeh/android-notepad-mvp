@@ -53,6 +53,13 @@ data class UiText(
     val hasReminder: String,
     val overdueReminders: String,
     val upcomingReminders: String,
+    val listView: String,
+    val calendarView: String,
+    val reminderCalendar: String,
+    val previousMonth: String,
+    val nextMonth: String,
+    val today: String,
+    val noRemindersOnSelectedDay: String,
     val newTextNote: String,
     val newDrawingNote: String,
     val newChecklistNote: String,
@@ -273,6 +280,14 @@ data class UiText(
     fun signedInAsAccount(email: String): String {
         return "$signedInAs $email"
     }
+
+    fun remindersOnDate(count: Int): String {
+        return if (this === TraditionalChineseText) {
+            "$count 則提醒"
+        } else {
+            "$count reminders"
+        }
+    }
 }
 
 val EnglishText = UiText(
@@ -326,6 +341,13 @@ val EnglishText = UiText(
     hasReminder = "Has reminder",
     overdueReminders = "Overdue",
     upcomingReminders = "Upcoming",
+    listView = "List",
+    calendarView = "Calendar",
+    reminderCalendar = "Reminder calendar",
+    previousMonth = "Previous month",
+    nextMonth = "Next month",
+    today = "Today",
+    noRemindersOnSelectedDay = "No reminders on this day",
     newTextNote = "New Text Note",
     newDrawingNote = "New Drawing Note",
     newChecklistNote = "New Checklist",
@@ -567,6 +589,13 @@ val TraditionalChineseText = UiText(
     hasReminder = "有提醒",
     overdueReminders = "已過期",
     upcomingReminders = "即將到期",
+    listView = "列表",
+    calendarView = "日曆",
+    reminderCalendar = "提醒日曆",
+    previousMonth = "上個月",
+    nextMonth = "下個月",
+    today = "今天",
+    noRemindersOnSelectedDay = "這一天沒有提醒",
     newTextNote = "新增文字記事",
     newDrawingNote = "新增繪圖記事",
     newChecklistNote = "新增清單",

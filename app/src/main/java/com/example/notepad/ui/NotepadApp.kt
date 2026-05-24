@@ -23,6 +23,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -210,6 +211,11 @@ private enum class SaveStatus {
 private enum class MainTab {
     Notes,
     Premium,
+}
+
+private enum class MainContentView {
+    List,
+    Calendar,
 }
 
 private enum class PremiumPlan {
@@ -900,6 +906,7 @@ private fun MainScreen(
     var noteToPermanentlyDelete by remember { mutableStateOf<NoteEntity?>(null) }
     var selectedNoteIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var selectedNotesToDelete by remember { mutableStateOf<Set<Long>?>(null) }
+    var contentView by remember { mutableStateOf(MainContentView.List) }
     val selectedFolder = folders.firstOrNull { it.id == selectedFolderId }
     val isTrash = listMode == NoteListMode.Trash
     val isSelectionMode = selectedNoteIds.isNotEmpty()
@@ -928,6 +935,10 @@ private fun MainScreen(
 
     LaunchedEffect(listMode, selectedFolderId, searchQuery, quickFilter) {
         clearNoteSelection()
+    }
+
+    LaunchedEffect(listMode) {
+        if (isTrash) contentView = MainContentView.List
     }
 
     BackHandler(enabled = isSelectionMode, onBack = ::clearNoteSelection)
@@ -1081,10 +1092,16 @@ private fun MainScreen(
                 NoteFilterRow(
                     sortOption = sortOption,
                     quickFilter = quickFilter,
+                    contentView = contentView,
                     text = text,
                     isPrivacyLocked = isPrivacyLocked,
+                    showCalendarView = !isTrash,
                     onSortOptionChange = onSortOptionChange,
                     onQuickFilterChange = onQuickFilterChange,
+                    onContentViewChange = { view ->
+                        contentView = view
+                        clearNoteSelection()
+                    },
                 )
 
                 Text(
@@ -1099,33 +1116,54 @@ private fun MainScreen(
                 HorizontalDivider()
             }
 
-            NoteList(
-                notes = notes,
-                folders = folders,
-                text = text,
-                searchQuery = searchQuery,
-                hasActiveFilters = quickFilter != NoteQuickFilter.All,
-                listMode = listMode,
-                appLanguage = appLanguage,
-                selectedNoteIds = selectedNoteIds,
-                onOpenNote = onOpenNote,
-                onToggleNoteSelection = { note ->
-                    selectedNoteIds = if (note.id in selectedNoteIds) {
-                        selectedNoteIds - note.id
-                    } else {
-                        selectedNoteIds + note.id
-                    }
-                },
-                onStartNoteSelection = { note ->
-                    selectedNoteIds = selectedNoteIds + note.id
-                },
-                onMoveNote = { noteToMove = it },
-                onDeleteNote = { noteToDelete = it },
-                onRestoreNote = { note -> onRestoreNote(note.id) },
-                onPermanentlyDeleteNote = { noteToPermanentlyDelete = it },
-                onTogglePinned = onTogglePinned,
-                modifier = Modifier.weight(1f),
-            )
+            val toggleNoteSelection: (NoteEntity) -> Unit = { note ->
+                selectedNoteIds = if (note.id in selectedNoteIds) {
+                    selectedNoteIds - note.id
+                } else {
+                    selectedNoteIds + note.id
+                }
+            }
+            val startNoteSelection: (NoteEntity) -> Unit = { note ->
+                selectedNoteIds = selectedNoteIds + note.id
+            }
+            if (contentView == MainContentView.Calendar && !isTrash) {
+                ReminderCalendarView(
+                    notes = notes,
+                    folders = folders,
+                    text = text,
+                    searchQuery = searchQuery,
+                    appLanguage = appLanguage,
+                    selectedNoteIds = selectedNoteIds,
+                    onOpenNote = onOpenNote,
+                    onToggleNoteSelection = toggleNoteSelection,
+                    onStartNoteSelection = startNoteSelection,
+                    onMoveNote = { noteToMove = it },
+                    onDeleteNote = { noteToDelete = it },
+                    onTogglePinned = onTogglePinned,
+                    onCalendarDateChange = ::clearNoteSelection,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                NoteList(
+                    notes = notes,
+                    folders = folders,
+                    text = text,
+                    searchQuery = searchQuery,
+                    hasActiveFilters = quickFilter != NoteQuickFilter.All,
+                    listMode = listMode,
+                    appLanguage = appLanguage,
+                    selectedNoteIds = selectedNoteIds,
+                    onOpenNote = onOpenNote,
+                    onToggleNoteSelection = toggleNoteSelection,
+                    onStartNoteSelection = startNoteSelection,
+                    onMoveNote = { noteToMove = it },
+                    onDeleteNote = { noteToDelete = it },
+                    onRestoreNote = { note -> onRestoreNote(note.id) },
+                    onPermanentlyDeleteNote = { noteToPermanentlyDelete = it },
+                    onTogglePinned = onTogglePinned,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 
@@ -1930,10 +1968,13 @@ private fun ListModeRow(
 private fun NoteFilterRow(
     sortOption: NoteSortOption,
     quickFilter: NoteQuickFilter,
+    contentView: MainContentView,
     text: UiText,
     isPrivacyLocked: Boolean,
+    showCalendarView: Boolean,
     onSortOptionChange: (NoteSortOption) -> Unit,
     onQuickFilterChange: (NoteQuickFilter) -> Unit,
+    onContentViewChange: (MainContentView) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -1970,6 +2011,29 @@ private fun NoteFilterRow(
                         onClick = { onQuickFilterChange(filter) },
                         label = { Text(filter.label(text)) },
                         modifier = Modifier.testTag("quick_filter_${filter.name}"),
+                    )
+                }
+            }
+        }
+        if (showCalendarView) {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item {
+                    FilterChip(
+                        selected = contentView == MainContentView.List,
+                        onClick = { onContentViewChange(MainContentView.List) },
+                        label = { Text(text.listView) },
+                        modifier = Modifier.testTag("list_view_chip"),
+                    )
+                }
+                item {
+                    FilterChip(
+                        selected = contentView == MainContentView.Calendar,
+                        onClick = { onContentViewChange(MainContentView.Calendar) },
+                        label = { Text(text.calendarView) },
+                        modifier = Modifier.testTag("calendar_view_chip"),
                     )
                 }
             }
@@ -2271,6 +2335,256 @@ private fun NoteList(
                 onPermanentlyDelete = { onPermanentlyDeleteNote(note) },
                 onTogglePinned = { onTogglePinned(note) },
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ReminderCalendarView(
+    notes: List<NoteEntity>,
+    folders: List<FolderEntity>,
+    text: UiText,
+    searchQuery: String,
+    appLanguage: AppLanguage,
+    selectedNoteIds: Set<Long>,
+    onOpenNote: (NoteEntity) -> Unit,
+    onToggleNoteSelection: (NoteEntity) -> Unit,
+    onStartNoteSelection: (NoteEntity) -> Unit,
+    onMoveNote: (NoteEntity) -> Unit,
+    onDeleteNote: (NoteEntity) -> Unit,
+    onTogglePinned: (NoteEntity) -> Unit,
+    onCalendarDateChange: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
+    val todayStart = startOfDayMillis(nowMillis)
+    var visibleMonthStart by remember { mutableStateOf(startOfMonthMillis(todayStart)) }
+    var selectedDayStart by remember { mutableStateOf(todayStart) }
+    val reminderNotes = remember(notes) {
+        notes.filter { !it.isDeleted && it.reminderAt != null }
+            .sortedBy { it.reminderAt }
+    }
+    val remindersByDay = remember(reminderNotes) {
+        reminderNotes.groupBy { startOfDayMillis(it.reminderAt ?: 0L) }
+    }
+    val monthDays = remember(visibleMonthStart) { monthDayStarts(visibleMonthStart) }
+    val selectedDayNotes = remember(remindersByDay, selectedDayStart) {
+        remindersByDay[selectedDayStart].orEmpty().sortedBy { it.reminderAt }
+    }
+    val isSelectionMode = selectedNoteIds.isNotEmpty()
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .testTag("reminder_calendar"),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = text.reminderCalendar,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            TextButton(
+                onClick = {
+                    val previousMonthStart = addMonths(visibleMonthStart, -1)
+                    visibleMonthStart = previousMonthStart
+                    selectedDayStart = previousMonthStart
+                    onCalendarDateChange()
+                },
+                modifier = Modifier.testTag("calendar_previous_month"),
+            ) {
+                Text("<")
+            }
+            TextButton(
+                onClick = {
+                    visibleMonthStart = startOfMonthMillis(todayStart)
+                    selectedDayStart = todayStart
+                    onCalendarDateChange()
+                },
+                modifier = Modifier.testTag("calendar_today_button"),
+            ) {
+                Text(text.today)
+            }
+            TextButton(
+                onClick = {
+                    val nextMonthStart = addMonths(visibleMonthStart, 1)
+                    visibleMonthStart = nextMonthStart
+                    selectedDayStart = nextMonthStart
+                    onCalendarDateChange()
+                },
+                modifier = Modifier.testTag("calendar_next_month"),
+            ) {
+                Text(">")
+            }
+        }
+
+        Text(
+            text = calendarMonthTitle(visibleMonthStart, appLanguage),
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.testTag("calendar_month_title"),
+        )
+
+        Column(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                weekdayLabels(appLanguage).forEach { label ->
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.width(48.dp),
+                    )
+                }
+            }
+            monthDays.chunked(7).forEach { week ->
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    week.forEach { dayStart ->
+                        CalendarDayCell(
+                            dayStart = dayStart,
+                            todayStart = todayStart,
+                            selectedDayStart = selectedDayStart,
+                            reminderCount = dayStart?.let { remindersByDay[it]?.size } ?: 0,
+                            onSelectDay = {
+                                selectedDayStart = it
+                                onCalendarDateChange()
+                            },
+                            modifier = Modifier.width(48.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        Text(
+            text = text.remindersOnDate(selectedDayNotes.size),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag("calendar_selected_day_count"),
+        )
+
+        if (selectedDayNotes.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(96.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = text.noRemindersOnSelectedDay,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("calendar_empty_day"),
+                )
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("calendar_selected_day_notes"),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                selectedDayNotes.forEach { note ->
+                    NoteRow(
+                        note = note,
+                        folderName = folderDisplayNameById(note.folderId, folders, text),
+                        text = text,
+                        searchQuery = searchQuery,
+                        appLanguage = appLanguage,
+                        isSelectionMode = isSelectionMode,
+                        isSelected = note.id in selectedNoteIds,
+                        onOpen = { onOpenNote(note) },
+                        onToggleSelection = { onToggleNoteSelection(note) },
+                        onStartSelection = { onStartNoteSelection(note) },
+                        onMove = { onMoveNote(note) },
+                        onDelete = { onDeleteNote(note) },
+                        onRestore = {},
+                        onPermanentlyDelete = {},
+                        onTogglePinned = { onTogglePinned(note) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CalendarDayCell(
+    dayStart: Long?,
+    todayStart: Long,
+    selectedDayStart: Long,
+    reminderCount: Int,
+    onSelectDay: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val isSelected = dayStart != null && dayStart == selectedDayStart
+    val isToday = dayStart != null && dayStart == todayStart
+    val backgroundColor = when {
+        isSelected -> MaterialTheme.colorScheme.primaryContainer
+        isToday -> MaterialTheme.colorScheme.secondaryContainer
+        else -> MaterialTheme.colorScheme.surface
+    }
+    val borderColor = if (reminderCount > 0) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.outlineVariant
+    }
+
+    Box(
+        modifier = modifier
+            .height(48.dp)
+            .background(backgroundColor, RoundedCornerShape(8.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .then(
+                if (dayStart == null) {
+                    Modifier
+                } else {
+                    Modifier
+                        .clickable { onSelectDay(dayStart) }
+                        .testTag("calendar_day_${dayOfMonth(dayStart)}")
+                },
+            )
+            .padding(4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (dayStart != null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = dayOfMonth(dayStart).toString(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (isSelected || isToday) FontWeight.SemiBold else FontWeight.Normal,
+                )
+                if (reminderCount > 0) {
+                    Text(
+                        text = reminderCount.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.testTag("calendar_day_count_${dayOfMonth(dayStart)}"),
+                    )
+                } else {
+                    Text(
+                        text = " ",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
         }
     }
 }
@@ -5664,6 +5978,77 @@ private fun reminderStatus(
             text.reminderUpcoming
         }
         "${text.reminder}: ${formatTime(reminderAt, appLanguage)} ($status)"
+    }
+}
+
+private fun startOfDayMillis(timestamp: Long): Long {
+    return Calendar.getInstance().apply {
+        timeInMillis = timestamp
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+}
+
+private fun startOfMonthMillis(timestamp: Long): Long {
+    return Calendar.getInstance().apply {
+        timeInMillis = timestamp
+        set(Calendar.DAY_OF_MONTH, 1)
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+}
+
+private fun addMonths(monthStart: Long, months: Int): Long {
+    return Calendar.getInstance().apply {
+        timeInMillis = startOfMonthMillis(monthStart)
+        add(Calendar.MONTH, months)
+    }.timeInMillis
+}
+
+private fun monthDayStarts(monthStart: Long): List<Long?> {
+    val calendar = Calendar.getInstance().apply {
+        timeInMillis = startOfMonthMillis(monthStart)
+    }
+    val leadingBlankDays = calendar.get(Calendar.DAY_OF_WEEK) - Calendar.SUNDAY
+    val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+    return List(42) { index ->
+        val dayOfMonth = index - leadingBlankDays + 1
+        if (dayOfMonth in 1..daysInMonth) {
+            Calendar.getInstance().apply {
+                timeInMillis = monthStart
+                set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        } else {
+            null
+        }
+    }
+}
+
+private fun dayOfMonth(timestamp: Long): Int {
+    return Calendar.getInstance().apply { timeInMillis = timestamp }
+        .get(Calendar.DAY_OF_MONTH)
+}
+
+private fun calendarMonthTitle(monthStart: Long, language: AppLanguage): String {
+    val locale = when (language) {
+        AppLanguage.English -> Locale.ENGLISH
+        AppLanguage.TraditionalChinese -> Locale.TRADITIONAL_CHINESE
+    }
+    return SimpleDateFormat("LLLL yyyy", locale).format(Date(monthStart))
+}
+
+private fun weekdayLabels(language: AppLanguage): List<String> {
+    return when (language) {
+        AppLanguage.English -> listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+        AppLanguage.TraditionalChinese -> listOf("日", "一", "二", "三", "四", "五", "六")
     }
 }
 
