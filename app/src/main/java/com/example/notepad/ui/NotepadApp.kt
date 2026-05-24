@@ -2,6 +2,7 @@ package com.example.notepad.ui
 
 import android.content.Context
 import android.Manifest
+import android.app.Activity
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.ClipData
@@ -133,6 +134,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notepad.IncomingTextShare
 import com.example.notepad.PendingWidgetAction
 import com.example.notepad.WidgetAction
+import com.example.notepad.billing.PremiumBillingState
+import com.example.notepad.billing.PremiumPlan
 import com.example.notepad.data.ALL_NOTES_FILTER_NAME
 import com.example.notepad.data.AppLanguage
 import com.example.notepad.data.BackupData
@@ -220,7 +223,7 @@ private enum class MainContentView {
     Calendar,
 }
 
-private enum class PremiumPlan {
+private enum class PremiumPlanSelection {
     Annual,
     Monthly,
 }
@@ -514,6 +517,16 @@ fun NotepadApp(
 
         AppScreen.Premium -> PremiumScreen(
             text = text,
+            billingState = viewModel.premiumBillingState.collectAsStateWithLifecycle().value,
+            onSubscribe = { plan ->
+                val activity = context as? Activity
+                if (activity == null) {
+                    false
+                } else {
+                    viewModel.launchPremiumPurchase(activity, plan)
+                }
+            },
+            onRefreshPurchaseStatus = viewModel::refreshPremiumEntitlement,
             onOpenNotes = { screen = AppScreen.Main },
         )
 
@@ -627,10 +640,21 @@ private fun MainNavigationBar(
 @Composable
 private fun PremiumScreen(
     text: UiText,
+    billingState: PremiumBillingState,
+    onSubscribe: (PremiumPlan) -> Boolean,
+    onRefreshPurchaseStatus: () -> Unit,
     onOpenNotes: () -> Unit,
 ) {
     val context = LocalContext.current
-    var selectedPlan by remember { mutableStateOf(PremiumPlan.Annual) }
+    var selectedPlan by remember { mutableStateOf(PremiumPlanSelection.Annual) }
+    val selectedBillingPlan = when (selectedPlan) {
+        PremiumPlanSelection.Annual -> PremiumPlan.Annual
+        PremiumPlanSelection.Monthly -> PremiumPlan.Monthly
+    }
+    val selectedPriceAvailable = when (selectedPlan) {
+        PremiumPlanSelection.Annual -> billingState.annualPrice != null
+        PremiumPlanSelection.Monthly -> billingState.monthlyPrice != null
+    }
 
     BackHandler(onBack = onOpenNotes)
 
@@ -665,37 +689,46 @@ private fun PremiumScreen(
         ) {
             PremiumPlanRow(
                 title = text.premiumAnnual,
-                price = text.premiumAnnualPrice,
+                price = billingState.annualPrice ?: text.premiumAnnualPrice,
                 originalPrice = text.premiumAnnualOriginalPrice.takeIf { it.isNotBlank() },
-                selected = selectedPlan == PremiumPlan.Annual,
-                onClick = { selectedPlan = PremiumPlan.Annual },
+                selected = selectedPlan == PremiumPlanSelection.Annual,
+                onClick = { selectedPlan = PremiumPlanSelection.Annual },
                 modifier = Modifier.testTag("annual_plan_option"),
             )
             PremiumPlanRow(
                 title = text.premiumMonthly,
-                price = text.premiumMonthlyPrice,
+                price = billingState.monthlyPrice ?: text.premiumMonthlyPrice,
                 originalPrice = null,
-                selected = selectedPlan == PremiumPlan.Monthly,
-                onClick = { selectedPlan = PremiumPlan.Monthly },
+                selected = selectedPlan == PremiumPlanSelection.Monthly,
+                onClick = { selectedPlan = PremiumPlanSelection.Monthly },
                 modifier = Modifier.testTag("monthly_plan_option"),
             )
             Button(
                 onClick = {
-                    Toast.makeText(context, text.premiumBillingUnavailable, Toast.LENGTH_SHORT).show()
+                    if (!onSubscribe(selectedBillingPlan)) {
+                        Toast.makeText(context, text.premiumBillingUnavailable, Toast.LENGTH_SHORT).show()
+                    }
                 },
+                enabled = billingState.billingAvailable && selectedPriceAvailable && !billingState.isPremium,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("premium_subscribe_button"),
             ) {
-                Text(text.premiumSubscribePending)
+                Text(if (billingState.isPremium) text.premiumActive else text.premiumSubscribe)
+            }
+            TextButton(
+                onClick = onRefreshPurchaseStatus,
+                modifier = Modifier.testTag("premium_restore_button"),
+            ) {
+                Text(text.premiumRestore)
             }
             Text(
-                text = text.premiumTrial,
+                text = if (billingState.isPremium) text.premiumActive else text.premiumTrial,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
             Text(
-                text = text.premiumRenewal,
+                text = billingState.lastError ?: text.premiumRenewal,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

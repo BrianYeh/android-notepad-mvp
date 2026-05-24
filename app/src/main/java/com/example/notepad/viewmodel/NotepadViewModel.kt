@@ -1,12 +1,15 @@
 package com.example.notepad.viewmodel
 
 import android.app.Application
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.notepad.billing.PremiumBilling
+import com.example.notepad.billing.PremiumPlan
 import com.example.notepad.data.DriveSyncResult
 import com.example.notepad.data.EditorFontSize
 import com.example.notepad.data.GoogleDriveSyncClient
@@ -62,6 +65,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         File(application.filesDir, "restore-rollback-checkpoint.json"),
     )
     private val driveSyncClient = GoogleDriveSyncClient(application)
+    private val premiumBilling = PremiumBilling(application)
     private val googleSyncMutex = Mutex()
     private val deviceId = preferences.getString("sync_device_id", null) ?: UUID.randomUUID().toString().also {
         preferences.edit().putString("sync_device_id", it).apply()
@@ -126,6 +130,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         ),
     )
     val syncMetadata: StateFlow<SyncMetadata> = _syncMetadata
+    val premiumBillingState = premiumBilling.state
     private val _isRecognizingText = MutableStateFlow(false)
     val isRecognizingText: StateFlow<Boolean> = _isRecognizingText
 
@@ -181,6 +186,20 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             repository.ensureDefaultFolder()
             ReminderScheduler.rescheduleFutureReminders(application)
         }
+        premiumBilling.start()
+    }
+
+    fun refreshPremiumEntitlement() {
+        premiumBilling.refresh()
+    }
+
+    fun launchPremiumPurchase(activity: Activity, plan: PremiumPlan): Boolean {
+        return premiumBilling.launchPurchase(activity, plan)
+    }
+
+    override fun onCleared() {
+        premiumBilling.close()
+        super.onCleared()
     }
 
     fun observeNote(noteId: Long) = repository.observeNote(noteId)
