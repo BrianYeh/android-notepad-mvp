@@ -1,15 +1,18 @@
 package com.example.notepad.data
 
-enum class AppLanguage(
-    val code: String,
-    val displayName: String,
-) {
-    English("en", "English"),
-    TraditionalChinese("zh-TW", "繁體中文");
+import java.util.Locale
+
+enum class AppLanguage {
+    English,
+    TraditionalChinese;
 
     companion object {
-        fun fromCode(code: String?): AppLanguage {
-            return entries.firstOrNull { it.code == code } ?: English
+        fun fromLocale(locale: Locale): AppLanguage {
+            return if (locale.language.equals(Locale.CHINESE.language, ignoreCase = true)) {
+                TraditionalChinese
+            } else {
+                English
+            }
         }
     }
 }

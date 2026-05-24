@@ -36,7 +36,6 @@ class MainActivity : ComponentActivity() {
             val typeFilter by viewModel.typeFilter.collectAsStateWithLifecycle()
             val reminderFilter by viewModel.reminderFilter.collectAsStateWithLifecycle()
             val quickFilter by viewModel.quickFilter.collectAsStateWithLifecycle()
-            val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
             val editorFontSize by viewModel.editorFontSize.collectAsStateWithLifecycle()
             val isRecognizingText by viewModel.isRecognizingText.collectAsStateWithLifecycle()
             val sharedText by incomingTextShare.collectAsStateWithLifecycle()
@@ -52,7 +51,6 @@ class MainActivity : ComponentActivity() {
                     typeFilter = typeFilter,
                     reminderFilter = reminderFilter,
                     quickFilter = quickFilter,
-                    appLanguage = appLanguage,
                     editorFontSize = editorFontSize,
                     isRecognizingText = isRecognizingText,
                     incomingTextShare = sharedText,

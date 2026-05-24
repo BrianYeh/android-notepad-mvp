@@ -356,12 +356,11 @@ class TextInputTest {
     }
 
     @Test
-    fun userCanSwitchToTraditionalChinese() {
-        composeRule.onNodeWithTag("language_button").performClick()
-        composeRule.onNodeWithText("繁體中文").performClick()
-
-        composeRule.onNodeWithText("本機記事").assertIsDisplayed()
-        composeRule.onNodeWithText("全部記事").assertIsDisplayed()
+    fun appDoesNotExposeInAppLanguageSelector() {
+        assertEquals(
+            0,
+            composeRule.onAllNodesWithTag("language_button").fetchSemanticsNodes().size,
+        )
     }
 
     @Test

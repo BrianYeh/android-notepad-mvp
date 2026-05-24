@@ -96,6 +96,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -231,7 +232,6 @@ fun NotepadApp(
     typeFilter: NoteTypeFilter,
     reminderFilter: ReminderFilter,
     quickFilter: NoteQuickFilter,
-    appLanguage: AppLanguage,
     editorFontSize: EditorFontSize,
     isRecognizingText: Boolean,
     incomingTextShare: IncomingTextShare?,
@@ -239,6 +239,7 @@ fun NotepadApp(
     viewModel: NotepadViewModel,
 ) {
     var screen: AppScreen by remember { mutableStateOf(AppScreen.Main) }
+    val appLanguage = rememberSystemAppLanguage()
     val text = remember(appLanguage) { uiTextFor(appLanguage) }
     val context = LocalContext.current
     val onlineSyncTargetUri by viewModel.onlineSyncTargetUri.collectAsStateWithLifecycle()
@@ -313,7 +314,6 @@ fun NotepadApp(
             onTypeFilterChange = viewModel::setTypeFilter,
             onReminderFilterChange = viewModel::setReminderFilter,
             onQuickFilterChange = viewModel::setQuickFilter,
-            onSelectLanguage = viewModel::setLanguage,
             onOpenSettings = { screen = AppScreen.Settings },
             onCreateFolder = viewModel::createFolder,
             onRenameFolder = viewModel::renameFolder,
@@ -395,6 +395,20 @@ fun NotepadApp(
 }
 
 @Composable
+private fun rememberSystemAppLanguage(): AppLanguage {
+    val configuration = LocalConfiguration.current
+    return remember(configuration) {
+        val primaryLocale = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            configuration.locales[0]
+        } else {
+            @Suppress("DEPRECATION")
+            configuration.locale
+        }
+        AppLanguage.fromLocale(primaryLocale)
+    }
+}
+
+@Composable
 private fun OcrProgressDialog(text: UiText) {
     AlertDialog(
         onDismissRequest = {},
@@ -434,7 +448,6 @@ private fun MainScreen(
     onTypeFilterChange: (NoteTypeFilter) -> Unit,
     onReminderFilterChange: (ReminderFilter) -> Unit,
     onQuickFilterChange: (NoteQuickFilter) -> Unit,
-    onSelectLanguage: (AppLanguage) -> Unit,
     onOpenSettings: () -> Unit,
     onCreateFolder: (String) -> Unit,
     onRenameFolder: (Long, String) -> Unit,
@@ -516,11 +529,6 @@ private fun MainScreen(
                         ) {
                             Text(text.settings)
                         }
-                        LanguageSelector(
-                            appLanguage = appLanguage,
-                            text = text,
-                            onSelectLanguage = onSelectLanguage,
-                        )
                     },
                 )
             }
@@ -1503,38 +1511,6 @@ private fun SearchBar(
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .testTag("note_search_input"),
     )
-}
-
-@Composable
-private fun LanguageSelector(
-    appLanguage: AppLanguage,
-    text: UiText,
-    onSelectLanguage: (AppLanguage) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Box {
-        TextButton(
-            onClick = { expanded = true },
-            modifier = Modifier.testTag("language_button"),
-        ) {
-            Text("${text.language}: ${appLanguage.displayName}")
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            AppLanguage.entries.forEach { language ->
-                DropdownMenuItem(
-                    text = { Text(language.displayName) },
-                    onClick = {
-                        expanded = false
-                        onSelectLanguage(language)
-                    },
-                )
-            }
-        }
-    }
 }
 
 @Composable

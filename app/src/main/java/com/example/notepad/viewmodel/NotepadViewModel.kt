@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.notepad.data.AppLanguage
 import com.example.notepad.data.DriveSyncResult
 import com.example.notepad.data.EditorFontSize
 import com.example.notepad.data.GoogleDriveSyncClient
@@ -74,10 +73,6 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     val reminderFilter: StateFlow<ReminderFilter> = _reminderFilter
     private val _quickFilter = MutableStateFlow(NoteQuickFilter.All)
     val quickFilter: StateFlow<NoteQuickFilter> = _quickFilter
-    private val _appLanguage = MutableStateFlow(
-        AppLanguage.fromCode(preferences.getString("app_language", AppLanguage.English.code)),
-    )
-    val appLanguage: StateFlow<AppLanguage> = _appLanguage
     private val _editorFontSize = MutableStateFlow(
         EditorFontSize.fromCode(preferences.getString("editor_font_size", EditorFontSize.Medium.code)),
     )
@@ -188,13 +183,6 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun setQuickFilter(filter: NoteQuickFilter) {
         _quickFilter.value = filter
-    }
-
-    fun setLanguage(language: AppLanguage) {
-        _appLanguage.value = language
-        preferences.edit()
-            .putString("app_language", language.code)
-            .apply()
     }
 
     fun setEditorFontSize(fontSize: EditorFontSize) {
