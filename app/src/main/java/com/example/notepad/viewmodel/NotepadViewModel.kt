@@ -89,6 +89,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         PrivacyPreferences.hideReminderNotificationContent(application),
     )
     val hideReminderNotificationContent: StateFlow<Boolean> = _hideReminderNotificationContent
+    private val _requireDeviceUnlock = MutableStateFlow(
+        PrivacyPreferences.requireDeviceUnlock(application),
+    )
+    val requireDeviceUnlock: StateFlow<Boolean> = _requireDeviceUnlock
     private val _onlineSyncTargetUri = MutableStateFlow(preferences.getString("online_sync_target_uri", null))
     val onlineSyncTargetUri: StateFlow<String?> = _onlineSyncTargetUri
     private val _onlineSyncAutoOnStart = MutableStateFlow(preferences.getBoolean("online_sync_auto_on_start", false))
@@ -216,6 +220,13 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         _hideReminderNotificationContent.value = enabled
         preferences.edit()
             .putBoolean(PrivacyPreferences.HIDE_REMINDER_NOTIFICATION_CONTENT_KEY, enabled)
+            .apply()
+    }
+
+    fun setRequireDeviceUnlock(enabled: Boolean) {
+        _requireDeviceUnlock.value = enabled
+        preferences.edit()
+            .putBoolean(PrivacyPreferences.REQUIRE_DEVICE_UNLOCK_KEY, enabled)
             .apply()
     }
 

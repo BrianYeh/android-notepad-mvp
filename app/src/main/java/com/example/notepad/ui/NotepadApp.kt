@@ -249,6 +249,69 @@ fun LocalNotepadTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
+fun PrivacyLockScreen(
+    text: UiText,
+    canUseDeviceLock: Boolean,
+    onUnlock: () -> Unit,
+    onDisableLock: () -> Unit,
+) {
+    BackHandler(enabled = true) {}
+
+    Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        event.changes.forEach { change ->
+                            change.consume()
+                        }
+                    }
+                }
+            },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = text.unlockJustNotes,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = if (canUseDeviceLock) text.unlockRequiredBody else text.deviceLockUnavailable,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Button(
+                onClick = onUnlock,
+                enabled = canUseDeviceLock,
+                modifier = Modifier
+                    .padding(top = 20.dp)
+                    .testTag("privacy_unlock_button"),
+            ) {
+                Text(text.unlockJustNotes)
+            }
+            if (!canUseDeviceLock) {
+                TextButton(
+                    onClick = onDisableLock,
+                    modifier = Modifier.testTag("privacy_disable_lock_button"),
+                ) {
+                    Text(text.turnOffLock)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun NotepadApp(
     folders: List<FolderEntity>,
     allNotes: List<NoteEntity>,
@@ -263,6 +326,8 @@ fun NotepadApp(
     editorFontSize: EditorFontSize,
     isRecognizingText: Boolean,
     incomingTextShare: IncomingTextShare?,
+    isPrivacyLocked: Boolean,
+    deviceUnlockAvailable: Boolean,
     onIncomingTextShareHandled: (Long) -> Unit,
     viewModel: NotepadViewModel,
 ) {
@@ -273,6 +338,7 @@ fun NotepadApp(
     val onlineSyncTargetUri by viewModel.onlineSyncTargetUri.collectAsStateWithLifecycle()
     val onlineSyncAutoOnStart by viewModel.onlineSyncAutoOnStart.collectAsStateWithLifecycle()
     val hideReminderNotificationContent by viewModel.hideReminderNotificationContent.collectAsStateWithLifecycle()
+    val requireDeviceUnlock by viewModel.requireDeviceUnlock.collectAsStateWithLifecycle()
     val lastOnlineSyncAt by viewModel.lastOnlineSyncAt.collectAsStateWithLifecycle()
     val lastOnlineRestoreAt by viewModel.lastOnlineRestoreAt.collectAsStateWithLifecycle()
     val restoreRollbackCheckpoint by viewModel.restoreRollbackCheckpoint.collectAsStateWithLifecycle()
@@ -337,6 +403,7 @@ fun NotepadApp(
             quickFilter = quickFilter,
             appLanguage = appLanguage,
             text = text,
+            isPrivacyLocked = isPrivacyLocked,
             onSelectFolder = viewModel::selectFolder,
             onSearchQueryChange = viewModel::setSearchQuery,
             onListModeChange = viewModel::setListMode,
@@ -383,6 +450,8 @@ fun NotepadApp(
             appLanguage = appLanguage,
             editorFontSize = editorFontSize,
             hideReminderNotificationContent = hideReminderNotificationContent,
+            requireDeviceUnlock = requireDeviceUnlock,
+            deviceUnlockAvailable = deviceUnlockAvailable,
             currentBackupPreview = BackupPreview.from(folders = folders, notes = allNotes),
             onlineSyncTargetUri = onlineSyncTargetUri,
             onlineSyncAutoOnStart = onlineSyncAutoOnStart,
@@ -390,9 +459,11 @@ fun NotepadApp(
             lastOnlineRestoreAt = lastOnlineRestoreAt,
             syncMetadata = syncMetadata,
             restoreRollbackCheckpoint = restoreRollbackCheckpoint,
+            isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
             onEditorFontSizeChange = viewModel::setEditorFontSize,
             onHideReminderNotificationContentChange = viewModel::setHideReminderNotificationContent,
+            onRequireDeviceUnlockChange = viewModel::setRequireDeviceUnlock,
             onOnlineSyncTargetChange = viewModel::setOnlineSyncTargetUri,
             onOnlineSyncAutoOnStartChange = viewModel::setOnlineSyncAutoOnStart,
             onOnlineSyncRecorded = { viewModel.recordOnlineSync() },
@@ -412,6 +483,7 @@ fun NotepadApp(
             text = text,
             editorFontSize = editorFontSize,
             appLanguage = appLanguage,
+            isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
@@ -422,13 +494,14 @@ fun NotepadApp(
             folders = folders,
             text = text,
             appLanguage = appLanguage,
+            isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
         )
     }
 
-    if (isRecognizingText) {
+    if (isRecognizingText && !isPrivacyLocked) {
         OcrProgressDialog(text = text)
     }
 }
@@ -771,6 +844,7 @@ private fun MainScreen(
     quickFilter: NoteQuickFilter,
     appLanguage: AppLanguage,
     text: UiText,
+    isPrivacyLocked: Boolean,
     onSelectFolder: (Long?) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onListModeChange: (NoteListMode) -> Unit,
@@ -811,6 +885,19 @@ private fun MainScreen(
     fun clearNoteSelection() {
         selectedNoteIds = emptySet()
         selectedNotesToDelete = null
+    }
+
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) {
+            addMenuExpanded = false
+            showCreateFolderDialog = false
+            folderToRename = null
+            folderToDelete = null
+            noteToMove = null
+            noteToDelete = null
+            noteToPermanentlyDelete = null
+            selectedNotesToDelete = null
+        }
     }
 
     LaunchedEffect(visibleNoteIds) {
@@ -882,7 +969,7 @@ private fun MainScreen(
                         Text("+", style = MaterialTheme.typography.headlineSmall)
                     }
                     DropdownMenu(
-                        expanded = addMenuExpanded,
+                        expanded = addMenuExpanded && !isPrivacyLocked,
                         onDismissRequest = { addMenuExpanded = false },
                     ) {
                         DropdownMenuItem(
@@ -965,6 +1052,7 @@ private fun MainScreen(
                     sortOption = sortOption,
                     quickFilter = quickFilter,
                     text = text,
+                    isPrivacyLocked = isPrivacyLocked,
                     onSortOptionChange = onSortOptionChange,
                     onQuickFilterChange = onQuickFilterChange,
                 )
@@ -1011,7 +1099,7 @@ private fun MainScreen(
         }
     }
 
-    if (showCreateFolderDialog) {
+    if (showCreateFolderDialog && !isPrivacyLocked) {
         FolderNameDialog(
             title = text.newFolder,
             initialName = "",
@@ -1026,7 +1114,7 @@ private fun MainScreen(
         )
     }
 
-    folderToRename?.let { folder ->
+    if (!isPrivacyLocked) folderToRename?.let { folder ->
         FolderNameDialog(
             title = text.renameFolder,
             initialName = folder.name,
@@ -1041,7 +1129,7 @@ private fun MainScreen(
         )
     }
 
-    folderToDelete?.let { folder ->
+    if (!isPrivacyLocked) folderToDelete?.let { folder ->
         ConfirmDialog(
             title = text.deleteFolder,
             body = text.deleteFolderBody(folderDisplayName(folder, text)),
@@ -1056,7 +1144,7 @@ private fun MainScreen(
         )
     }
 
-    noteToMove?.let { note ->
+    if (!isPrivacyLocked) noteToMove?.let { note ->
         MoveNoteDialog(
             folders = folders,
             text = text,
@@ -1069,7 +1157,7 @@ private fun MainScreen(
         )
     }
 
-    noteToDelete?.let { note ->
+    if (!isPrivacyLocked) noteToDelete?.let { note ->
         ConfirmDialog(
             title = text.deleteNote,
             body = text.deleteNoteBody,
@@ -1084,7 +1172,7 @@ private fun MainScreen(
         )
     }
 
-    noteToPermanentlyDelete?.let { note ->
+    if (!isPrivacyLocked) noteToPermanentlyDelete?.let { note ->
         ConfirmDialog(
             title = text.permanentlyDeleteNote,
             body = text.permanentlyDeleteNoteBody,
@@ -1099,7 +1187,7 @@ private fun MainScreen(
         )
     }
 
-    selectedNotesToDelete?.let { noteIds ->
+    if (!isPrivacyLocked) selectedNotesToDelete?.let { noteIds ->
         ConfirmDialog(
             title = if (isTrash) text.permanentlyDeleteSelectedNotes else text.deleteSelectedNotes,
             body = if (isTrash) text.permanentlyDeleteSelectedNotesBody else text.deleteSelectedNotesBody,
@@ -1126,6 +1214,8 @@ private fun SettingsScreen(
     appLanguage: AppLanguage,
     editorFontSize: EditorFontSize,
     hideReminderNotificationContent: Boolean,
+    requireDeviceUnlock: Boolean,
+    deviceUnlockAvailable: Boolean,
     currentBackupPreview: BackupPreview,
     onlineSyncTargetUri: String?,
     onlineSyncAutoOnStart: Boolean,
@@ -1133,9 +1223,11 @@ private fun SettingsScreen(
     lastOnlineRestoreAt: Long?,
     syncMetadata: SyncMetadata,
     restoreRollbackCheckpoint: DecodedBackup?,
+    isPrivacyLocked: Boolean,
     viewModel: NotepadViewModel,
     onEditorFontSizeChange: (EditorFontSize) -> Unit,
     onHideReminderNotificationContentChange: (Boolean) -> Unit,
+    onRequireDeviceUnlockChange: (Boolean) -> Unit,
     onOnlineSyncTargetChange: (String?) -> Unit,
     onOnlineSyncAutoOnStartChange: (Boolean) -> Unit,
     onOnlineSyncRecorded: () -> Unit,
@@ -1154,6 +1246,16 @@ private fun SettingsScreen(
     var isBackupInProgress by remember { mutableStateOf(false) }
     var isRestoreInProgress by remember { mutableStateOf(false) }
     var isGoogleSyncInProgress by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) {
+            pendingRestoreBackup = null
+            pendingRestoreRollback = null
+            showAccountSettingsDialog = false
+            showDisconnectDialog = false
+            showGoogleSignOutDialog = false
+        }
+    }
 
     suspend fun runGoogleSync() {
         isGoogleSyncInProgress = true
@@ -1324,6 +1426,36 @@ private fun SettingsScreen(
                     )
                     Text(
                         text = text.hideReminderNotificationContentBody,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("require_device_unlock_row"),
+            ) {
+                Checkbox(
+                    checked = requireDeviceUnlock,
+                    onCheckedChange = { enabled ->
+                        if (enabled && !deviceUnlockAvailable) {
+                            Toast.makeText(context, text.deviceLockUnavailable, Toast.LENGTH_SHORT).show()
+                        } else {
+                            onRequireDeviceUnlockChange(enabled)
+                        }
+                    },
+                    enabled = deviceUnlockAvailable || requireDeviceUnlock,
+                    modifier = Modifier.testTag("require_device_unlock_checkbox"),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = text.requireDeviceUnlock,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = if (deviceUnlockAvailable) text.requireDeviceUnlockBody else text.deviceLockUnavailable,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1599,7 +1731,7 @@ private fun SettingsScreen(
         }
     }
 
-    pendingRestoreBackup?.let { pendingRestore ->
+    if (!isPrivacyLocked) pendingRestoreBackup?.let { pendingRestore ->
         ConfirmDialog(
             title = text.restoreBackupConfirmTitle,
             body = restoreBackupPreviewBody(
@@ -1630,7 +1762,7 @@ private fun SettingsScreen(
         )
     }
 
-    pendingRestoreRollback?.let { rollback ->
+    if (!isPrivacyLocked) pendingRestoreRollback?.let { rollback ->
         ConfirmDialog(
             title = text.undoRestore,
             body = restoreRollbackPreviewBody(
@@ -1661,7 +1793,7 @@ private fun SettingsScreen(
         )
     }
 
-    if (showAccountSettingsDialog) {
+    if (showAccountSettingsDialog && !isPrivacyLocked) {
         AlertDialog(
             onDismissRequest = { showAccountSettingsDialog = false },
             title = { Text(text.accountSettings) },
@@ -1680,7 +1812,7 @@ private fun SettingsScreen(
         )
     }
 
-    if (showDisconnectDialog) {
+    if (showDisconnectDialog && !isPrivacyLocked) {
         ConfirmDialog(
             title = text.disconnectSyncTitle,
             body = text.disconnectSyncBody,
@@ -1695,7 +1827,7 @@ private fun SettingsScreen(
         )
     }
 
-    if (showGoogleSignOutDialog) {
+    if (showGoogleSignOutDialog && !isPrivacyLocked) {
         ConfirmDialog(
             title = text.signOutGoogleTitle,
             body = text.signOutGoogleBody,
@@ -1769,6 +1901,7 @@ private fun NoteFilterRow(
     sortOption: NoteSortOption,
     quickFilter: NoteQuickFilter,
     text: UiText,
+    isPrivacyLocked: Boolean,
     onSortOptionChange: (NoteSortOption) -> Unit,
     onQuickFilterChange: (NoteQuickFilter) -> Unit,
 ) {
@@ -1785,6 +1918,7 @@ private fun NoteFilterRow(
             SortSelector(
                 sortOption = sortOption,
                 text = text,
+                isPrivacyLocked = isPrivacyLocked,
                 onSortOptionChange = onSortOptionChange,
                 modifier = Modifier.weight(1f),
             )
@@ -1817,10 +1951,14 @@ private fun NoteFilterRow(
 private fun SortSelector(
     sortOption: NoteSortOption,
     text: UiText,
+    isPrivacyLocked: Boolean,
     onSortOptionChange: (NoteSortOption) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) expanded = false
+    }
 
     Box(modifier = modifier) {
         Button(
@@ -1834,7 +1972,7 @@ private fun SortSelector(
             )
         }
         DropdownMenu(
-            expanded = expanded,
+            expanded = expanded && !isPrivacyLocked,
             onDismissRequest = { expanded = false },
         ) {
             NoteSortOption.entries.forEach { option ->
@@ -1855,10 +1993,14 @@ private fun SortSelector(
 private fun TypeFilterSelector(
     typeFilter: NoteTypeFilter,
     text: UiText,
+    isPrivacyLocked: Boolean,
     onTypeFilterChange: (NoteTypeFilter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) expanded = false
+    }
 
     Box(modifier = modifier) {
         Button(
@@ -1872,7 +2014,7 @@ private fun TypeFilterSelector(
             )
         }
         DropdownMenu(
-            expanded = expanded,
+            expanded = expanded && !isPrivacyLocked,
             onDismissRequest = { expanded = false },
         ) {
             NoteTypeFilter.entries.forEach { filter ->
@@ -1893,9 +2035,13 @@ private fun TypeFilterSelector(
 private fun ReminderFilterSelector(
     reminderFilter: ReminderFilter,
     text: UiText,
+    isPrivacyLocked: Boolean,
     onReminderFilterChange: (ReminderFilter) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) expanded = false
+    }
 
     Box {
         Button(
@@ -1909,7 +2055,7 @@ private fun ReminderFilterSelector(
             )
         }
         DropdownMenu(
-            expanded = expanded,
+            expanded = expanded && !isPrivacyLocked,
             onDismissRequest = { expanded = false },
         ) {
             ReminderFilter.entries.forEach { filter ->
@@ -2252,6 +2398,7 @@ private fun TextEditorScreen(
     text: UiText,
     editorFontSize: EditorFontSize,
     appLanguage: AppLanguage,
+    isPrivacyLocked: Boolean,
     viewModel: NotepadViewModel,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
@@ -2275,6 +2422,8 @@ private fun TextEditorScreen(
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
     var pendingExportText by remember { mutableStateOf<String?>(null) }
     var pendingReminderAt by remember { mutableStateOf<Long?>(null) }
+    var activeDatePickerDialog by remember { mutableStateOf<DatePickerDialog?>(null) }
+    var activeTimePickerDialog by remember { mutableStateOf<TimePickerDialog?>(null) }
     var titleFocusRequest by remember(noteId) { mutableStateOf(0) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2299,6 +2448,17 @@ private fun TextEditorScreen(
     val content = contentField.text
     val findMatches = remember(content, findQuery) { findInNoteMatches(content, findQuery) }
     val currentFindIndex = activeFindIndex.coerceIn(0, (findMatches.size - 1).coerceAtLeast(0))
+
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) {
+            isMoreMenuExpanded = false
+            showDeleteDialog = false
+            activeDatePickerDialog?.dismiss()
+            activeTimePickerDialog?.dismiss()
+            activeDatePickerDialog = null
+            activeTimePickerDialog = null
+        }
+    }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { _ ->
@@ -2584,10 +2744,10 @@ private fun TextEditorScreen(
             calendar.timeInMillis = initialReminderAt
         }
 
-        DatePickerDialog(
+        val datePickerDialog = DatePickerDialog(
             context,
             { _, year, month, dayOfMonth ->
-                TimePickerDialog(
+                val timePickerDialog = TimePickerDialog(
                     context,
                     { _, hourOfDay, minute ->
                         val selected = Calendar.getInstance().apply {
@@ -2604,12 +2764,22 @@ private fun TextEditorScreen(
                     calendar.get(Calendar.HOUR_OF_DAY),
                     calendar.get(Calendar.MINUTE),
                     true,
-                ).show()
+                )
+                timePickerDialog.setOnDismissListener {
+                    if (activeTimePickerDialog === timePickerDialog) activeTimePickerDialog = null
+                }
+                activeTimePickerDialog = timePickerDialog
+                timePickerDialog.show()
             },
             calendar.get(Calendar.YEAR),
             calendar.get(Calendar.MONTH),
             calendar.get(Calendar.DAY_OF_MONTH),
-        ).show()
+        )
+        datePickerDialog.setOnDismissListener {
+            if (activeDatePickerDialog === datePickerDialog) activeDatePickerDialog = null
+        }
+        activeDatePickerDialog = datePickerDialog
+        datePickerDialog.show()
     }
 
     fun insertIntoContent(prefix: String) {
@@ -2745,7 +2915,7 @@ private fun TextEditorScreen(
                             Text("...")
                         }
                         DropdownMenu(
-                            expanded = isMoreMenuExpanded,
+                            expanded = isMoreMenuExpanded && !isPrivacyLocked,
                             onDismissRequest = { isMoreMenuExpanded = false },
                             modifier = Modifier.testTag("text_note_overflow_menu"),
                         ) {
@@ -2947,6 +3117,7 @@ private fun TextEditorScreen(
                                     folders = folders,
                                     text = text,
                                     currentFolderId = currentNote.folderId,
+                                    isPrivacyLocked = isPrivacyLocked,
                                     onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
@@ -3239,7 +3410,7 @@ private fun TextEditorScreen(
         }
     }
 
-    if (showDeleteDialog) {
+    if (showDeleteDialog && !isPrivacyLocked) {
         ConfirmDialog(
             title = text.deleteNote,
             body = text.deleteNoteBody,
@@ -3384,6 +3555,7 @@ private fun DrawingEditorScreen(
     folders: List<FolderEntity>,
     text: UiText,
     appLanguage: AppLanguage,
+    isPrivacyLocked: Boolean,
     viewModel: NotepadViewModel,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
@@ -3402,6 +3574,13 @@ private fun DrawingEditorScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
     var pendingPngBytes by remember { mutableStateOf<ByteArray?>(null) }
+
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) {
+            showDeleteDialog = false
+            showClearDialog = false
+        }
+    }
     val context = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -3702,12 +3881,14 @@ private fun DrawingEditorScreen(
                     folders = folders,
                     text = text,
                     currentFolderId = currentNote.folderId,
+                    isPrivacyLocked = isPrivacyLocked,
                     onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
                 )
                 ReminderControls(
                     note = currentNote,
                     text = text,
                     appLanguage = appLanguage,
+                    isPrivacyLocked = isPrivacyLocked,
                     onSetReminder = { reminderAt -> viewModel.setNoteReminder(noteId, reminderAt) },
                     onClearReminder = { viewModel.setNoteReminder(noteId, null) },
                 )
@@ -3748,7 +3929,7 @@ private fun DrawingEditorScreen(
         }
     }
 
-    if (showDeleteDialog) {
+    if (showDeleteDialog && !isPrivacyLocked) {
         ConfirmDialog(
             title = text.deleteNote,
             body = text.deleteNoteBody,
@@ -3764,7 +3945,7 @@ private fun DrawingEditorScreen(
         )
     }
 
-    if (showClearDialog) {
+    if (showClearDialog && !isPrivacyLocked) {
         ConfirmDialog(
             title = text.clearDrawing,
             body = text.clearDrawingBody,
@@ -4220,11 +4401,24 @@ private fun ReminderControls(
     note: NoteEntity,
     text: UiText,
     appLanguage: AppLanguage,
+    isPrivacyLocked: Boolean,
     onSetReminder: (Long) -> Unit,
     onClearReminder: () -> Unit,
 ) {
     val context = LocalContext.current
     var pendingReminderAt by remember { mutableStateOf<Long?>(null) }
+    var activeDatePickerDialog by remember { mutableStateOf<DatePickerDialog?>(null) }
+    var activeTimePickerDialog by remember { mutableStateOf<TimePickerDialog?>(null) }
+
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) {
+            activeDatePickerDialog?.dismiss()
+            activeTimePickerDialog?.dismiss()
+            activeDatePickerDialog = null
+            activeTimePickerDialog = null
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { _ ->
@@ -4257,10 +4451,10 @@ private fun ReminderControls(
             calendar.timeInMillis = initialReminderAt
         }
 
-        DatePickerDialog(
+        val datePickerDialog = DatePickerDialog(
             context,
             { _, year, month, dayOfMonth ->
-                TimePickerDialog(
+                val timePickerDialog = TimePickerDialog(
                     context,
                     { _, hourOfDay, minute ->
                         val selected = Calendar.getInstance().apply {
@@ -4277,12 +4471,22 @@ private fun ReminderControls(
                     calendar.get(Calendar.HOUR_OF_DAY),
                     calendar.get(Calendar.MINUTE),
                     true,
-                ).show()
+                )
+                timePickerDialog.setOnDismissListener {
+                    if (activeTimePickerDialog === timePickerDialog) activeTimePickerDialog = null
+                }
+                activeTimePickerDialog = timePickerDialog
+                timePickerDialog.show()
             },
             calendar.get(Calendar.YEAR),
             calendar.get(Calendar.MONTH),
             calendar.get(Calendar.DAY_OF_MONTH),
-        ).show()
+        )
+        datePickerDialog.setOnDismissListener {
+            if (activeDatePickerDialog === datePickerDialog) activeDatePickerDialog = null
+        }
+        activeDatePickerDialog = datePickerDialog
+        datePickerDialog.show()
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -4320,17 +4524,21 @@ private fun NoteFolderSelector(
     folders: List<FolderEntity>,
     text: UiText,
     currentFolderId: Long,
+    isPrivacyLocked: Boolean,
     onMove: (Long) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val currentFolderName = folderDisplayNameById(currentFolderId, folders, text)
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) expanded = false
+    }
 
     Box {
         Button(onClick = { expanded = true }) {
             Text(currentFolderName, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(
-            expanded = expanded,
+            expanded = expanded && !isPrivacyLocked,
             onDismissRequest = { expanded = false },
         ) {
             folders.forEach { folder ->

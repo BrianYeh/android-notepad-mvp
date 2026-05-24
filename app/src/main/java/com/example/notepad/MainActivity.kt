@@ -1,24 +1,49 @@
 package com.example.notepad
 
+import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.notepad.data.AppLanguage
 import com.example.notepad.ui.LocalNotepadTheme
 import com.example.notepad.ui.NotepadApp
+import com.example.notepad.ui.PrivacyLockScreen
+import com.example.notepad.ui.uiTextFor
 import com.example.notepad.viewmodel.NotepadViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val incomingTextShare = MutableStateFlow<IncomingTextShare?>(null)
     private var nextShareId = 0L
+    private var lockOnStop: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,32 +65,139 @@ class MainActivity : ComponentActivity() {
             val editorFontSize by viewModel.editorFontSize.collectAsStateWithLifecycle()
             val isRecognizingText by viewModel.isRecognizingText.collectAsStateWithLifecycle()
             val sharedText by incomingTextShare.collectAsStateWithLifecycle()
+            val requireDeviceUnlock by viewModel.requireDeviceUnlock.collectAsStateWithLifecycle()
+            val keyguardManager = remember {
+                getSystemService(KEYGUARD_SERVICE) as KeyguardManager
+            }
+            var deviceUnlockAvailable by remember { mutableStateOf(keyguardManager.isDeviceSecure) }
+            var isAppUnlocked by remember { mutableStateOf(false) }
+            var unlockRequestInFlight by remember { mutableStateOf(false) }
+            val isLocked = requireDeviceUnlock && !isAppUnlocked
+            val lifecycleOwner = LocalLifecycleOwner.current
+            val focusManager = LocalFocusManager.current
+            val keyboardController = LocalSoftwareKeyboardController.current
+            val unlockLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult(),
+            ) { result ->
+                unlockRequestInFlight = false
+                isAppUnlocked = result.resultCode == Activity.RESULT_OK
+            }
+
+            fun requestDeviceUnlock() {
+                if (!requireDeviceUnlock || isAppUnlocked || unlockRequestInFlight || !deviceUnlockAvailable) {
+                    return
+                }
+                val unlockIntent = keyguardManager.createConfirmDeviceCredentialIntent(
+                    getString(R.string.app_name),
+                    null,
+                ) ?: return
+                unlockRequestInFlight = true
+                unlockLauncher.launch(unlockIntent)
+            }
+
+            LaunchedEffect(requireDeviceUnlock, deviceUnlockAvailable, isAppUnlocked) {
+                if (!requireDeviceUnlock) {
+                    isAppUnlocked = true
+                } else if (!deviceUnlockAvailable) {
+                    isAppUnlocked = false
+                } else if (!isAppUnlocked) {
+                    requestDeviceUnlock()
+                }
+            }
+
+            DisposableEffect(lifecycleOwner, keyguardManager) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        deviceUnlockAvailable = keyguardManager.isDeviceSecure
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                }
+            }
+
+            DisposableEffect(requireDeviceUnlock) {
+                if (requireDeviceUnlock) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+                lockOnStop = {
+                    if (requireDeviceUnlock) {
+                        isAppUnlocked = false
+                    }
+                }
+                onDispose {
+                    lockOnStop = null
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+
+            LaunchedEffect(isLocked) {
+                if (isLocked) {
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
+                }
+            }
 
             LocalNotepadTheme {
-                NotepadApp(
-                    folders = folders,
-                    allNotes = allNotes,
-                    notes = notes,
-                    selectedFolderId = selectedFolderId,
-                    searchQuery = searchQuery,
-                    listMode = listMode,
-                    sortOption = sortOption,
-                    typeFilter = typeFilter,
-                    reminderFilter = reminderFilter,
-                    quickFilter = quickFilter,
-                    editorFontSize = editorFontSize,
-                    isRecognizingText = isRecognizingText,
-                    incomingTextShare = sharedText,
-                    onIncomingTextShareHandled = { handledId ->
-                        if (incomingTextShare.value?.id == handledId) {
-                            incomingTextShare.value = null
-                            setIntent(Intent(Intent.ACTION_MAIN))
-                        }
-                    },
-                    viewModel = viewModel,
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = if (isLocked) {
+                            Modifier
+                                .fillMaxSize()
+                                .focusProperties { canFocus = false }
+                                .clearAndSetSemantics {}
+                        } else {
+                            Modifier.fillMaxSize()
+                        },
+                    ) {
+                        NotepadApp(
+                            folders = folders,
+                            allNotes = allNotes,
+                            notes = notes,
+                            selectedFolderId = selectedFolderId,
+                            searchQuery = searchQuery,
+                            listMode = listMode,
+                            sortOption = sortOption,
+                            typeFilter = typeFilter,
+                            reminderFilter = reminderFilter,
+                            quickFilter = quickFilter,
+                            editorFontSize = editorFontSize,
+                            isRecognizingText = isRecognizingText,
+                            incomingTextShare = if (isLocked) null else sharedText,
+                            isPrivacyLocked = isLocked,
+                            deviceUnlockAvailable = deviceUnlockAvailable,
+                            onIncomingTextShareHandled = { handledId ->
+                                if (incomingTextShare.value?.id == handledId) {
+                                    incomingTextShare.value = null
+                                    setIntent(Intent(Intent.ACTION_MAIN))
+                                }
+                            },
+                            viewModel = viewModel,
+                        )
+                    }
+                    if (isLocked) {
+                        val text = uiTextFor(AppLanguage.fromLocale(Locale.getDefault()))
+                        PrivacyLockScreen(
+                            text = text,
+                            canUseDeviceLock = deviceUnlockAvailable,
+                            onUnlock = ::requestDeviceUnlock,
+                            onDisableLock = {
+                                viewModel.setRequireDeviceUnlock(false)
+                                isAppUnlocked = true
+                            },
+                        )
+                    }
+                }
             }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        lockOnStop?.invoke()
     }
 
     @Suppress("DEPRECATION")

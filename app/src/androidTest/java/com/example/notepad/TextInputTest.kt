@@ -125,6 +125,9 @@ class TextInputTest {
         composeRule.onNodeWithTag("hide_reminder_content_checkbox")
             .performClick()
             .performClick()
+        composeRule.onNodeWithTag("require_device_unlock_checkbox")
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 
     @Test
