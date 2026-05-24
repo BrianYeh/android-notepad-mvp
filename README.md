@@ -30,9 +30,9 @@ Native Android notepad built with Kotlin, Jetpack Compose, Room, and MVVM.
 - Receive `text/plain` shares from other apps and create a new text note in `Uncategorized`
 - Drawing data is stored locally in Room as serialized JSON stroke data
 - App language follows the Android system language, matching ColorNote-style behavior
-- Manual JSON backup and restore from Settings; restore validates the selected backup and previews its note/folder counts before replacing local data
+- Manual JSON backup and restore from Settings; restore validates the selected backup, previews note/folder counts, and creates a one-time local rollback checkpoint before replacing local data
 - Sync-ready local metadata for stable folder/note IDs and tombstones
-- No Google account sync, login system, or app-managed Drive storage until the OAuth/Drive setup in `GOOGLE_ACCOUNT_SYNC_SETUP.md` is completed
+- Google account sync foundation is implemented with Google Sign-In and Drive app data, but release readiness still depends on the OAuth/Drive setup and real-device hardening in `GOOGLE_ACCOUNT_SYNC_SETUP.md`
 
 ## Requirements
 
@@ -85,7 +85,7 @@ All notes and folders are stored in the local Room database `local_notepad.db`. 
 
 ## Google Account Sync
 
-True Google account sync is intentionally blocked in this repository until Google Cloud OAuth and Drive API credentials are configured. See `GOOGLE_ACCOUNT_SYNC_SETUP.md` for the required package name, debug signing fingerprints, Drive scopes, dependencies, and local configuration files. The current Settings screen is labeled as manual backup so a Drive file-picker backup is not presented as account sync.
+Google account sync has an Android-side implementation using Google Sign-In and Drive app data, but it is not release-ready until Google Cloud OAuth and Drive API credentials are configured and the real-device hardening checklist is complete. See `GOOGLE_ACCOUNT_SYNC_SETUP.md` for the required package name, debug signing fingerprints, Drive scopes, dependencies, and validation checklist. Manual JSON backup remains a separate Android file-picker flow, even when the user stores that backup file in Google Drive.
 
 ## Notifications
 

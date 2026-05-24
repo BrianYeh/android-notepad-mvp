@@ -219,6 +219,58 @@ class NotepadDatabaseTest {
     }
 
     @Test
+    fun backupRestoreCheckpointCanRollbackLastRestore() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val originalNoteId = dao.insertNote(
+            NoteEntity(
+                folderId = DEFAULT_FOLDER_ID,
+                type = NoteTypes.TEXT,
+                title = "Original",
+                textContent = "Keep this before restore.",
+                drawingData = null,
+                createdAt = 2L,
+                updatedAt = 2L,
+            ),
+        )
+        val replacementBackup = BackupData(
+            folders = listOf(
+                FolderEntity(
+                    id = DEFAULT_FOLDER_ID,
+                    syncId = DEFAULT_FOLDER_SYNC_ID,
+                    name = DEFAULT_FOLDER_NAME,
+                    createdAt = 10L,
+                    updatedAt = 10L,
+                ),
+            ),
+            notes = listOf(
+                NoteEntity(
+                    id = 42L,
+                    syncId = "note:replacement",
+                    folderId = DEFAULT_FOLDER_ID,
+                    type = NoteTypes.TEXT,
+                    title = "Replacement",
+                    textContent = "Imported backup note.",
+                    drawingData = null,
+                    createdAt = 11L,
+                    updatedAt = 11L,
+                ),
+            ),
+        )
+
+        val rollbackCheckpoint = repository.importBackupDataWithRollbackCheckpoint(replacementBackup)
+
+        assertEquals("Replacement", dao.getAllNotes().single().title)
+
+        repository.importBackupData(rollbackCheckpoint)
+
+        val restoredNotes = dao.getAllNotes()
+        assertEquals(listOf(originalNoteId), restoredNotes.map { it.id })
+        assertEquals("Original", restoredNotes.single().title)
+        assertEquals("Keep this before restore.", restoredNotes.single().textContent)
+    }
+
+    @Test
     fun backupJsonRejectsNonBackupJsonWithoutReplacingExistingNotes() = runTest {
         val repository = NotepadRepository(dao)
         dao.ensureDefaultFolder(now = 1L)

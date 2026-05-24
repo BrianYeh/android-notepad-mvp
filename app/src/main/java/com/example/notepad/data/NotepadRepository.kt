@@ -163,12 +163,30 @@ class NotepadRepository(
         )
     }
 
+    suspend fun currentBackupData(): BackupData {
+        dao.ensureSyncMetadata()
+        return BackupData(
+            folders = dao.getAllFolders(),
+            notes = dao.getAllNotes(),
+        )
+    }
+
     fun decodeBackupJson(json: String): DecodedBackup {
         return BackupJson.decodeWithPreview(json)
     }
 
     suspend fun importBackupJson(json: String) {
         importBackupData(BackupJson.decode(json))
+    }
+
+    suspend fun importBackupJsonWithRollbackCheckpoint(json: String): BackupData {
+        return importBackupDataWithRollbackCheckpoint(BackupJson.decode(json))
+    }
+
+    suspend fun importBackupDataWithRollbackCheckpoint(backupData: BackupData): BackupData {
+        val rollbackCheckpoint = currentBackupData()
+        importBackupData(backupData)
+        return rollbackCheckpoint
     }
 
     suspend fun importBackupData(backupData: BackupData) {

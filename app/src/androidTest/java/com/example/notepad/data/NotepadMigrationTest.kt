@@ -2,30 +2,23 @@ package com.example.notepad.data
 
 import android.content.Context
 import androidx.room.Room
-import androidx.room.testing.MigrationTestHelper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NotepadMigrationTest {
-    @get:Rule
-    val helper = MigrationTestHelper(
-        InstrumentationRegistry.getInstrumentation(),
-        NotepadDatabase::class.java,
-    )
-
     @Test
-    fun migration3To4PreservesRowsAndBackfillsSyncMetadata() = runTest {
-        val dbName = "migration-3-4-${System.currentTimeMillis()}.db"
-        helper.createDatabase(dbName, 3).apply {
+    fun migration3To5PreservesRowsBackfillsSyncMetadataAndCreatesTombstones() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dbName = "migration-3-5-${System.currentTimeMillis()}.db"
+        context.deleteDatabase(dbName)
+        context.openOrCreateDatabase(dbName, Context.MODE_PRIVATE, null).apply {
             execSQL(
                 """
                 CREATE TABLE IF NOT EXISTS folders (
@@ -66,12 +59,12 @@ class NotepadMigrationTest {
                 ) VALUES (10, 2, 'TEXT', 'Plan', 'Body', NULL, 3, 3, 0, NULL, 0, NULL)
                 """.trimIndent(),
             )
+            version = 3
             close()
         }
 
-        val context = ApplicationProvider.getApplicationContext<Context>()
         val database = Room.databaseBuilder(context, NotepadDatabase::class.java, dbName)
-            .addMigrations(NotepadDatabase.MIGRATION_3_4)
+            .addMigrations(NotepadDatabase.MIGRATION_3_4, NotepadDatabase.MIGRATION_4_5)
             .build()
 
         try {
@@ -97,6 +90,7 @@ class NotepadMigrationTest {
             assertEquals(DEFAULT_FOLDER_ID, dao.getNote(10L)?.folderId)
         } finally {
             database.close()
+            context.deleteDatabase(dbName)
         }
     }
 }

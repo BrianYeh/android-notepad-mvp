@@ -517,6 +517,15 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         importBackupData(repository.decodeBackupJson(json).data)
     }
 
+    suspend fun importBackupDataWithRollbackCheckpoint(backupData: BackupData): BackupData {
+        ReminderScheduler.cancelFutureReminders(getApplication())
+        try {
+            return repository.importBackupDataWithRollbackCheckpoint(backupData)
+        } finally {
+            ReminderScheduler.rescheduleFutureReminders(getApplication())
+        }
+    }
+
     suspend fun importBackupData(backupData: BackupData) {
         ReminderScheduler.cancelFutureReminders(getApplication())
         try {

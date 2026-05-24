@@ -60,7 +60,10 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -173,6 +176,7 @@ import kotlinx.coroutines.withContext
 private sealed interface AppScreen {
     data object Main : AppScreen
     data object Settings : AppScreen
+    data object Premium : AppScreen
     data class TextEditor(val noteId: Long) : AppScreen
     data class DrawingEditor(val noteId: Long) : AppScreen
 }
@@ -195,6 +199,16 @@ private val NOTE_PAPER_SURFACE = Color(0xFFFFFBEA)
 private enum class SaveStatus {
     Saving,
     Saved,
+}
+
+private enum class MainTab {
+    Notes,
+    Premium,
+}
+
+private enum class PremiumPlan {
+    Annual,
+    Monthly,
 }
 
 private enum class DrawingTool {
@@ -252,6 +266,7 @@ fun NotepadApp(
     viewModel: NotepadViewModel,
 ) {
     var screen: AppScreen by remember { mutableStateOf(AppScreen.Main) }
+    var pendingRestoreRollback by remember { mutableStateOf<PendingRestoreBackup?>(null) }
     val appLanguage = rememberSystemAppLanguage()
     val text = remember(appLanguage) { uiTextFor(appLanguage) }
     val context = LocalContext.current
@@ -328,6 +343,7 @@ fun NotepadApp(
             onReminderFilterChange = viewModel::setReminderFilter,
             onQuickFilterChange = viewModel::setQuickFilter,
             onOpenSettings = { screen = AppScreen.Settings },
+            onOpenPremium = { screen = AppScreen.Premium },
             onCreateFolder = viewModel::createFolder,
             onRenameFolder = viewModel::renameFolder,
             onDeleteFolder = viewModel::deleteFolder,
@@ -370,14 +386,21 @@ fun NotepadApp(
             lastOnlineSyncAt = lastOnlineSyncAt,
             lastOnlineRestoreAt = lastOnlineRestoreAt,
             syncMetadata = syncMetadata,
+            pendingRestoreRollback = pendingRestoreRollback,
             viewModel = viewModel,
             onEditorFontSizeChange = viewModel::setEditorFontSize,
             onOnlineSyncTargetChange = viewModel::setOnlineSyncTargetUri,
             onOnlineSyncAutoOnStartChange = viewModel::setOnlineSyncAutoOnStart,
             onOnlineSyncRecorded = { viewModel.recordOnlineSync() },
             onOnlineRestoreRecorded = { viewModel.recordOnlineRestore() },
+            onPendingRestoreRollbackChange = { pendingRestoreRollback = it },
             onOnlineSyncDisconnect = viewModel::disconnectOnlineSync,
             onBack = { screen = AppScreen.Main },
+        )
+
+        AppScreen.Premium -> PremiumScreen(
+            text = text,
+            onOpenNotes = { screen = AppScreen.Main },
         )
 
         is AppScreen.TextEditor -> TextEditorScreen(
@@ -440,6 +463,297 @@ private fun OcrProgressDialog(text: UiText) {
     )
 }
 
+@Composable
+private fun MainNavigationBar(
+    selectedTab: MainTab,
+    text: UiText,
+    onOpenNotes: () -> Unit,
+    onOpenPremium: () -> Unit,
+) {
+    NavigationBar {
+        NavigationBarItem(
+            selected = selectedTab == MainTab.Notes,
+            onClick = onOpenNotes,
+            icon = { Text("N", fontWeight = FontWeight.Bold) },
+            label = { Text(text.notesTab) },
+            modifier = Modifier.testTag("notes_tab"),
+        )
+        NavigationBarItem(
+            selected = selectedTab == MainTab.Premium,
+            onClick = onOpenPremium,
+            icon = { Text("P", fontWeight = FontWeight.Bold) },
+            label = { Text(text.premium) },
+            modifier = Modifier.testTag("premium_tab"),
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PremiumScreen(
+    text: UiText,
+    onOpenNotes: () -> Unit,
+) {
+    val context = LocalContext.current
+    var selectedPlan by remember { mutableStateOf(PremiumPlan.Annual) }
+
+    BackHandler(onBack = onOpenNotes)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(text.premium) },
+                navigationIcon = {
+                    TextButton(onClick = onOpenNotes) {
+                        Text(text.back)
+                    }
+                },
+            )
+        },
+        bottomBar = {
+            MainNavigationBar(
+                selectedTab = MainTab.Premium,
+                text = text,
+                onOpenNotes = onOpenNotes,
+                onOpenPremium = {},
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .testTag("premium_screen"),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            PremiumPlanRow(
+                title = text.premiumAnnual,
+                price = text.premiumAnnualPrice,
+                originalPrice = text.premiumAnnualOriginalPrice.takeIf { it.isNotBlank() },
+                selected = selectedPlan == PremiumPlan.Annual,
+                onClick = { selectedPlan = PremiumPlan.Annual },
+                modifier = Modifier.testTag("annual_plan_option"),
+            )
+            PremiumPlanRow(
+                title = text.premiumMonthly,
+                price = text.premiumMonthlyPrice,
+                originalPrice = null,
+                selected = selectedPlan == PremiumPlan.Monthly,
+                onClick = { selectedPlan = PremiumPlan.Monthly },
+                modifier = Modifier.testTag("monthly_plan_option"),
+            )
+            Button(
+                onClick = {
+                    Toast.makeText(context, text.premiumBillingUnavailable, Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("premium_subscribe_button"),
+            ) {
+                Text(text.premiumSubscribePending)
+            }
+            Text(
+                text = text.premiumTrial,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                text = text.premiumRenewal,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(
+                    text = text.privacyPolicy,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textDecoration = TextDecoration.Underline,
+                )
+                Text(
+                    text = text.termsOfService,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textDecoration = TextDecoration.Underline,
+                )
+            }
+            Text(
+                text = text.premiumFeatures,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+            PremiumFeature(
+                title = text.premiumFolders,
+                body = text.premiumFoldersBody,
+                sample = { PremiumFolderSample() },
+            )
+            PremiumFeature(
+                title = text.premiumTextFormatting,
+                body = text.premiumTextFormattingBody,
+                sample = { PremiumFormattingSample() },
+            )
+            PremiumFeature(
+                title = text.premiumIcons,
+                body = text.premiumIconsBody,
+                sample = { PremiumIconSample() },
+            )
+            PremiumFeature(
+                title = text.premiumGrammar,
+                body = text.premiumGrammarBody,
+            )
+            PremiumFeature(
+                title = text.premiumWritingAssistant,
+                body = text.premiumWritingAssistantBody,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PremiumPlanRow(
+    title: String,
+    price: String,
+    originalPrice: String?,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Column(horizontalAlignment = Alignment.End) {
+            originalPrice?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textDecoration = TextDecoration.LineThrough,
+                )
+            }
+            Text(text = price, style = MaterialTheme.typography.headlineSmall)
+        }
+    }
+}
+
+@Composable
+private fun PremiumFeature(
+    title: String,
+    body: String,
+    sample: @Composable (() -> Unit)? = null,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        sample?.invoke()
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun PremiumFolderSample() {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        PremiumFolderRow(
+            background = Color(0xFFFFF7A8),
+            accent = Color(0xFFEFD64A),
+            label = "Folder",
+        )
+        PremiumFolderRow(
+            background = Color(0xFFE9E9FF),
+            accent = Color(0xFF9DB3FF),
+            label = "Folder",
+        )
+    }
+}
+
+@Composable
+private fun PremiumFolderRow(
+    background: Color,
+    accent: Color,
+    label: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(background, RoundedCornerShape(8.dp))
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(text = "□", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = "0",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier
+                .background(accent, RoundedCornerShape(24.dp))
+                .padding(horizontal = 20.dp, vertical = 6.dp),
+        )
+    }
+}
+
+@Composable
+private fun PremiumFormattingSample() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFFFF7B8), RoundedCornerShape(4.dp))
+            .padding(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        listOf("H1", "H2", "B", "I", "U").forEach { label ->
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PremiumIconSample() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+            .padding(8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        listOf("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT").forEachIndexed { index, day ->
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(day, style = MaterialTheme.typography.bodySmall)
+                Text((index + 1).toString(), style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainScreen(
@@ -462,6 +776,7 @@ private fun MainScreen(
     onReminderFilterChange: (ReminderFilter) -> Unit,
     onQuickFilterChange: (NoteQuickFilter) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenPremium: () -> Unit,
     onCreateFolder: (String) -> Unit,
     onRenameFolder: (Long, String) -> Unit,
     onDeleteFolder: (Long) -> Unit,
@@ -545,6 +860,14 @@ private fun MainScreen(
                     },
                 )
             }
+        },
+        bottomBar = {
+            MainNavigationBar(
+                selectedTab = MainTab.Notes,
+                text = text,
+                onOpenNotes = {},
+                onOpenPremium = onOpenPremium,
+            )
         },
         floatingActionButton = {
             if (!isTrash && !isSelectionMode) {
@@ -805,12 +1128,14 @@ private fun SettingsScreen(
     lastOnlineSyncAt: Long?,
     lastOnlineRestoreAt: Long?,
     syncMetadata: SyncMetadata,
+    pendingRestoreRollback: PendingRestoreBackup?,
     viewModel: NotepadViewModel,
     onEditorFontSizeChange: (EditorFontSize) -> Unit,
     onOnlineSyncTargetChange: (String?) -> Unit,
     onOnlineSyncAutoOnStartChange: (Boolean) -> Unit,
     onOnlineSyncRecorded: () -> Unit,
     onOnlineRestoreRecorded: () -> Unit,
+    onPendingRestoreRollbackChange: (PendingRestoreBackup?) -> Unit,
     onOnlineSyncDisconnect: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -1128,6 +1453,43 @@ private fun SettingsScreen(
                     modifier = Modifier.testTag("last_restore_status"),
                 )
             }
+            pendingRestoreRollback?.let { rollback ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("restore_rollback_row"),
+                ) {
+                    Text(
+                        text = text.restoreRollbackAvailable,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                isRestoreInProgress = true
+                                try {
+                                    viewModel.importBackupData(rollback.data)
+                                    onPendingRestoreRollbackChange(null)
+                                    onOnlineRestoreRecorded()
+                                    Toast.makeText(context, text.restoreRollbackComplete, Toast.LENGTH_SHORT).show()
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, text.restoreRollbackFailed, Toast.LENGTH_SHORT).show()
+                                } finally {
+                                    isRestoreInProgress = false
+                                }
+                            }
+                        },
+                        enabled = !isBackupInProgress && !isRestoreInProgress,
+                        modifier = Modifier.testTag("restore_rollback_button"),
+                    ) {
+                        Text(text.undoRestore)
+                    }
+                }
+            }
             if (isBackupInProgress || isRestoreInProgress) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1235,7 +1597,16 @@ private fun SettingsScreen(
                 scope.launch {
                     isRestoreInProgress = true
                     try {
-                        viewModel.importBackupData(pendingRestore.data)
+                        val rollbackData = viewModel.importBackupDataWithRollbackCheckpoint(pendingRestore.data)
+                        onPendingRestoreRollbackChange(
+                            PendingRestoreBackup(
+                                data = rollbackData,
+                                preview = BackupPreview.from(
+                                    folders = rollbackData.folders,
+                                    notes = rollbackData.notes,
+                                ),
+                            ),
+                        )
                         onOnlineRestoreRecorded()
                         Toast.makeText(context, text.restoreComplete, Toast.LENGTH_SHORT).show()
                     } catch (_: Exception) {
@@ -4670,7 +5041,8 @@ private fun restoreBackupPreviewBody(
             appendLine("記事：${currentPreview.activeNoteCount} 筆一般，${currentPreview.deletedNoteCount} 筆${text.trash}")
             appendLine("資料夾：${currentPreview.folderCount} 個")
             appendLine()
-            append("還原會用這份備份取代目前所有本機記事與資料夾。")
+            appendLine("還原會用這份備份取代目前所有本機記事與資料夾。")
+            append("還原前會先建立一次性檢查點，還原後可在關閉 App 或再次還原前復原。")
         }
     } else {
         buildString {
@@ -4683,7 +5055,8 @@ private fun restoreBackupPreviewBody(
             appendLine("Notes: ${currentPreview.activeNoteCount} active, ${currentPreview.deletedNoteCount} in Trash")
             appendLine("Folders: ${currentPreview.folderCount}")
             appendLine()
-            append("Restoring will replace all current local notes and folders with this backup.")
+            appendLine("Restoring will replace all current local notes and folders with this backup.")
+            append("Just Notes will create a one-time checkpoint first, so you can undo this restore until the app closes or another restore runs.")
         }
     }
 }

@@ -1,6 +1,6 @@
 # Google Account Sync Setup
 
-True Google account sync now has Android-side implementation, but real account validation is blocked until the Google Cloud checklist is complete. The app must keep manual Drive file-picker backup separate from account sync.
+Google account sync now has Android-side implementation, but release readiness still depends on completing the Google Cloud checklist and validating the hardening cases below on real accounts/devices. The app must keep manual Drive file-picker backup separate from account sync.
 
 ## Current Phase 0 Findings
 

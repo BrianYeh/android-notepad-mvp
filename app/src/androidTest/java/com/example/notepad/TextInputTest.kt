@@ -511,6 +511,21 @@ class TextInputTest {
     }
 
     @Test
+    fun premiumTabShowsSubscriptionPreview() {
+        composeRule.onNodeWithTag("premium_tab").performClick()
+
+        composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
+        composeRule.onNodeWithTag("annual_plan_option").assertIsDisplayed()
+        composeRule.onNodeWithTag("monthly_plan_option").assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_subscribe_button").assertIsDisplayed()
+        assertEquals(0, composeRule.onAllNodesWithText("$480.00").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Start a 10-day free trial.").fetchSemanticsNodes().size)
+
+        composeRule.onNodeWithTag("notes_tab").performClick()
+        composeRule.onNodeWithTag("add_note_button").assertIsDisplayed()
+    }
+
+    @Test
     fun addMenuShowsOcrFromImageAction() {
         composeRule.onNodeWithTag("add_note_button").performClick()
         waitForTag("ocr_from_image_menu_item")
@@ -565,8 +580,9 @@ class TextInputTest {
 
     @Test
     fun searchFindsTextNoteContent() {
-        val title = "Searchable test note"
-        val contentNeedle = "content-needle-20260510"
+        val suffix = System.currentTimeMillis()
+        val title = "Searchable test note $suffix"
+        val contentNeedle = "content-needle-$suffix"
 
         openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_title")
@@ -620,9 +636,10 @@ class TextInputTest {
 
     @Test
     fun searchQuickFiltersAndRecentlyUpdatedWorkTogether() {
-        val textTitle = "Alpha knowledge note"
-        val textBody = "personal knowledge alpha body"
-        val drawingTitle = "Alpha sketch"
+        val suffix = System.currentTimeMillis()
+        val textTitle = "Alpha knowledge note $suffix"
+        val textBody = "personal knowledge alpha body $suffix"
+        val drawingTitle = "Alpha sketch $suffix"
 
         openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_title")
@@ -644,7 +661,7 @@ class TextInputTest {
         }
 
         composeRule.onNodeWithTag("recently_updated_chip").assertIsDisplayed().performClick()
-        composeRule.onNodeWithTag("note_search_input").performTextInput("alpha")
+        composeRule.onNodeWithTag("note_search_input").performTextInput(suffix.toString())
         composeRule.onNodeWithTag("quick_filter_Text").performScrollTo().performClick()
         composeRule.onNodeWithText(textTitle).assertIsDisplayed()
         composeRule.waitUntil(timeoutMillis = 5_000) {
