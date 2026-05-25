@@ -176,6 +176,37 @@ class TextInputTest {
     }
 
     @Test
+    fun checklistBlankAddedRowPersistsAfterImmediateBack() {
+        val suffix = System.currentTimeMillis()
+        val title = "Checklist blank row $suffix"
+
+        openAddMenuItem("new_checklist_note_menu_item")
+        waitForTag("checklist_note_title")
+
+        composeRule.onNodeWithTag("checklist_note_title")
+            .assertIsDisplayed()
+            .performTextInput(title)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithTag("add_checklist_item_button")
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(title).performClick()
+        waitForTag("checklist_editor")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("checklist_item_text").fetchSemanticsNodes().size == 2
+        }
+        assertEquals(2, composeRule.onAllNodesWithTag("checklist_item_text").fetchSemanticsNodes().size)
+    }
+
+    @Test
     fun settingsCanToggleHiddenReminderNotificationContent() {
         composeRule.onNodeWithTag("settings_button").performClick()
         waitForTag("hide_reminder_content_row")

@@ -4167,9 +4167,11 @@ private fun ChecklistEditorScreen(
         isSavingAndLeaving = true
         autoSaveVersion.incrementAndGet()
         keyboardController?.hide()
+        val titleToSave = title
+        val checklistJsonToSave = ChecklistJson.encode(items)
         scope.launch {
             saveStatus = SaveStatus.Saving
-            lastSavedAt = viewModel.saveChecklistNoteNow(noteId, title, checklistJson) ?: lastSavedAt
+            lastSavedAt = viewModel.saveChecklistNoteNow(noteId, titleToSave, checklistJsonToSave) ?: lastSavedAt
             saveStatus = SaveStatus.Saved
             onBack()
         }
