@@ -108,9 +108,25 @@ class NotepadRepository(
         )
     }
 
-    suspend fun saveTextNote(noteId: Long, title: String, content: String): Long? {
+    suspend fun saveTextNote(
+        noteId: Long,
+        title: String,
+        content: String,
+        textFormattingJson: String? = null,
+    ): Long? {
         val current = dao.getNote(noteId) ?: return null
-        if (current.title == title && current.textContent == content) return current.updatedAt
+        val nextFormatting = if (textFormattingJson == null) {
+            current.textFormattingJson
+        } else {
+            textFormattingJson.takeIf { it.isNotBlank() }
+        }
+        if (
+            current.title == title &&
+            current.textContent == content &&
+            current.textFormattingJson == nextFormatting
+        ) {
+            return current.updatedAt
+        }
         val now = System.currentTimeMillis()
 
         dao.updateNote(
@@ -118,6 +134,7 @@ class NotepadRepository(
                 title = title,
                 textContent = content,
                 drawingData = null,
+                textFormattingJson = nextFormatting,
                 updatedAt = now,
             ),
         )
@@ -304,6 +321,7 @@ class NotepadRepository(
                 isPinned = note.isPinned,
                 reminderAt = note.reminderAt,
                 reminderRepeat = normalizedReminderRepeat(note.reminderRepeat),
+                textFormattingJson = note.textFormattingJson,
             )
         } + tombstones.map { tombstone ->
             RemoteNote(
@@ -427,6 +445,7 @@ class NotepadRepository(
                 isPinned = remoteNote.isPinned,
                 reminderAt = remoteNote.reminderAt,
                 reminderRepeat = reminderRepeat,
+                textFormattingJson = if (type == NoteTypes.TEXT) remoteNote.textFormattingJson else null,
                 reminderSnoozeUntil = existingNote?.reminderSnoozeUntil?.takeIf {
                     preserveLocalReminderTransient
                 },
@@ -518,6 +537,7 @@ object SyncFingerprint {
                     note.type,
                     note.title,
                     note.textContent,
+                    note.textFormattingJson,
                     note.drawingData,
                     note.updatedAt,
                     note.deletedAt,

@@ -34,6 +34,7 @@ object SyncSnapshotJson {
                             .put("type", note.type)
                             .put("title", note.title)
                             .putNullable("textContent", note.textContent)
+                            .putNullable("textFormattingJson", note.textFormattingJson)
                             .putNullable("drawingData", note.drawingData)
                             .put("createdAt", note.createdAt)
                             .put("updatedAt", note.updatedAt)
@@ -115,6 +116,7 @@ object SyncSnapshotJson {
             },
             title = optionalString("title").orEmpty(),
             textContent = optionalString("textContent"),
+            textFormattingJson = optionalString("textFormattingJson"),
             drawingData = optionalString("drawingData"),
             createdAt = optLong("createdAt", 0L),
             updatedAt = optLong("updatedAt", 0L),

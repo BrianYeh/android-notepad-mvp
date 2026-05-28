@@ -511,15 +511,20 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun saveTextNote(noteId: Long, title: String, content: String) {
+    fun saveTextNote(noteId: Long, title: String, content: String, textFormattingJson: String? = null) {
         viewModelScope.launch {
-            repository.saveTextNote(noteId, title, content)
+            repository.saveTextNote(noteId, title, content, textFormattingJson)
             refreshWidgets()
         }
     }
 
-    suspend fun saveTextNoteNow(noteId: Long, title: String, content: String): Long? {
-        return repository.saveTextNote(noteId, title, content).also { refreshWidgets() }
+    suspend fun saveTextNoteNow(
+        noteId: Long,
+        title: String,
+        content: String,
+        textFormattingJson: String? = null,
+    ): Long? {
+        return repository.saveTextNote(noteId, title, content, textFormattingJson).also { refreshWidgets() }
     }
 
     fun saveDrawingNote(noteId: Long, title: String, drawingData: String) {

@@ -111,6 +111,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -166,9 +167,17 @@ import com.example.notepad.data.ReminderRepeat
 import com.example.notepad.data.SyncMetadata
 import com.example.notepad.data.SyncStatus
 import com.example.notepad.data.TextImportFile
+import com.example.notepad.data.TextFormatRange
+import com.example.notepad.data.TextFormatType
+import com.example.notepad.data.TextFormattingJson
+import com.example.notepad.data.adjustTextFormattingAfterEdit
 import com.example.notepad.data.defaultBatchExportFileName
+import com.example.notepad.data.currentLineRange
+import com.example.notepad.data.currentWordRange
 import com.example.notepad.data.normalizedReminderRepeat
+import com.example.notepad.data.normalizedFormatUrl
 import com.example.notepad.data.renderDrawingPng
+import com.example.notepad.data.selectedTextRange
 import com.example.notepad.viewmodel.NotepadViewModel
 import java.io.File
 import java.text.DateFormat
@@ -251,6 +260,28 @@ private enum class DrawingColorOption(val colorArgb: Int) {
     Blue(0xFF1E88E5.toInt()),
     Green(0xFF43A047.toInt()),
 }
+
+private fun formatHeading1Label(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "標題 1" else "H1"
+
+private fun formatHeading2Label(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "標題 2" else "H2"
+
+private fun formatHighlightLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "螢光標記" else "Highlight"
+
+private fun formatLinkLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "連結" else "Link"
+
+private fun clearFormattingLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "清除格式" else "Clear format"
+
+private fun formattingPremiumRequiredLabel(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) "文字格式是進階版功能。" else "Text formatting is a Premium feature."
+}
+
+private fun selectTextToFormatLabel(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) "請先選取要套用格式的文字。" else "Select text to format first."
+}
+
+private fun linkUrlLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "連結網址" else "Link URL"
+
+private fun applyLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "套用" else "Apply"
 
 @Composable
 fun LocalNotepadTheme(content: @Composable () -> Unit) {
@@ -356,6 +387,7 @@ fun NotepadApp(
     val appLanguage = rememberSystemAppLanguage()
     val text = remember(appLanguage) { uiTextFor(appLanguage) }
     val context = LocalContext.current
+    val billingState by viewModel.premiumBillingState.collectAsStateWithLifecycle()
     val onlineSyncTargetUri by viewModel.onlineSyncTargetUri.collectAsStateWithLifecycle()
     val onlineSyncAutoOnStart by viewModel.onlineSyncAutoOnStart.collectAsStateWithLifecycle()
     val hideReminderNotificationContent by viewModel.hideReminderNotificationContent.collectAsStateWithLifecycle()
@@ -520,7 +552,7 @@ fun NotepadApp(
 
         AppScreen.Premium -> PremiumScreen(
             text = text,
-            billingState = viewModel.premiumBillingState.collectAsStateWithLifecycle().value,
+            billingState = billingState,
             onSubscribe = { plan ->
                 val activity = context as? Activity
                 if (activity == null) {
@@ -539,8 +571,10 @@ fun NotepadApp(
             text = text,
             editorFontSize = editorFontSize,
             appLanguage = appLanguage,
+            billingState = billingState,
             isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
+            onOpenPremium = { screen = AppScreen.Premium },
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
         )
@@ -872,7 +906,7 @@ private fun PremiumFolderRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(text = "□", style = MaterialTheme.typography.headlineMedium)
+        PremiumFolderIcon()
         Text(
             text = label,
             style = MaterialTheme.typography.headlineSmall,
@@ -884,6 +918,28 @@ private fun PremiumFolderRow(
             modifier = Modifier
                 .background(accent, RoundedCornerShape(24.dp))
                 .padding(horizontal = 20.dp, vertical = 6.dp),
+        )
+    }
+}
+
+@Composable
+private fun PremiumFolderIcon() {
+    val color = MaterialTheme.colorScheme.onSurface
+    Canvas(modifier = Modifier.size(32.dp)) {
+        val strokeWidth = 2.5.dp.toPx()
+        val folderPath = Path().apply {
+            moveTo(size.width * 0.08f, size.height * 0.32f)
+            lineTo(size.width * 0.36f, size.height * 0.32f)
+            lineTo(size.width * 0.46f, size.height * 0.46f)
+            lineTo(size.width * 0.92f, size.height * 0.46f)
+            lineTo(size.width * 0.92f, size.height * 0.82f)
+            lineTo(size.width * 0.08f, size.height * 0.82f)
+            close()
+        }
+        drawPath(
+            path = folderPath,
+            color = color,
+            style = Stroke(width = strokeWidth, join = StrokeJoin.Round),
         )
     }
 }
@@ -2902,14 +2958,17 @@ private fun TextEditorScreen(
     text: UiText,
     editorFontSize: EditorFontSize,
     appLanguage: AppLanguage,
+    billingState: PremiumBillingState,
     isPrivacyLocked: Boolean,
     viewModel: NotepadViewModel,
+    onOpenPremium: () -> Unit,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
 ) {
     val note by viewModel.observeNote(noteId).collectAsStateWithLifecycle(initialValue = null)
     var title by remember(noteId) { mutableStateOf("") }
     var contentField by remember(noteId) { mutableStateOf(TextFieldValue("")) }
+    var formatRanges by remember(noteId) { mutableStateOf<List<TextFormatRange>>(emptyList()) }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var modeInitializedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var isEditing by remember(noteId) { mutableStateOf(false) }
@@ -2926,6 +2985,8 @@ private fun TextEditorScreen(
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
     var pendingExportText by remember { mutableStateOf<String?>(null) }
     var pendingReminderAt by remember { mutableStateOf<Long?>(null) }
+    var showLinkDialog by remember { mutableStateOf(false) }
+    var linkDraft by remember { mutableStateOf("") }
     var activeDatePickerDialog by remember { mutableStateOf<DatePickerDialog?>(null) }
     var activeTimePickerDialog by remember { mutableStateOf<TimePickerDialog?>(null) }
     var titleFocusRequest by remember(noteId) { mutableStateOf(0) }
@@ -2950,6 +3011,9 @@ private fun TextEditorScreen(
     val editCursorBottomPaddingPx = with(LocalDensity.current) { 56.dp.toPx() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val content = contentField.text
+    val textFormattingJson = remember(formatRanges, content) {
+        TextFormattingJson.encode(TextFormattingJson.sanitize(formatRanges, content.length)).orEmpty()
+    }
     val findMatches = remember(content, findQuery) { findInNoteMatches(content, findQuery) }
     val currentFindIndex = activeFindIndex.coerceIn(0, (findMatches.size - 1).coerceAtLeast(0))
 
@@ -2957,6 +3021,7 @@ private fun TextEditorScreen(
         if (isPrivacyLocked) {
             isMoreMenuExpanded = false
             showDeleteDialog = false
+            showLinkDialog = false
             activeDatePickerDialog?.dismiss()
             activeTimePickerDialog?.dismiss()
             activeDatePickerDialog = null
@@ -2998,6 +3063,7 @@ private fun TextEditorScreen(
         val loaded = note ?: return@LaunchedEffect
         title = loaded.title
         contentField = TextFieldValue(loaded.textContent.orEmpty())
+        formatRanges = TextFormattingJson.decode(loaded.textFormattingJson, loaded.textContent.orEmpty().length)
         loadedNoteId = loaded.id
         lastSavedAt = loaded.updatedAt
         saveStatus = SaveStatus.Saved
@@ -3036,10 +3102,14 @@ private fun TextEditorScreen(
         }
     }
 
-    LaunchedEffect(noteId, loadedNoteId, title, content) {
+    LaunchedEffect(noteId, loadedNoteId, title, content, textFormattingJson) {
         if (loadedNoteId == noteId) {
             val current = note ?: return@LaunchedEffect
-            if (title == current.title && content == current.textContent.orEmpty()) {
+            if (
+                title == current.title &&
+                content == current.textContent.orEmpty() &&
+                textFormattingJson == current.textFormattingJson.orEmpty()
+            ) {
                 saveStatus = SaveStatus.Saved
                 return@LaunchedEffect
             }
@@ -3047,7 +3117,7 @@ private fun TextEditorScreen(
             saveStatus = SaveStatus.Saving
             delay(500)
             if (pendingVersion != autoSaveVersion.get()) return@LaunchedEffect
-            lastSavedAt = viewModel.saveTextNoteNow(noteId, title, content) ?: System.currentTimeMillis()
+            lastSavedAt = viewModel.saveTextNoteNow(noteId, title, content, textFormattingJson) ?: System.currentTimeMillis()
             saveStatus = SaveStatus.Saved
         }
     }
@@ -3056,18 +3126,24 @@ private fun TextEditorScreen(
         currentNote: NoteEntity? = note,
         titleValue: String = title,
         contentValue: String = content,
+        formattingValue: String = textFormattingJson,
         loadedId: Long? = loadedNoteId,
     ): Boolean {
         val current = currentNote ?: return false
         return loadedId == noteId &&
-            (titleValue != current.title || contentValue != current.textContent.orEmpty())
+            (
+                titleValue != current.title ||
+                    contentValue != current.textContent.orEmpty() ||
+                    formattingValue != current.textFormattingJson.orEmpty()
+                )
     }
 
     fun savePendingTextNote() {
         val titleToSave = title
         val contentToSave = contentField.text
-        if (hasUnsavedTextNote(note, titleToSave, contentToSave, loadedNoteId)) {
-            viewModel.saveTextNote(noteId, titleToSave, contentToSave)
+        val formattingToSave = textFormattingJson
+        if (hasUnsavedTextNote(note, titleToSave, contentToSave, formattingToSave, loadedNoteId)) {
+            viewModel.saveTextNote(noteId, titleToSave, contentToSave, formattingToSave)
         }
     }
 
@@ -3090,10 +3166,11 @@ private fun TextEditorScreen(
         autoSaveVersion.incrementAndGet()
         val titleToSave = title
         val contentToSave = contentField.text
+        val formattingToSave = textFormattingJson
         keyboardController?.hide()
         scope.launch {
             saveStatus = SaveStatus.Saving
-            lastSavedAt = viewModel.saveTextNoteNow(noteId, titleToSave, contentToSave) ?: lastSavedAt
+            lastSavedAt = viewModel.saveTextNoteNow(noteId, titleToSave, contentToSave, formattingToSave) ?: lastSavedAt
             saveStatus = SaveStatus.Saved
             onBack()
         }
@@ -3190,10 +3267,11 @@ private fun TextEditorScreen(
         val currentNote = note ?: return
         val titleToSave = title
         val contentToSave = contentField.text
+        val formattingToSave = textFormattingJson
         autoSaveVersion.incrementAndGet()
         scope.launch {
             saveStatus = SaveStatus.Saving
-            val savedAt = viewModel.saveTextNoteNow(noteId, titleToSave, contentToSave) ?: currentNote.updatedAt
+            val savedAt = viewModel.saveTextNoteNow(noteId, titleToSave, contentToSave, formattingToSave) ?: currentNote.updatedAt
             lastSavedAt = savedAt
             saveStatus = SaveStatus.Saved
             onSaved(
@@ -3201,6 +3279,7 @@ private fun TextEditorScreen(
                     title = titleToSave,
                     textContent = contentToSave,
                     drawingData = null,
+                    textFormattingJson = formattingToSave.takeIf { it.isNotBlank() },
                     updatedAt = savedAt,
                 ),
             )
@@ -3307,12 +3386,96 @@ private fun TextEditorScreen(
             append(currentContent.substring(end))
         }
         autoSaveVersion.incrementAndGet()
+        formatRanges = adjustTextFormattingAfterEdit(
+            ranges = formatRanges,
+            oldText = currentContent,
+            newText = updatedContent,
+        )
         contentField = TextFieldValue(
             text = updatedContent,
             selection = TextRange(start + prefix.length),
         )
         contentFocusRequester.requestFocus()
         keyboardController?.show()
+    }
+
+    fun requirePremiumFormatting(): Boolean {
+        if (billingState.isPremium) return true
+        Toast.makeText(context, formattingPremiumRequiredLabel(appLanguage), Toast.LENGTH_SHORT).show()
+        onOpenPremium()
+        return false
+    }
+
+    fun selectedRangeForFormatting(preferLine: Boolean = false): IntRange? {
+        val selectedRange = selectedTextRange(
+            selectionStart = contentField.selection.start,
+            selectionEnd = contentField.selection.end,
+            textLength = contentField.text.length,
+        )
+        return when {
+            selectedRange != null -> selectedRange
+            preferLine -> currentLineRange(contentField.text, contentField.selection.max)
+            else -> currentWordRange(contentField.text, contentField.selection.max)
+        }
+    }
+
+    fun applyFormatting(type: TextFormatType) {
+        if (!requirePremiumFormatting()) return
+        val range = selectedRangeForFormatting(preferLine = type == TextFormatType.Heading1 || type == TextFormatType.Heading2)
+        if (range == null) {
+            Toast.makeText(context, selectTextToFormatLabel(appLanguage), Toast.LENGTH_SHORT).show()
+            return
+        }
+        autoSaveVersion.incrementAndGet()
+        formatRanges = TextFormattingJson.toggle(
+            ranges = formatRanges,
+            range = range,
+            type = type,
+            textLength = contentField.text.length,
+        )
+        contentFocusRequester.requestFocus()
+    }
+
+    fun clearFormatting() {
+        if (!requirePremiumFormatting()) return
+        val range = selectedRangeForFormatting(preferLine = true)
+        if (range == null) {
+            Toast.makeText(context, selectTextToFormatLabel(appLanguage), Toast.LENGTH_SHORT).show()
+            return
+        }
+        autoSaveVersion.incrementAndGet()
+        formatRanges = TextFormattingJson.clear(formatRanges, range, contentField.text.length)
+        contentFocusRequester.requestFocus()
+    }
+
+    fun prepareLinkFormatting() {
+        if (!requirePremiumFormatting()) return
+        val range = selectedRangeForFormatting()
+        if (range == null) {
+            Toast.makeText(context, selectTextToFormatLabel(appLanguage), Toast.LENGTH_SHORT).show()
+            return
+        }
+        linkDraft = ""
+        showLinkDialog = true
+    }
+
+    fun applyLinkFormatting(url: String) {
+        val normalizedUrl = normalizedFormatUrl(url)
+        val range = selectedRangeForFormatting()
+        if (normalizedUrl == null || range == null) {
+            Toast.makeText(context, selectTextToFormatLabel(appLanguage), Toast.LENGTH_SHORT).show()
+            return
+        }
+        autoSaveVersion.incrementAndGet()
+        formatRanges = TextFormattingJson.toggle(
+            ranges = formatRanges,
+            range = range,
+            type = TextFormatType.Link,
+            textLength = contentField.text.length,
+            url = normalizedUrl,
+        )
+        showLinkDialog = false
+        contentFocusRequester.requestFocus()
     }
 
     fun editTitleFromReadMode() {
@@ -3733,9 +3896,14 @@ private fun TextEditorScreen(
                     }
                     BasicTextField(
                         value = contentField,
-                        onValueChange = {
+                        onValueChange = { nextValue ->
                             autoSaveVersion.incrementAndGet()
-                            contentField = it
+                            formatRanges = adjustTextFormattingAfterEdit(
+                                ranges = formatRanges,
+                                oldText = contentField.text,
+                                newText = nextValue.text,
+                            )
+                            contentField = nextValue
                         },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -3746,6 +3914,9 @@ private fun TextEditorScreen(
                         visualTransformation = FindInNoteVisualTransformation(
                             query = findQuery,
                             activeMatchIndex = currentFindIndex,
+                            formattingRanges = formatRanges,
+                            linkColor = MaterialTheme.colorScheme.primary,
+                            formatHighlightColor = Color(0xFFFFF59D),
                             matchColor = MaterialTheme.colorScheme.tertiaryContainer,
                             activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
                         ),
@@ -3760,11 +3931,20 @@ private fun TextEditorScreen(
                     )
                 }
                 if (isCompactEditor) {
-                    TextEditorAccessoryBar(
-                        text = text,
-                        onInsertCheckbox = { insertIntoContent("- [ ] ") },
-                        onInsertBullet = { insertIntoContent("- ") },
-                        onHideKeyboard = {
+	                    TextEditorAccessoryBar(
+	                        text = text,
+	                        appLanguage = appLanguage,
+	                        onInsertCheckbox = { insertIntoContent("- [ ] ") },
+	                        onInsertBullet = { insertIntoContent("- ") },
+	                        onHeading1 = { applyFormatting(TextFormatType.Heading1) },
+	                        onHeading2 = { applyFormatting(TextFormatType.Heading2) },
+	                        onBold = { applyFormatting(TextFormatType.Bold) },
+	                        onItalic = { applyFormatting(TextFormatType.Italic) },
+	                        onUnderline = { applyFormatting(TextFormatType.Underline) },
+	                        onHighlight = { applyFormatting(TextFormatType.Highlight) },
+	                        onLink = ::prepareLinkFormatting,
+	                        onClearFormatting = ::clearFormatting,
+	                        onHideKeyboard = {
                             savePendingTextNote()
                             keyboardController?.hide()
                             focusManager.clearFocus()
@@ -3881,8 +4061,10 @@ private fun TextEditorScreen(
                                 value = content.ifBlank { text.content },
                                 query = findQuery,
                                 activeMatchIndex = currentFindIndex,
+                                formattingRanges = if (content.isBlank()) emptyList() else formatRanges,
                                 matchColor = MaterialTheme.colorScheme.tertiaryContainer,
                                 activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
+                                formatHighlightColor = Color(0xFFFFF59D),
                                 linkColor = MaterialTheme.colorScheme.primary,
                                 linkifyUrls = content.isNotBlank(),
                             )
@@ -3946,6 +4128,37 @@ private fun TextEditorScreen(
                 viewModel.deleteNote(noteId)
                 showDeleteDialog = false
                 onDeleted()
+            },
+        )
+    }
+
+    if (showLinkDialog && !isPrivacyLocked) {
+        AlertDialog(
+            onDismissRequest = { showLinkDialog = false },
+            title = { Text(formatLinkLabel(appLanguage)) },
+            text = {
+                OutlinedTextField(
+                    value = linkDraft,
+                    onValueChange = { linkDraft = it },
+                    label = { Text(linkUrlLabel(appLanguage)) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("format_link_url_input"),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { applyLinkFormatting(linkDraft) },
+                    modifier = Modifier.testTag("apply_link_format_button"),
+                ) {
+                    Text(applyLabel(appLanguage))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLinkDialog = false }) {
+                    Text(text.cancel)
+                }
             },
         )
     }
@@ -4032,8 +4245,17 @@ private fun FindInNoteBar(
 @Composable
 private fun TextEditorAccessoryBar(
     text: UiText,
+    appLanguage: AppLanguage,
     onInsertCheckbox: () -> Unit,
     onInsertBullet: () -> Unit,
+    onHeading1: () -> Unit,
+    onHeading2: () -> Unit,
+    onBold: () -> Unit,
+    onItalic: () -> Unit,
+    onUnderline: () -> Unit,
+    onHighlight: () -> Unit,
+    onLink: () -> Unit,
+    onClearFormatting: () -> Unit,
     onHideKeyboard: () -> Unit,
 ) {
     LazyRow(
@@ -4059,6 +4281,70 @@ private fun TextEditorAccessoryBar(
                 modifier = Modifier.testTag("quick_insert_bullet_button"),
             ) {
                 Text("- ${text.bulletItem}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        item {
+            TextButton(
+                onClick = onHeading1,
+                modifier = Modifier.testTag("format_heading_1_button"),
+            ) {
+                Text(formatHeading1Label(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        item {
+            TextButton(
+                onClick = onHeading2,
+                modifier = Modifier.testTag("format_heading_2_button"),
+            ) {
+                Text(formatHeading2Label(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        item {
+            TextButton(
+                onClick = onBold,
+                modifier = Modifier.testTag("format_bold_button"),
+            ) {
+                Text("B", fontWeight = FontWeight.Bold, maxLines = 1)
+            }
+        }
+        item {
+            TextButton(
+                onClick = onItalic,
+                modifier = Modifier.testTag("format_italic_button"),
+            ) {
+                Text("I", fontStyle = FontStyle.Italic, maxLines = 1)
+            }
+        }
+        item {
+            TextButton(
+                onClick = onUnderline,
+                modifier = Modifier.testTag("format_underline_button"),
+            ) {
+                Text("U", textDecoration = TextDecoration.Underline, maxLines = 1)
+            }
+        }
+        item {
+            TextButton(
+                onClick = onHighlight,
+                modifier = Modifier.testTag("format_highlight_button"),
+            ) {
+                Text(formatHighlightLabel(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        item {
+            TextButton(
+                onClick = onLink,
+                modifier = Modifier.testTag("format_link_button"),
+            ) {
+                Text(formatLinkLabel(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        item {
+            TextButton(
+                onClick = onClearFormatting,
+                modifier = Modifier.testTag("clear_formatting_button"),
+            ) {
+                Text(clearFormattingLabel(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         item {
@@ -5714,18 +6000,39 @@ fun findHighlightedLinkedText(
     value: String,
     query: String,
     activeMatchIndex: Int,
+    formattingRanges: List<TextFormatRange> = emptyList(),
     matchColor: Color,
     activeMatchColor: Color,
+    formatHighlightColor: Color = Color.Yellow,
     linkColor: Color,
     linkifyUrls: Boolean = true,
 ): AnnotatedString {
     val matches = findInNoteMatches(value, query)
     val urls = if (linkifyUrls) value.webUrlRanges() else emptyList()
-    if (matches.isEmpty() && urls.isEmpty()) return AnnotatedString(value)
+    val sanitizedFormats = TextFormattingJson.sanitize(formattingRanges, value.length)
+    if (matches.isEmpty() && urls.isEmpty() && sanitizedFormats.isEmpty()) return AnnotatedString(value)
 
     val activeIndex = activeMatchIndex.normalizeFindMatchIndex(matches.size)
     return buildAnnotatedString {
         append(value)
+        sanitizedFormats.forEach { formatRange ->
+            addStyle(
+                style = formatRange.spanStyle(
+                    linkColor = linkColor,
+                    highlightColor = formatHighlightColor,
+                ),
+                start = formatRange.start,
+                end = formatRange.end,
+            )
+            if (formatRange.type == TextFormatType.Link && !formatRange.url.isNullOrBlank()) {
+                addStringAnnotation(
+                    tag = WEB_URL_STRING_ANNOTATION_TAG,
+                    annotation = formatRange.url,
+                    start = formatRange.start,
+                    end = formatRange.end,
+                )
+            }
+        }
         matches.forEachIndexed { index, range ->
             addStyle(
                 SpanStyle(
@@ -5752,6 +6059,18 @@ fun findHighlightedLinkedText(
                 end = urlRange.range.last + 1,
             )
         }
+    }
+}
+
+private fun TextFormatRange.spanStyle(linkColor: Color, highlightColor: Color): SpanStyle {
+    return when (type) {
+        TextFormatType.Bold -> SpanStyle(fontWeight = FontWeight.Bold)
+        TextFormatType.Italic -> SpanStyle(fontStyle = FontStyle.Italic)
+        TextFormatType.Underline -> SpanStyle(textDecoration = TextDecoration.Underline)
+        TextFormatType.Highlight -> SpanStyle(background = highlightColor)
+        TextFormatType.Link -> SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
+        TextFormatType.Heading1 -> SpanStyle(fontWeight = FontWeight.Bold, fontSize = 24.sp)
+        TextFormatType.Heading2 -> SpanStyle(fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
     }
 }
 
@@ -5985,29 +6304,24 @@ private suspend fun ScrollState.scrollCursorIntoView(
 private class FindInNoteVisualTransformation(
     private val query: String,
     private val activeMatchIndex: Int,
+    private val formattingRanges: List<TextFormatRange> = emptyList(),
+    private val linkColor: Color,
+    private val formatHighlightColor: Color,
     private val matchColor: Color,
     private val activeMatchColor: Color,
 ) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
-        val matches = findInNoteMatches(text.text, query)
-        if (matches.isEmpty()) {
-            return TransformedText(text, OffsetMapping.Identity)
-        }
-
-        val activeIndex = activeMatchIndex.normalizeFindMatchIndex(matches.size)
-        val annotated = buildAnnotatedString {
-            append(text.text)
-            matches.forEachIndexed { index, range ->
-                addStyle(
-                    SpanStyle(
-                        background = if (index == activeIndex) activeMatchColor else matchColor,
-                        fontWeight = if (index == activeIndex) FontWeight.Bold else null,
-                    ),
-                    start = range.first,
-                    end = range.last + 1,
-                )
-            }
-        }
+        val annotated = findHighlightedLinkedText(
+            value = text.text,
+            query = query,
+            activeMatchIndex = activeMatchIndex,
+            formattingRanges = formattingRanges,
+            matchColor = matchColor,
+            activeMatchColor = activeMatchColor,
+            formatHighlightColor = formatHighlightColor,
+            linkColor = linkColor,
+            linkifyUrls = false,
+        )
         return TransformedText(annotated, OffsetMapping.Identity)
     }
 }

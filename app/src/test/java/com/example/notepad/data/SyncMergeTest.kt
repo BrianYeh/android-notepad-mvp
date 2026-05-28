@@ -24,6 +24,35 @@ class SyncMergeTest {
     }
 
     @Test
+    fun formattingDifferenceCreatesConflictCopyForConcurrentEdits() {
+        val localFormatting = """[{"start":0,"end":5,"type":"BOLD"}]"""
+        val remoteFormatting = """[{"start":0,"end":5,"type":"HIGHLIGHT"}]"""
+        val local = snapshot(
+            deviceId = "local",
+            notes = listOf(
+                note(syncId = "note-1", title = "Same", updatedAt = 20L, textFormattingJson = localFormatting),
+            ),
+        )
+        val remote = snapshot(
+            deviceId = "remote",
+            notes = listOf(
+                note(syncId = "note-1", title = "Same", updatedAt = 21L, textFormattingJson = remoteFormatting),
+            ),
+        )
+
+        val result = SyncMerge.mergeSnapshots(
+            local = local,
+            remote = remote,
+            now = 30L,
+            conflictModifiedAfterMillis = 10L,
+            conflictSyncIdFactory = { "conflict-$it" },
+        )
+
+        assertEquals(remoteFormatting, result.snapshot.notes.first { it.syncId == "note-1" }.textFormattingJson)
+        assertEquals(localFormatting, result.conflictCopies.single().textFormattingJson)
+    }
+
+    @Test
     fun newerTombstonePreventsDeletedNoteFromBeingRevived() {
         val local = snapshot(
             deviceId = "local",
@@ -351,6 +380,7 @@ class SyncMergeTest {
         updatedAt: Long,
         deletedAt: Long? = null,
         purged: Boolean = false,
+        textFormattingJson: String? = null,
     ): RemoteNote {
         return RemoteNote(
             syncId = syncId,
@@ -363,6 +393,7 @@ class SyncMergeTest {
             updatedAt = updatedAt,
             deletedAt = deletedAt,
             purged = purged,
+            textFormattingJson = textFormattingJson,
         )
     }
 }

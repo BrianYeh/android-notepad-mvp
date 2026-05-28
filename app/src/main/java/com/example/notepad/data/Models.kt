@@ -106,6 +106,7 @@ data class NoteEntity(
     val reminderRepeat: String = ReminderRepeat.None.code,
     val reminderSnoozeUntil: Long? = null,
     val activeReminderFiredAt: Long? = null,
+    val textFormattingJson: String? = null,
 )
 
 @Entity(tableName = "note_tombstones")

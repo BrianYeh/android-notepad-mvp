@@ -120,6 +120,45 @@ class SyncSnapshotJsonTest {
     }
 
     @Test
+    fun encodedFormattedTextSnapshotUsesFormattingCompatibleVersion() {
+        val device = SyncDevice(deviceId = "device-1", deviceName = "Pixel")
+        val formattingJson = TextFormattingJson.encode(
+            listOf(TextFormatRange(start = 0, end = 4, type = TextFormatType.Bold)),
+        )
+        val snapshot = RemoteSyncSnapshot(
+            exportedAt = 30L,
+            sourceDevice = device,
+            folders = listOf(
+                RemoteFolder(
+                    syncId = DEFAULT_FOLDER_SYNC_ID,
+                    name = DEFAULT_FOLDER_NAME,
+                    createdAt = 1L,
+                    updatedAt = 2L,
+                ),
+            ),
+            notes = listOf(
+                RemoteNote(
+                    syncId = "note-text",
+                    folderSyncId = DEFAULT_FOLDER_SYNC_ID,
+                    type = NoteTypes.TEXT,
+                    title = "Title",
+                    textContent = "Body",
+                    drawingData = null,
+                    createdAt = 3L,
+                    updatedAt = 4L,
+                    textFormattingJson = formattingJson,
+                ),
+            ),
+        )
+
+        val encoded = SyncSnapshotJson.encode(snapshot)
+        val decoded = SyncSnapshotJson.decode(encoded)
+
+        assertTrue(encoded.contains("\"formatVersion\":4"))
+        assertEquals(formattingJson, decoded.notes.single().textFormattingJson)
+    }
+
+    @Test
     fun encodedRecurringReminderSnapshotUsesRepeatCompatibleVersion() {
         val device = SyncDevice(deviceId = "device-1", deviceName = "Pixel")
         val snapshot = RemoteSyncSnapshot(

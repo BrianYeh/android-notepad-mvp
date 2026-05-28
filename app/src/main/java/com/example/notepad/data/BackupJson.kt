@@ -38,7 +38,7 @@ data class BackupPreview(
 }
 
 object BackupJson {
-    private const val VERSION = 6
+    private const val VERSION = 7
 
     fun encode(folders: List<FolderEntity>, notes: List<NoteEntity>): String {
         return JSONObject()
@@ -68,6 +68,7 @@ object BackupJson {
                             .put("type", note.type)
                             .put("title", note.title)
                             .putNullable("textContent", note.textContent)
+                            .putNullable("textFormattingJson", note.textFormattingJson)
                             .putNullable("drawingData", note.drawingData)
                             .put("createdAt", note.createdAt)
                             .put("updatedAt", note.updatedAt)
@@ -170,6 +171,11 @@ object BackupJson {
                 } else {
                     null
                 },
+                textFormattingJson = if (type == NoteTypes.TEXT) {
+                    noteJson.optionalString("textFormattingJson")
+                } else {
+                    null
+                },
                 drawingData = if (type == NoteTypes.DRAWING) {
                     noteJson.optionalString("drawingData") ?: "[]"
                 } else {
@@ -204,6 +210,7 @@ object BackupJson {
 
     private fun backupVersionFor(notes: List<NoteEntity>): Int {
         return when {
+            notes.any { !it.textFormattingJson.isNullOrBlank() } -> 7
             notes.any { normalizedReminderRepeat(it.reminderRepeat) != ReminderRepeat.None.code } -> 6
             notes.any { it.type == NoteTypes.CHECKLIST } -> 5
             else -> 4

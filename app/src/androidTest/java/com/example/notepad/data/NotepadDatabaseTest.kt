@@ -186,6 +186,9 @@ class NotepadDatabaseTest {
                 createdAt = 3L,
                 updatedAt = 3L,
                 reminderAt = 10_000L,
+                textFormattingJson = TextFormattingJson.encode(
+                    listOf(TextFormatRange(start = 0, end = 5, type = TextFormatType.Bold)),
+                ),
             ),
         )
         val originalFolderSyncId = dao.getFolder(folderId)?.syncId
@@ -218,6 +221,10 @@ class NotepadDatabaseTest {
         assertEquals(noteId, dao.getAllNotes().single().id)
         assertEquals(originalNoteSyncId, dao.getAllNotes().single().syncId)
         assertEquals("Draft", dao.getAllNotes().single().textContent)
+        assertEquals(
+            listOf(TextFormatRange(start = 0, end = 5, type = TextFormatType.Bold)),
+            TextFormattingJson.decode(dao.getAllNotes().single().textFormattingJson, textLength = 5),
+        )
         assertEquals(10_000L, dao.getAllNotes().single().reminderAt)
     }
 

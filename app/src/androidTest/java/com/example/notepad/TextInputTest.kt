@@ -134,6 +134,24 @@ class TextInputTest {
     }
 
     @Test
+    fun textFormattingControlsRouteNonPremiumUsersToPremium() {
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_content")
+
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .performTextInput("Format me")
+        composeRule.onNodeWithTag("format_heading_1_button")
+            .assertIsDisplayed()
+            .performClick()
+
+        waitForTag("premium_screen")
+        composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
+        composeRule.onNodeWithTag("notes_tab").performClick()
+        waitForTag("add_note_button")
+    }
+
+    @Test
     fun checklistNoteCanAddCheckAndPersistItems() {
         val suffix = System.currentTimeMillis()
         val title = "Checklist $suffix"

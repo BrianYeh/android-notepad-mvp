@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [FolderEntity::class, NoteEntity::class, NoteTombstoneEntity::class],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class NotepadDatabase : RoomDatabase() {
@@ -26,7 +26,14 @@ abstract class NotepadDatabase : RoomDatabase() {
                     NotepadDatabase::class.java,
                     "local_notepad.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6,
+                        MIGRATION_6_7,
+                    )
                     .build()
                     .also { instance = it }
             }
@@ -74,6 +81,12 @@ abstract class NotepadDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE notes ADD COLUMN reminderRepeat TEXT NOT NULL DEFAULT 'NONE'")
                 db.execSQL("ALTER TABLE notes ADD COLUMN reminderSnoozeUntil INTEGER")
                 db.execSQL("ALTER TABLE notes ADD COLUMN activeReminderFiredAt INTEGER")
+            }
+        }
+
+        internal val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE notes ADD COLUMN textFormattingJson TEXT")
             }
         }
     }

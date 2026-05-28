@@ -3,10 +3,11 @@ package com.example.notepad.data
 import java.util.UUID
 import kotlin.math.abs
 
-const val REMOTE_SYNC_SNAPSHOT_VERSION = 3
+const val REMOTE_SYNC_SNAPSHOT_VERSION = 4
 
 fun remoteSyncSnapshotVersionFor(notes: List<RemoteNote>): Int {
     return when {
+        notes.any { !it.textFormattingJson.isNullOrBlank() } -> 4
         notes.any { normalizedReminderRepeat(it.reminderRepeat) != ReminderRepeat.None.code } -> 3
         notes.any { it.type == NoteTypes.CHECKLIST } -> 2
         else -> 1
@@ -95,6 +96,7 @@ data class RemoteNote(
     val reminderAt: Long? = null,
     val reminderRepeat: String = ReminderRepeat.None.code,
     val purged: Boolean = false,
+    val textFormattingJson: String? = null,
 )
 
 interface DriveSyncClient {
@@ -336,6 +338,7 @@ object SyncMerge {
             type == other.type &&
             title == other.title &&
             textContent == other.textContent &&
+            textFormattingJson == other.textFormattingJson &&
             drawingData == other.drawingData &&
             isPinned == other.isPinned &&
             reminderAt == other.reminderAt &&
@@ -440,6 +443,7 @@ object RemoteSnapshotConsolidator {
             type == other.type &&
             title == other.title &&
             textContent == other.textContent &&
+            textFormattingJson == other.textFormattingJson &&
             drawingData == other.drawingData &&
             isPinned == other.isPinned &&
             reminderAt == other.reminderAt &&
@@ -459,6 +463,7 @@ object RemoteSnapshotConsolidator {
             type,
             title,
             textContent,
+            textFormattingJson,
             drawingData,
             isPinned,
             reminderAt,
