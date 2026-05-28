@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -26,6 +27,7 @@ import com.example.notepad.data.DEFAULT_FOLDER_ID
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
 import com.example.notepad.data.ReminderRepeat
+import com.example.notepad.debug.DebugPremiumAccess
 import com.example.notepad.ui.cursorScrollTarget
 import com.example.notepad.ui.drawingExportCanvasSizePx
 import com.example.notepad.ui.drawingRequiredCanvasHeightPx
@@ -41,6 +43,9 @@ import com.example.notepad.ui.webUrlAt
 import com.example.notepad.ui.webUrlRanges
 import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -53,6 +58,16 @@ import java.util.Calendar
 class TextInputTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
+
+    @Before
+    fun resetDebugPremiumOverride() {
+        DebugPremiumAccess.write(composeRule.activity, false)
+    }
+
+    @After
+    fun clearDebugPremiumOverride() {
+        DebugPremiumAccess.write(composeRule.activity, false)
+    }
 
     private fun waitForTag(tag: String) {
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -72,6 +87,13 @@ class TextInputTest {
         composeRule.onNodeWithTag("add_note_button").performClick()
         waitForTag(menuItemTag)
         composeRule.onNodeWithTag(menuItemTag).performClick()
+    }
+
+    private fun debugPremiumSwitchState(): ToggleableState? {
+        return composeRule.onNodeWithTag("debug_premium_switch")
+            .fetchSemanticsNode()
+            .config
+            .getOrNull(SemanticsProperties.ToggleableState)
     }
 
     private fun exitInitialDrawingFocusModeIfNeeded() {
@@ -149,6 +171,59 @@ class TextInputTest {
         composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
         composeRule.onNodeWithTag("notes_tab").performClick()
         waitForTag("add_note_button")
+    }
+
+    @Test
+    fun debugPremiumSwitchUnlocksTextFormattingWithoutSubscription() {
+        val body = "Debug format body ${System.currentTimeMillis()}"
+
+        composeRule.onNodeWithTag("settings_button").performClick()
+        composeRule.onNodeWithTag("debug_premium_section").assertIsDisplayed()
+        composeRule.onNodeWithTag("debug_premium_switch").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            debugPremiumSwitchState() == ToggleableState.On
+        }
+        assertTrue(DebugPremiumAccess.read(composeRule.activity))
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        waitForTag("add_note_button")
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_content")
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .performTextInput(body)
+        composeRule.onNodeWithTag("format_heading_1_button")
+            .assertIsDisplayed()
+            .performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("premium_screen").fetchSemanticsNodes().isEmpty() &&
+                composeRule.onAllNodesWithTag("text_note_content").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getAllNotes()
+                        .any { note ->
+                            note.textContent == body &&
+                                note.textFormattingJson?.contains("HEADING_1") == true
+                        }
+                }
+            }
+        }
+        val formattedNote = runBlocking {
+            withContext(Dispatchers.IO) {
+                NotepadDatabase.getInstance(composeRule.activity)
+                    .notepadDao()
+                    .getAllNotes()
+                    .first { note -> note.textContent == body }
+            }
+        }
+        assertTrue(formattedNote.textFormattingJson?.contains("HEADING_1") == true)
     }
 
     @Test

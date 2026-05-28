@@ -68,6 +68,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -282,6 +283,22 @@ private fun selectTextToFormatLabel(language: AppLanguage): String {
 private fun linkUrlLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "連結網址" else "Link URL"
 
 private fun applyLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "套用" else "Apply"
+
+private fun developerToolsLabel(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) "開發者工具" else "Developer tools"
+}
+
+private fun debugPremiumOverrideLabel(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) "開啟付費功能測試" else "Unlock premium feature gates"
+}
+
+private fun debugPremiumOverrideBody(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) {
+        "僅限 debug 版，不會變更真實訂閱狀態。"
+    } else {
+        "Debug build only. Does not change purchase status."
+    }
+}
 
 @Composable
 fun LocalNotepadTheme(content: @Composable () -> Unit) {
@@ -536,6 +553,8 @@ fun NotepadApp(
             lastOnlineSyncAt = lastOnlineSyncAt,
             lastOnlineRestoreAt = lastOnlineRestoreAt,
             syncMetadata = syncMetadata,
+            billingState = billingState,
+            debugPremiumToolsAvailable = viewModel.debugPremiumToolsAvailable,
             restoreRollbackCheckpoint = restoreRollbackCheckpoint,
             isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
@@ -544,6 +563,7 @@ fun NotepadApp(
             onRequireDeviceUnlockChange = viewModel::setRequireDeviceUnlock,
             onOnlineSyncTargetChange = viewModel::setOnlineSyncTargetUri,
             onOnlineSyncAutoOnStartChange = viewModel::setOnlineSyncAutoOnStart,
+            onDebugPremiumOverrideChange = viewModel::setDebugPremiumOverride,
             onOnlineSyncRecorded = { viewModel.recordOnlineSync() },
             onOnlineRestoreRecorded = { viewModel.recordOnlineRestore() },
             onOnlineSyncDisconnect = viewModel::disconnectOnlineSync,
@@ -1414,6 +1434,8 @@ private fun SettingsScreen(
     lastOnlineSyncAt: Long?,
     lastOnlineRestoreAt: Long?,
     syncMetadata: SyncMetadata,
+    billingState: PremiumBillingState,
+    debugPremiumToolsAvailable: Boolean,
     restoreRollbackCheckpoint: DecodedBackup?,
     isPrivacyLocked: Boolean,
     viewModel: NotepadViewModel,
@@ -1422,6 +1444,7 @@ private fun SettingsScreen(
     onRequireDeviceUnlockChange: (Boolean) -> Unit,
     onOnlineSyncTargetChange: (String?) -> Unit,
     onOnlineSyncAutoOnStartChange: (Boolean) -> Unit,
+    onDebugPremiumOverrideChange: (Boolean) -> Unit,
     onOnlineSyncRecorded: () -> Unit,
     onOnlineRestoreRecorded: () -> Unit,
     onOnlineSyncDisconnect: () -> Unit,
@@ -1650,6 +1673,36 @@ private fun SettingsScreen(
                 text = text,
                 onEditorFontSizeChange = onEditorFontSizeChange,
             )
+            if (debugPremiumToolsAvailable) {
+                HorizontalDivider()
+                Text(
+                    text = developerToolsLabel(appLanguage),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.testTag("debug_premium_section"),
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = debugPremiumOverrideLabel(appLanguage),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text(
+                            text = debugPremiumOverrideBody(appLanguage),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = billingState.debugPremiumOverride,
+                        onCheckedChange = onDebugPremiumOverrideChange,
+                        modifier = Modifier.testTag("debug_premium_switch"),
+                    )
+                }
+            }
             HorizontalDivider()
             Text(
                 text = text.privacy,
@@ -3400,7 +3453,7 @@ private fun TextEditorScreen(
     }
 
     fun requirePremiumFormatting(): Boolean {
-        if (billingState.isPremium) return true
+        if (billingState.hasPremiumAccess) return true
         Toast.makeText(context, formattingPremiumRequiredLabel(appLanguage), Toast.LENGTH_SHORT).show()
         onOpenPremium()
         return false

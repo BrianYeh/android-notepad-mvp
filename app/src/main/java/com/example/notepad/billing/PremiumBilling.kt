@@ -24,12 +24,16 @@ enum class PremiumPlan(val productId: String) {
 
 data class PremiumBillingState(
     val isPremium: Boolean = false,
+    val debugPremiumOverride: Boolean = false,
     val billingAvailable: Boolean = false,
     val loading: Boolean = true,
     val monthlyPrice: String? = null,
     val annualPrice: String? = null,
     val lastError: String? = null,
-)
+) {
+    val hasPremiumAccess: Boolean
+        get() = isPremium || debugPremiumOverride
+}
 
 class PremiumBilling(
     private val application: Application,

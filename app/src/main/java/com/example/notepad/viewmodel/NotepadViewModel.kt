@@ -37,6 +37,7 @@ import com.example.notepad.data.SyncStatus
 import com.example.notepad.data.TextImportFile
 import com.example.notepad.data.buildSharedNoteTitle
 import com.example.notepad.data.normalizedReminderRepeat
+import com.example.notepad.debug.DebugPremiumAccess
 import com.example.notepad.ocr.MlKitOcrTextRecognizer
 import com.example.notepad.ocr.OcrNoteResult
 import com.example.notepad.ocr.OcrNoteUseCase
@@ -106,6 +107,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     val onlineSyncTargetUri: StateFlow<String?> = _onlineSyncTargetUri
     private val _onlineSyncAutoOnStart = MutableStateFlow(preferences.getBoolean("online_sync_auto_on_start", false))
     val onlineSyncAutoOnStart: StateFlow<Boolean> = _onlineSyncAutoOnStart
+    val debugPremiumToolsAvailable: Boolean = DebugPremiumAccess.isAvailable
     private val _lastOnlineSyncAt = MutableStateFlow(
         preferences.getLong("last_online_sync_at", 0L).takeIf { it > 0L },
     )
@@ -132,6 +134,14 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     )
     val syncMetadata: StateFlow<SyncMetadata> = _syncMetadata
     val premiumBillingState = premiumBilling.state
+        .combine(DebugPremiumAccess.observe(application)) { billingState, debugPremiumOverride ->
+            billingState.copy(debugPremiumOverride = debugPremiumOverride)
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = premiumBilling.state.value.copy(debugPremiumOverride = DebugPremiumAccess.read(application)),
+        )
     private val _isRecognizingText = MutableStateFlow(false)
     val isRecognizingText: StateFlow<Boolean> = _isRecognizingText
 
@@ -196,6 +206,11 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun launchPremiumPurchase(activity: Activity, plan: PremiumPlan): Boolean {
         return premiumBilling.launchPurchase(activity, plan)
+    }
+
+    fun setDebugPremiumOverride(enabled: Boolean) {
+        if (!DebugPremiumAccess.isAvailable) return
+        DebugPremiumAccess.write(getApplication(), enabled)
     }
 
     override fun onCleared() {
