@@ -19,6 +19,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.em
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
@@ -27,6 +28,9 @@ import com.example.notepad.data.DEFAULT_FOLDER_ID
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
 import com.example.notepad.data.ReminderRepeat
+import com.example.notepad.data.TextFormatRange
+import com.example.notepad.data.TextFormatType
+import com.example.notepad.data.TextFormattingJson
 import com.example.notepad.debug.DebugPremiumAccess
 import com.example.notepad.ui.cursorScrollTarget
 import com.example.notepad.ui.drawingExportCanvasSizePx
@@ -84,9 +88,24 @@ class TextInputTest {
     }
 
     private fun openAddMenuItem(menuItemTag: String) {
+        waitForTag("add_note_button")
         composeRule.onNodeWithTag("add_note_button").performClick()
         waitForTag(menuItemTag)
         composeRule.onNodeWithTag(menuItemTag).performClick()
+    }
+
+    private fun openSearchPanel() {
+        if (composeRule.onAllNodesWithTag("note_search_input").fetchSemanticsNodes().isEmpty()) {
+            composeRule.onNodeWithTag("search_tab").performClick()
+            waitForTag("note_search_input")
+        }
+    }
+
+    private fun openFilterPanel() {
+        if (composeRule.onAllNodesWithTag("recently_updated_chip").fetchSemanticsNodes().isEmpty()) {
+            composeRule.onNodeWithTag("filter_panel_toggle").performClick()
+            waitForTag("recently_updated_chip")
+        }
     }
 
     private fun debugPremiumSwitchState(): ToggleableState? {
@@ -227,6 +246,129 @@ class TextInputTest {
     }
 
     @Test
+    fun highlightLinkAndClearFormattingPersistThroughEditor() {
+        val suffix = System.currentTimeMillis()
+        val title = "Format full $suffix"
+        val body = "example.com"
+        DebugPremiumAccess.write(composeRule.activity, true)
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_title")
+        composeRule.onNodeWithTag("text_note_title").performTextInput(title)
+        composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().performTextInput(body)
+        composeRule.onNodeWithTag("format_highlight_button").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("format_link_button").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("format_link_url_input").assertIsDisplayed().performTextInput("example.com/docs")
+        composeRule.onNodeWithTag("apply_link_format_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getAllNotes()
+                        .any { note ->
+                            val ranges = TextFormattingJson.decode(note.textFormattingJson, note.textContent.orEmpty().length)
+                            note.title == title &&
+                                note.textContent == body &&
+                                ranges.any { it.type == TextFormatType.Highlight } &&
+                                ranges.any { it.type == TextFormatType.Link && it.url == "https://example.com/docs" }
+                        }
+                }
+            }
+        }
+        val formattedNote = runBlocking {
+            withContext(Dispatchers.IO) {
+                NotepadDatabase.getInstance(composeRule.activity)
+                    .notepadDao()
+                    .getAllNotes()
+                    .first { note -> note.title == title && note.textContent == body }
+            }
+        }
+        val formattedText = findHighlightedLinkedText(
+            value = formattedNote.textContent.orEmpty(),
+            query = "",
+            activeMatchIndex = 0,
+            formattingRanges = TextFormattingJson.decode(formattedNote.textFormattingJson, formattedNote.textContent.orEmpty().length),
+            matchColor = Color.Yellow,
+            activeMatchColor = Color.Green,
+            linkColor = Color.Blue,
+            linkifyUrls = false,
+        )
+        assertEquals("https://example.com/docs", formattedText.webUrlAt(0))
+
+        composeRule.onNodeWithTag("clear_formatting_button").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getAllNotes()
+                        .firstOrNull { note -> note.title == title && note.textContent == body }
+                        ?.textFormattingJson
+                        .isNullOrBlank()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun headingFormattingPersistsAfterLeavingAndReopeningNote() {
+        val suffix = System.currentTimeMillis()
+        val title = "Heading persist $suffix"
+        val body = "Heading line $suffix"
+        DebugPremiumAccess.write(composeRule.activity, true)
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_title")
+        composeRule.onNodeWithTag("text_note_title").performTextInput(title)
+        composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().performTextInput(body)
+        composeRule.onNodeWithTag("format_heading_1_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("add_note_button").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(title).performClick()
+        waitForTag("text_note_read_content")
+        composeRule.onNodeWithTag("text_note_read_content").assertTextContains(body)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getAllNotes()
+                        .any { note ->
+                            note.title == title &&
+                                note.textContent == body &&
+                                note.textFormattingJson?.contains("HEADING_1") == true
+                        }
+                }
+            }
+        }
+        val reopenedNote = runBlocking {
+            withContext(Dispatchers.IO) {
+                NotepadDatabase.getInstance(composeRule.activity)
+                    .notepadDao()
+                    .getAllNotes()
+                    .first { note -> note.title == title && note.textContent == body }
+            }
+        }
+        val reopenedReadText = findHighlightedLinkedText(
+            value = reopenedNote.textContent.orEmpty(),
+            query = "",
+            activeMatchIndex = 0,
+            formattingRanges = TextFormattingJson.decode(reopenedNote.textFormattingJson, reopenedNote.textContent.orEmpty().length),
+            matchColor = Color.Yellow,
+            activeMatchColor = Color.Green,
+            linkColor = Color.Blue,
+            linkifyUrls = false,
+        )
+        val reopenedHeadingStyle = reopenedReadText.spanStyles.first { it.start == 0 && it.end == body.length }.item
+        assertEquals(1.35f.em, reopenedHeadingStyle.fontSize)
+    }
+
+    @Test
     fun checklistNoteCanAddCheckAndPersistItems() {
         val suffix = System.currentTimeMillis()
         val title = "Checklist $suffix"
@@ -257,6 +399,7 @@ class TextInputTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
+        openSearchPanel()
         composeRule.onNodeWithText(title).assertIsDisplayed()
         composeRule.onNodeWithTag("note_search_input").performTextInput(secondItem)
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -342,6 +485,7 @@ class TextInputTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
+        openFilterPanel()
         composeRule.onNodeWithTag("calendar_view_chip").performClick()
         composeRule.onNodeWithTag("reminder_calendar").assertIsDisplayed()
         composeRule.onNodeWithTag("calendar_selected_day_count").performScrollTo().assertIsDisplayed()
@@ -481,6 +625,36 @@ class TextInputTest {
         assertEquals("https://example.com/docs", annotated.webUrlAt(urlStart + 10))
         assertEquals(null, annotated.webUrlAt(content.indexOf("Visit")))
         assertEquals(null, annotated.webUrlAt(content.length))
+    }
+
+    @Test
+    fun headingFormattingUsesRelativeFontScale() {
+        val heading1Content = "Heading body"
+        val heading1 = findHighlightedLinkedText(
+            value = heading1Content,
+            query = "",
+            activeMatchIndex = 0,
+            formattingRanges = listOf(TextFormatRange(0, 7, TextFormatType.Heading1)),
+            matchColor = Color.Yellow,
+            activeMatchColor = Color.Green,
+            linkColor = Color.Blue,
+            linkifyUrls = false,
+        )
+        val heading2 = findHighlightedLinkedText(
+            value = heading1Content,
+            query = "",
+            activeMatchIndex = 0,
+            formattingRanges = listOf(TextFormatRange(0, 7, TextFormatType.Heading2)),
+            matchColor = Color.Yellow,
+            activeMatchColor = Color.Green,
+            linkColor = Color.Blue,
+            linkifyUrls = false,
+        )
+
+        val heading1Style = heading1.spanStyles.first { it.start == 0 && it.end == 7 }.item
+        val heading2Style = heading2.spanStyles.first { it.start == 0 && it.end == 7 }.item
+        assertEquals(1.35f.em, heading1Style.fontSize)
+        assertEquals(1.18f.em, heading2Style.fontSize)
     }
 
     @Test
@@ -667,6 +841,29 @@ class TextInputTest {
     }
 
     @Test
+    fun findInNoteOpensFromOverflowMenu() {
+        val suffix = System.currentTimeMillis()
+        val title = "Find menu title $suffix"
+        val body = "menu search target"
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_title")
+        composeRule.onNodeWithTag("text_note_title").performTextInput(title)
+        composeRule.onNodeWithTag("text_note_content").performTextInput(body)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("more_note_button").performClick()
+        composeRule.onNodeWithTag("find_in_note_menu_item").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("find_in_note_input").assertIsDisplayed().performTextInput("target")
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/1")
+    }
+
+    @Test
     fun findInNoteNextScrollsReadViewportAndNavigatesEditMatches() {
         val suffix = System.currentTimeMillis()
         val title = "Find scroll title $suffix"
@@ -754,6 +951,13 @@ class TextInputTest {
         composeRule.onNodeWithTag("annual_plan_option").assertIsDisplayed()
         composeRule.onNodeWithTag("monthly_plan_option").assertIsDisplayed()
         composeRule.onNodeWithTag("premium_subscribe_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_format_sample_h1").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_format_sample_h2").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_format_sample_bold").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_format_sample_italic").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_format_sample_underline").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_format_sample_link").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_format_sample_highlight").performScrollTo().assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("$480.00").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Start a 10-day free trial.").fetchSemanticsNodes().size)
 
@@ -831,6 +1035,7 @@ class TextInputTest {
             composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
 
+        openSearchPanel()
         composeRule.onNodeWithTag("note_search_input")
             .performTextInput("missing-needle-20260510")
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -896,7 +1101,9 @@ class TextInputTest {
             composeRule.onAllNodesWithText(drawingTitle).fetchSemanticsNodes().isNotEmpty()
         }
 
+        openFilterPanel()
         composeRule.onNodeWithTag("recently_updated_chip").assertIsDisplayed().performClick()
+        openSearchPanel()
         composeRule.onNodeWithTag("note_search_input").performTextInput(suffix.toString())
         composeRule.onNodeWithTag("quick_filter_Text").performScrollTo().performClick()
         composeRule.onNodeWithText(textTitle).assertIsDisplayed()

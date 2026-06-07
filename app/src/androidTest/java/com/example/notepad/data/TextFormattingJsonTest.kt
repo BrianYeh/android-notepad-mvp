@@ -34,6 +34,11 @@ class TextFormattingJsonTest {
     }
 
     @Test
+    fun decodeMalformedFormattingJsonFallsBackToEmptyRanges() {
+        assertEquals(emptyList<TextFormatRange>(), TextFormattingJson.decode("not json", textLength = 8))
+    }
+
+    @Test
     fun toggleSubrangePreservesSameTypeFormattingAroundSelection() {
         val ranges = listOf(TextFormatRange(start = 0, end = 10, type = TextFormatType.Bold))
 

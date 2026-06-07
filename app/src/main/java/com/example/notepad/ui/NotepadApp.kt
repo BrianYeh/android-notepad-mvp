@@ -49,6 +49,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -62,6 +64,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -110,6 +113,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
@@ -128,6 +132,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
@@ -228,6 +233,7 @@ private enum class SaveStatus {
 
 private enum class MainTab {
     Notes,
+    Search,
     Premium,
 }
 
@@ -271,6 +277,18 @@ private fun formatHighlightLabel(language: AppLanguage): String = if (language =
 private fun formatLinkLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "連結" else "Link"
 
 private fun clearFormattingLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "清除格式" else "Clear format"
+
+private fun formatBoldLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "粗體" else "Bold"
+
+private fun formatItalicLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "斜體" else "Italic"
+
+private fun formatUnderlineLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "底線" else "Underline"
+
+private fun findInNoteActionLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "搜尋" else "Find"
+
+private fun homeFiltersLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "篩選" else "Filters"
+
+private fun hideHomeFiltersLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "收合" else "Hide"
 
 private fun formattingPremiumRequiredLabel(language: AppLanguage): String {
     return if (language == AppLanguage.TraditionalChinese) "文字格式是進階版功能。" else "Text formatting is a Premium feature."
@@ -673,6 +691,7 @@ private fun MainNavigationBar(
     selectedTab: MainTab,
     text: UiText,
     onOpenNotes: () -> Unit,
+    onOpenSearch: (() -> Unit)? = null,
     onOpenPremium: () -> Unit,
 ) {
     NavigationBar {
@@ -683,6 +702,15 @@ private fun MainNavigationBar(
             label = { Text(text.notesTab) },
             modifier = Modifier.testTag("notes_tab"),
         )
+        if (onOpenSearch != null) {
+            NavigationBarItem(
+                selected = selectedTab == MainTab.Search,
+                onClick = onOpenSearch,
+                icon = { Icon(Icons.Filled.Search, contentDescription = text.search) },
+                label = { Text(text.search) },
+                modifier = Modifier.testTag("search_tab"),
+            )
+        }
         NavigationBarItem(
             selected = selectedTab == MainTab.Premium,
             onClick = onOpenPremium,
@@ -966,21 +994,85 @@ private fun PremiumFolderIcon() {
 
 @Composable
 private fun PremiumFormattingSample() {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFFFFF7B8), RoundedCornerShape(4.dp))
-            .padding(10.dp),
-        horizontalArrangement = Arrangement.spacedBy(18.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .testTag("premium_formatting_sample"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        listOf("H1", "H2", "B", "I", "U").forEach { label ->
-            Text(
-                text = label,
-                style = MaterialTheme.typography.titleMedium,
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PremiumFormatSampleText(
+                label = "H1",
+                modifier = Modifier.testTag("premium_format_sample_h1"),
                 fontWeight = FontWeight.Bold,
+            )
+            PremiumFormatSampleText(
+                label = "H2",
+                modifier = Modifier.testTag("premium_format_sample_h2"),
+                fontWeight = FontWeight.SemiBold,
+            )
+            PremiumFormatSampleText(
+                label = "B",
+                modifier = Modifier.testTag("premium_format_sample_bold"),
+                fontWeight = FontWeight.Bold,
+            )
+            PremiumFormatSampleText(
+                label = "I",
+                modifier = Modifier.testTag("premium_format_sample_italic"),
+                fontStyle = FontStyle.Italic,
+            )
+            PremiumFormatSampleText(
+                label = "U",
+                modifier = Modifier.testTag("premium_format_sample_underline"),
+                textDecoration = TextDecoration.Underline,
+            )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PremiumFormatSampleText(
+                label = "Link",
+                modifier = Modifier.testTag("premium_format_sample_link"),
+                color = MaterialTheme.colorScheme.primary,
+                textDecoration = TextDecoration.Underline,
+            )
+            PremiumFormatSampleText(
+                label = "Highlight",
+                modifier = Modifier
+                    .background(Color(0xFFFFF59D), RoundedCornerShape(3.dp))
+                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                    .testTag("premium_format_sample_highlight"),
+                fontWeight = FontWeight.SemiBold,
             )
         }
     }
+}
+
+@Composable
+private fun PremiumFormatSampleText(
+    label: String,
+    modifier: Modifier = Modifier,
+    fontWeight: FontWeight? = null,
+    fontStyle: FontStyle? = null,
+    textDecoration: TextDecoration? = null,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = fontWeight,
+        fontStyle = fontStyle,
+        textDecoration = textDecoration,
+        color = color,
+        modifier = modifier,
+        maxLines = 1,
+    )
 }
 
 @Composable
@@ -1051,10 +1143,18 @@ private fun MainScreen(
     var selectedNoteIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var selectedNotesToDelete by remember { mutableStateOf<Set<Long>?>(null) }
     var contentView by remember { mutableStateOf(MainContentView.List) }
+    var isSearchVisible by remember { mutableStateOf(searchQuery.isNotBlank()) }
+    var searchFocusRequest by remember { mutableStateOf(0) }
+    var areFiltersExpanded by remember { mutableStateOf(false) }
     val selectedFolder = folders.firstOrNull { it.id == selectedFolderId }
     val isTrash = listMode == NoteListMode.Trash
     val isSelectionMode = selectedNoteIds.isNotEmpty()
     val visibleNoteIds = remember(notes) { notes.map { it.id }.toSet() }
+    val hasActiveFilterPanel = quickFilter != NoteQuickFilter.All ||
+        sortOption != NoteSortOption.UpdatedAt ||
+        (!isTrash && contentView != MainContentView.List)
+    val shouldShowSearchBar = isSearchVisible || searchQuery.isNotBlank()
+    val shouldShowFilterPanel = areFiltersExpanded
     fun clearNoteSelection() {
         selectedNoteIds = emptySet()
         selectedNotesToDelete = null
@@ -1070,6 +1170,7 @@ private fun MainScreen(
             noteToDelete = null
             noteToPermanentlyDelete = null
             selectedNotesToDelete = null
+            areFiltersExpanded = false
         }
     }
 
@@ -1085,7 +1186,21 @@ private fun MainScreen(
         if (isTrash) contentView = MainContentView.List
     }
 
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isNotBlank()) isSearchVisible = true
+    }
+
+    LaunchedEffect(hasActiveFilterPanel) {
+        if (hasActiveFilterPanel) areFiltersExpanded = true
+    }
+
+    fun closeSearch() {
+        onSearchQueryChange("")
+        isSearchVisible = false
+    }
+
     BackHandler(enabled = isSelectionMode, onBack = ::clearNoteSelection)
+    BackHandler(enabled = shouldShowSearchBar && !isSelectionMode, onBack = ::closeSearch)
 
     Scaffold(
         topBar = {
@@ -1130,9 +1245,13 @@ private fun MainScreen(
         },
         bottomBar = {
             MainNavigationBar(
-                selectedTab = MainTab.Notes,
+                selectedTab = if (shouldShowSearchBar) MainTab.Search else MainTab.Notes,
                 text = text,
-                onOpenNotes = {},
+                onOpenNotes = ::closeSearch,
+                onOpenSearch = {
+                    isSearchVisible = true
+                    searchFocusRequest += 1
+                },
                 onOpenPremium = onOpenPremium,
             )
         },
@@ -1227,35 +1346,40 @@ private fun MainScreen(
                     )
                 }
 
-                SearchBar(
-                    searchQuery = searchQuery,
+                if (shouldShowSearchBar) {
+                    SearchBar(
+                        searchQuery = searchQuery,
+                        text = text,
+                        focusRequest = searchFocusRequest,
+                        onSearchQueryChange = onSearchQueryChange,
+                        onDismissSearch = ::closeSearch,
+                    )
+                }
+
+                HomeHeaderSummaryRow(
+                    resultCount = notes.size,
                     text = text,
-                    onSearchQueryChange = onSearchQueryChange,
+                    appLanguage = appLanguage,
+                    filtersExpanded = shouldShowFilterPanel,
+                    onToggleFilters = { areFiltersExpanded = !areFiltersExpanded },
                 )
 
-                NoteFilterRow(
-                    sortOption = sortOption,
-                    quickFilter = quickFilter,
-                    contentView = contentView,
-                    text = text,
-                    isPrivacyLocked = isPrivacyLocked,
-                    showCalendarView = !isTrash,
-                    onSortOptionChange = onSortOptionChange,
-                    onQuickFilterChange = onQuickFilterChange,
-                    onContentViewChange = { view ->
-                        contentView = view
-                        clearNoteSelection()
-                    },
-                )
-
-                Text(
-                    text = text.resultCount(notes.size),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .testTag("note_result_count"),
-                )
+                if (shouldShowFilterPanel) {
+                    NoteFilterRow(
+                        sortOption = sortOption,
+                        quickFilter = quickFilter,
+                        contentView = contentView,
+                        text = text,
+                        isPrivacyLocked = isPrivacyLocked,
+                        showCalendarView = !isTrash,
+                        onSortOptionChange = onSortOptionChange,
+                        onQuickFilterChange = onQuickFilterChange,
+                        onContentViewChange = { view ->
+                            contentView = view
+                            clearNoteSelection()
+                        },
+                    )
+                }
 
                 HorizontalDivider()
             }
@@ -2311,6 +2435,43 @@ private fun NoteFilterRow(
 }
 
 @Composable
+private fun HomeHeaderSummaryRow(
+    resultCount: Int,
+    text: UiText,
+    appLanguage: AppLanguage,
+    filtersExpanded: Boolean,
+    onToggleFilters: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = text.resultCount(resultCount),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .weight(1f)
+                .testTag("note_result_count"),
+        )
+        TextButton(
+            onClick = onToggleFilters,
+            modifier = Modifier.testTag("filter_panel_toggle"),
+        ) {
+            val label = if (filtersExpanded) {
+                hideHomeFiltersLabel(appLanguage)
+            } else {
+                homeFiltersLabel(appLanguage)
+            }
+            Text(label)
+        }
+    }
+}
+
+@Composable
 private fun SortSelector(
     sortOption: NoteSortOption,
     text: UiText,
@@ -2439,30 +2600,44 @@ private fun ReminderFilterSelector(
 private fun SearchBar(
     searchQuery: String,
     text: UiText,
+    focusRequest: Int,
     onSearchQueryChange: (String) -> Unit,
+    onDismissSearch: () -> Unit,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(focusRequest) {
+        if (focusRequest > 0) focusRequester.requestFocus()
+    }
 
     OutlinedTextField(
         value = searchQuery,
         onValueChange = onSearchQueryChange,
-        label = { Text(text.search) },
         placeholder = { Text(text.searchPlaceholder) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         keyboardActions = KeyboardActions(
             onSearch = { keyboardController?.hide() },
         ),
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
         trailingIcon = {
-            if (searchQuery.isNotEmpty()) {
-                TextButton(onClick = { onSearchQueryChange("") }) {
-                    Text(text.clear)
-                }
+            TextButton(
+                onClick = {
+                    if (searchQuery.isNotEmpty()) {
+                        onSearchQueryChange("")
+                    } else {
+                        onDismissSearch()
+                    }
+                },
+            ) {
+                Text(if (searchQuery.isNotEmpty()) text.clear else text.cancel)
             }
         },
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .focusRequester(focusRequester)
             .testTag("note_search_input"),
     )
 }
@@ -3040,6 +3215,7 @@ private fun TextEditorScreen(
     var pendingReminderAt by remember { mutableStateOf<Long?>(null) }
     var showLinkDialog by remember { mutableStateOf(false) }
     var linkDraft by remember { mutableStateOf("") }
+    var pendingLinkRange by remember { mutableStateOf<IntRange?>(null) }
     var activeDatePickerDialog by remember { mutableStateOf<DatePickerDialog?>(null) }
     var activeTimePickerDialog by remember { mutableStateOf<TimePickerDialog?>(null) }
     var titleFocusRequest by remember(noteId) { mutableStateOf(0) }
@@ -3064,8 +3240,15 @@ private fun TextEditorScreen(
     val editCursorBottomPaddingPx = with(LocalDensity.current) { 56.dp.toPx() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val content = contentField.text
+    fun encodedTextFormattingJson(
+        ranges: List<TextFormatRange> = formatRanges,
+        textLength: Int = contentField.text.length,
+    ): String {
+        return TextFormattingJson.encode(TextFormattingJson.sanitize(ranges, textLength)).orEmpty()
+    }
+
     val textFormattingJson = remember(formatRanges, content) {
-        TextFormattingJson.encode(TextFormattingJson.sanitize(formatRanges, content.length)).orEmpty()
+        encodedTextFormattingJson(formatRanges, content.length)
     }
     val findMatches = remember(content, findQuery) { findInNoteMatches(content, findQuery) }
     val currentFindIndex = activeFindIndex.coerceIn(0, (findMatches.size - 1).coerceAtLeast(0))
@@ -3075,6 +3258,7 @@ private fun TextEditorScreen(
             isMoreMenuExpanded = false
             showDeleteDialog = false
             showLinkDialog = false
+            pendingLinkRange = null
             activeDatePickerDialog?.dismiss()
             activeTimePickerDialog?.dismiss()
             activeDatePickerDialog = null
@@ -3179,7 +3363,7 @@ private fun TextEditorScreen(
         currentNote: NoteEntity? = note,
         titleValue: String = title,
         contentValue: String = content,
-        formattingValue: String = textFormattingJson,
+        formattingValue: String = encodedTextFormattingJson(textLength = contentValue.length),
         loadedId: Long? = loadedNoteId,
     ): Boolean {
         val current = currentNote ?: return false
@@ -3194,7 +3378,7 @@ private fun TextEditorScreen(
     fun savePendingTextNote() {
         val titleToSave = title
         val contentToSave = contentField.text
-        val formattingToSave = textFormattingJson
+        val formattingToSave = encodedTextFormattingJson(textLength = contentToSave.length)
         if (hasUnsavedTextNote(note, titleToSave, contentToSave, formattingToSave, loadedNoteId)) {
             viewModel.saveTextNote(noteId, titleToSave, contentToSave, formattingToSave)
         }
@@ -3219,7 +3403,7 @@ private fun TextEditorScreen(
         autoSaveVersion.incrementAndGet()
         val titleToSave = title
         val contentToSave = contentField.text
-        val formattingToSave = textFormattingJson
+        val formattingToSave = encodedTextFormattingJson(textLength = contentToSave.length)
         keyboardController?.hide()
         scope.launch {
             saveStatus = SaveStatus.Saving
@@ -3320,7 +3504,7 @@ private fun TextEditorScreen(
         val currentNote = note ?: return
         val titleToSave = title
         val contentToSave = contentField.text
-        val formattingToSave = textFormattingJson
+        val formattingToSave = encodedTextFormattingJson(textLength = contentToSave.length)
         autoSaveVersion.incrementAndGet()
         scope.launch {
             saveStatus = SaveStatus.Saving
@@ -3509,12 +3693,13 @@ private fun TextEditorScreen(
             return
         }
         linkDraft = ""
+        pendingLinkRange = range
         showLinkDialog = true
     }
 
     fun applyLinkFormatting(url: String) {
         val normalizedUrl = normalizedFormatUrl(url)
-        val range = selectedRangeForFormatting()
+        val range = pendingLinkRange ?: selectedRangeForFormatting()
         if (normalizedUrl == null || range == null) {
             Toast.makeText(context, selectTextToFormatLabel(appLanguage), Toast.LENGTH_SHORT).show()
             return
@@ -3528,6 +3713,7 @@ private fun TextEditorScreen(
             url = normalizedUrl,
         )
         showLinkDialog = false
+        pendingLinkRange = null
         contentFocusRequester.requestFocus()
     }
 
@@ -3578,6 +3764,7 @@ private fun TextEditorScreen(
 
     val currentNote = note
     val isCompactEditor = isEditing && (isFocusWriting || isContentFocused)
+    val findActionLabel = findInNoteActionLabel(appLanguage)
 
     BackHandler(onBack = ::saveAndBack)
 
@@ -3627,10 +3814,15 @@ private fun TextEditorScreen(
                         }
                     }
                     TextButton(
-                        onClick = { isFindVisible = true },
-                        modifier = Modifier.testTag("find_in_note_button"),
+                        onClick = {
+                            isMoreMenuExpanded = false
+                            isFindVisible = true
+                        },
+                        modifier = Modifier
+                            .semantics { contentDescription = text.findInNote }
+                            .testTag("find_in_note_button"),
                     ) {
-                        Text(text.findInNote.take(4), maxLines = 1)
+                        Text(findActionLabel, maxLines = 1)
                     }
                     Box {
                         TextButton(
@@ -3648,6 +3840,14 @@ private fun TextEditorScreen(
                             modifier = Modifier.testTag("text_note_overflow_menu"),
                         ) {
                             currentNote?.let { loaded ->
+                                DropdownMenuItem(
+                                    text = { Text(text.findInNote) },
+                                    modifier = Modifier.testTag("find_in_note_menu_item"),
+                                    onClick = {
+                                        isMoreMenuExpanded = false
+                                        isFindVisible = true
+                                    },
+                                )
                                 DropdownMenuItem(
                                     text = { Text(text.share) },
                                     modifier = Modifier.testTag("share_text_note_menu_item"),
@@ -4187,7 +4387,10 @@ private fun TextEditorScreen(
 
     if (showLinkDialog && !isPrivacyLocked) {
         AlertDialog(
-            onDismissRequest = { showLinkDialog = false },
+            onDismissRequest = {
+                showLinkDialog = false
+                pendingLinkRange = null
+            },
             title = { Text(formatLinkLabel(appLanguage)) },
             text = {
                 OutlinedTextField(
@@ -4209,7 +4412,12 @@ private fun TextEditorScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showLinkDialog = false }) {
+                TextButton(
+                    onClick = {
+                        showLinkDialog = false
+                        pendingLinkRange = null
+                    },
+                ) {
                     Text(text.cancel)
                 }
             },
@@ -4311,103 +4519,136 @@ private fun TextEditorAccessoryBar(
     onClearFormatting: () -> Unit,
     onHideKeyboard: () -> Unit,
 ) {
-    LazyRow(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(NOTE_PAPER_SURFACE, RoundedCornerShape(8.dp))
+            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 8.dp, vertical = 6.dp)
             .testTag("text_editor_accessory_bar"),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        item {
-            TextButton(
-                onClick = onInsertCheckbox,
-                modifier = Modifier.testTag("quick_insert_checkbox_button"),
-            ) {
-                Text("[ ] ${text.checkboxItem}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+        TextEditorToolbarButton(
+            label = "[ ]",
+            contentDescription = text.checkboxItem,
+            onClick = onInsertCheckbox,
+            testTag = "quick_insert_checkbox_button",
+            width = 64.dp,
+        )
+        TextEditorToolbarButton(
+            label = "-",
+            contentDescription = text.bulletItem,
+            onClick = onInsertBullet,
+            testTag = "quick_insert_bullet_button",
+        )
+        TextEditorToolbarButton(
+            label = formatHeading1Label(appLanguage),
+            contentDescription = formatHeading1Label(appLanguage),
+            onClick = onHeading1,
+            testTag = "format_heading_1_button",
+            width = 56.dp,
+            fontWeight = FontWeight.Bold,
+        )
+        TextEditorToolbarButton(
+            label = formatHeading2Label(appLanguage),
+            contentDescription = formatHeading2Label(appLanguage),
+            onClick = onHeading2,
+            testTag = "format_heading_2_button",
+            width = 56.dp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        TextEditorToolbarButton(
+            label = "B",
+            contentDescription = formatBoldLabel(appLanguage),
+            onClick = onBold,
+            testTag = "format_bold_button",
+            fontWeight = FontWeight.Bold,
+        )
+        TextEditorToolbarButton(
+            label = "I",
+            contentDescription = formatItalicLabel(appLanguage),
+            onClick = onItalic,
+            testTag = "format_italic_button",
+            fontStyle = FontStyle.Italic,
+        )
+        TextEditorToolbarButton(
+            label = "U",
+            contentDescription = formatUnderlineLabel(appLanguage),
+            onClick = onUnderline,
+            testTag = "format_underline_button",
+            textDecoration = TextDecoration.Underline,
+        )
+        TextEditorToolbarButton(
+            label = "HL",
+            contentDescription = formatHighlightLabel(appLanguage),
+            onClick = onHighlight,
+            testTag = "format_highlight_button",
+            fontWeight = FontWeight.SemiBold,
+            highlight = true,
+        )
+        TextEditorToolbarButton(
+            label = formatLinkLabel(appLanguage),
+            contentDescription = formatLinkLabel(appLanguage),
+            onClick = onLink,
+            testTag = "format_link_button",
+            width = 64.dp,
+            color = MaterialTheme.colorScheme.primary,
+            textDecoration = TextDecoration.Underline,
+        )
+        TextEditorToolbarButton(
+            label = "Tx",
+            contentDescription = clearFormattingLabel(appLanguage),
+            onClick = onClearFormatting,
+            testTag = "clear_formatting_button",
+            width = 56.dp,
+        )
+        TextButton(
+            onClick = onHideKeyboard,
+            modifier = Modifier.testTag("hide_keyboard_button"),
+        ) {
+            Text(text.hideKeyboard, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        item {
-            TextButton(
-                onClick = onInsertBullet,
-                modifier = Modifier.testTag("quick_insert_bullet_button"),
-            ) {
-                Text("- ${text.bulletItem}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        item {
-            TextButton(
-                onClick = onHeading1,
-                modifier = Modifier.testTag("format_heading_1_button"),
-            ) {
-                Text(formatHeading1Label(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        item {
-            TextButton(
-                onClick = onHeading2,
-                modifier = Modifier.testTag("format_heading_2_button"),
-            ) {
-                Text(formatHeading2Label(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        item {
-            TextButton(
-                onClick = onBold,
-                modifier = Modifier.testTag("format_bold_button"),
-            ) {
-                Text("B", fontWeight = FontWeight.Bold, maxLines = 1)
-            }
-        }
-        item {
-            TextButton(
-                onClick = onItalic,
-                modifier = Modifier.testTag("format_italic_button"),
-            ) {
-                Text("I", fontStyle = FontStyle.Italic, maxLines = 1)
-            }
-        }
-        item {
-            TextButton(
-                onClick = onUnderline,
-                modifier = Modifier.testTag("format_underline_button"),
-            ) {
-                Text("U", textDecoration = TextDecoration.Underline, maxLines = 1)
-            }
-        }
-        item {
-            TextButton(
-                onClick = onHighlight,
-                modifier = Modifier.testTag("format_highlight_button"),
-            ) {
-                Text(formatHighlightLabel(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        item {
-            TextButton(
-                onClick = onLink,
-                modifier = Modifier.testTag("format_link_button"),
-            ) {
-                Text(formatLinkLabel(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        item {
-            TextButton(
-                onClick = onClearFormatting,
-                modifier = Modifier.testTag("clear_formatting_button"),
-            ) {
-                Text(clearFormattingLabel(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        item {
-            TextButton(
-                onClick = onHideKeyboard,
-                modifier = Modifier.testTag("hide_keyboard_button"),
-            ) {
-                Text(text.hideKeyboard, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
+    }
+}
+
+@Composable
+private fun TextEditorToolbarButton(
+    label: String,
+    contentDescription: String,
+    onClick: () -> Unit,
+    testTag: String,
+    width: androidx.compose.ui.unit.Dp = 48.dp,
+    fontWeight: FontWeight? = null,
+    fontStyle: FontStyle? = null,
+    textDecoration: TextDecoration? = null,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    highlight: Boolean = false,
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier
+            .width(width)
+            .semantics { this.contentDescription = contentDescription }
+            .testTag(testTag),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+    ) {
+        Text(
+            text = label,
+            fontWeight = fontWeight,
+            fontStyle = fontStyle,
+            textDecoration = textDecoration,
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = if (highlight) {
+                Modifier
+                    .background(Color(0xFFFFF59D), RoundedCornerShape(3.dp))
+                    .padding(horizontal = 3.dp, vertical = 1.dp)
+            } else {
+                Modifier
+            },
+        )
     }
 }
 
@@ -6122,8 +6363,8 @@ private fun TextFormatRange.spanStyle(linkColor: Color, highlightColor: Color): 
         TextFormatType.Underline -> SpanStyle(textDecoration = TextDecoration.Underline)
         TextFormatType.Highlight -> SpanStyle(background = highlightColor)
         TextFormatType.Link -> SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
-        TextFormatType.Heading1 -> SpanStyle(fontWeight = FontWeight.Bold, fontSize = 24.sp)
-        TextFormatType.Heading2 -> SpanStyle(fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+        TextFormatType.Heading1 -> SpanStyle(fontWeight = FontWeight.Bold, fontSize = 1.35f.em)
+        TextFormatType.Heading2 -> SpanStyle(fontWeight = FontWeight.SemiBold, fontSize = 1.18f.em)
     }
 }
 
