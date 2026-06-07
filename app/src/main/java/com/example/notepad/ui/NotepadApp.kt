@@ -278,6 +278,10 @@ private fun formatLinkLabel(language: AppLanguage): String = if (language == App
 
 private fun clearFormattingLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "清除格式" else "Clear format"
 
+private fun formattingPremiumEntryLabel(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) "文字格式進階版" else "Text formatting Premium"
+}
+
 private fun formatBoldLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "粗體" else "Bold"
 
 private fun formatItalicLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "斜體" else "Italic"
@@ -292,6 +296,22 @@ private fun hideHomeFiltersLabel(language: AppLanguage): String = if (language =
 
 private fun formattingPremiumRequiredLabel(language: AppLanguage): String {
     return if (language == AppLanguage.TraditionalChinese) "文字格式是進階版功能。" else "Text formatting is a Premium feature."
+}
+
+private fun setReminderActionLabel(text: UiText, hasPremiumAccess: Boolean): String {
+    return if (hasPremiumAccess) text.setReminder else "${text.setReminder} (${text.premium})"
+}
+
+private fun importExportTitleLabel(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) "匯入／匯出" else "Import / Export"
+}
+
+private fun importExportHintLabel(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) {
+        "以文字檔或 ZIP 封存移動記事。這是本機檔案匯入／匯出，不是同步或備份。"
+    } else {
+        "Move notes as text files or a ZIP archive. This is local file import/export, not sync or backup."
+    }
 }
 
 private fun selectTextToFormatLabel(language: AppLanguage): String {
@@ -467,6 +487,9 @@ fun NotepadApp(
         val widgetAction = pendingWidgetAction ?: return@LaunchedEffect
         if (widgetAction.action == WidgetAction.NewTextNote) {
             onWidgetActionHandled(widgetAction.id)
+            if (!billingState.hasPremiumAccess) {
+                viewModel.selectFolder(null)
+            }
             viewModel.createTextNote { noteId ->
                 screen = AppScreen.TextEditor(noteId)
             }
@@ -739,13 +762,24 @@ private fun PremiumScreen(
 ) {
     val context = LocalContext.current
     var selectedPlan by remember { mutableStateOf(PremiumPlanSelection.Annual) }
+    val annualPriceAvailable = billingState.billingAvailable && billingState.annualPrice != null
+    val monthlyPriceAvailable = billingState.billingAvailable && billingState.monthlyPrice != null
+    val showCommerceUi = annualPriceAvailable || monthlyPriceAvailable
     val selectedBillingPlan = when (selectedPlan) {
         PremiumPlanSelection.Annual -> PremiumPlan.Annual
         PremiumPlanSelection.Monthly -> PremiumPlan.Monthly
     }
     val selectedPriceAvailable = when (selectedPlan) {
-        PremiumPlanSelection.Annual -> billingState.annualPrice != null
-        PremiumPlanSelection.Monthly -> billingState.monthlyPrice != null
+        PremiumPlanSelection.Annual -> annualPriceAvailable
+        PremiumPlanSelection.Monthly -> monthlyPriceAvailable
+    }
+
+    LaunchedEffect(annualPriceAvailable, monthlyPriceAvailable) {
+        if (selectedPlan == PremiumPlanSelection.Annual && !annualPriceAvailable && monthlyPriceAvailable) {
+            selectedPlan = PremiumPlanSelection.Monthly
+        } else if (selectedPlan == PremiumPlanSelection.Monthly && !monthlyPriceAvailable && annualPriceAvailable) {
+            selectedPlan = PremiumPlanSelection.Annual
+        }
     }
 
     BackHandler(onBack = onBack)
@@ -779,34 +813,40 @@ private fun PremiumScreen(
                 .testTag("premium_screen"),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            PremiumPlanRow(
-                title = text.premiumAnnual,
-                price = billingState.annualPrice ?: text.premiumAnnualPrice,
-                originalPrice = text.premiumAnnualOriginalPrice.takeIf { it.isNotBlank() },
-                selected = selectedPlan == PremiumPlanSelection.Annual,
-                onClick = { selectedPlan = PremiumPlanSelection.Annual },
-                modifier = Modifier.testTag("annual_plan_option"),
-            )
-            PremiumPlanRow(
-                title = text.premiumMonthly,
-                price = billingState.monthlyPrice ?: text.premiumMonthlyPrice,
-                originalPrice = null,
-                selected = selectedPlan == PremiumPlanSelection.Monthly,
-                onClick = { selectedPlan = PremiumPlanSelection.Monthly },
-                modifier = Modifier.testTag("monthly_plan_option"),
-            )
-            Button(
-                onClick = {
-                    if (!onSubscribe(selectedBillingPlan)) {
-                        Toast.makeText(context, text.premiumBillingUnavailable, Toast.LENGTH_SHORT).show()
-                    }
-                },
-                enabled = billingState.billingAvailable && selectedPriceAvailable && !billingState.isPremium,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("premium_subscribe_button"),
-            ) {
-                Text(if (billingState.isPremium) text.premiumActive else text.premiumSubscribe)
+            if (showCommerceUi) {
+                if (annualPriceAvailable) {
+                    PremiumPlanRow(
+                        title = text.premiumAnnual,
+                        price = billingState.annualPrice ?: text.premiumAnnualPrice,
+                        originalPrice = text.premiumAnnualOriginalPrice.takeIf { it.isNotBlank() },
+                        selected = selectedPlan == PremiumPlanSelection.Annual,
+                        onClick = { selectedPlan = PremiumPlanSelection.Annual },
+                        modifier = Modifier.testTag("annual_plan_option"),
+                    )
+                }
+                if (monthlyPriceAvailable) {
+                    PremiumPlanRow(
+                        title = text.premiumMonthly,
+                        price = billingState.monthlyPrice ?: text.premiumMonthlyPrice,
+                        originalPrice = null,
+                        selected = selectedPlan == PremiumPlanSelection.Monthly,
+                        onClick = { selectedPlan = PremiumPlanSelection.Monthly },
+                        modifier = Modifier.testTag("monthly_plan_option"),
+                    )
+                }
+                Button(
+                    onClick = {
+                        if (!onSubscribe(selectedBillingPlan)) {
+                            Toast.makeText(context, text.premiumBillingUnavailable, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    enabled = selectedPriceAvailable && !billingState.isPremium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("premium_subscribe_button"),
+                ) {
+                    Text(if (billingState.isPremium) text.premiumActive else text.premiumSubscribe)
+                }
             }
             TextButton(
                 onClick = onRefreshPurchaseStatus,
@@ -1150,7 +1190,9 @@ private fun MainScreen(
     var isSearchVisible by remember { mutableStateOf(searchQuery.isNotBlank()) }
     var searchFocusRequest by remember { mutableStateOf(0) }
     var areFiltersExpanded by remember { mutableStateOf(false) }
-    val selectedFolder = folders.firstOrNull { it.id == selectedFolderId }
+    val hasNonDefaultFolders = folders.any { it.id != DEFAULT_FOLDER_ID }
+    val showFolderUi = hasPremiumAccess || hasNonDefaultFolders
+    val selectedFolder = if (showFolderUi) folders.firstOrNull { it.id == selectedFolderId } else null
     val isTrash = listMode == NoteListMode.Trash
     val isSelectionMode = selectedNoteIds.isNotEmpty()
     val visibleNoteIds = remember(notes) { notes.map { it.id }.toSet() }
@@ -1164,6 +1206,13 @@ private fun MainScreen(
         selectedNotesToDelete = null
     }
 
+    fun createNoteWithAllowedFolder(createNote: () -> Unit) {
+        if (!hasPremiumAccess) {
+            onSelectFolder(null)
+        }
+        createNote()
+    }
+
     LaunchedEffect(isPrivacyLocked) {
         if (isPrivacyLocked) {
             addMenuExpanded = false
@@ -1175,6 +1224,12 @@ private fun MainScreen(
             noteToPermanentlyDelete = null
             selectedNotesToDelete = null
             areFiltersExpanded = false
+        }
+    }
+
+    LaunchedEffect(showFolderUi, selectedFolderId) {
+        if (!showFolderUi && selectedFolderId != null) {
+            onSelectFolder(null)
         }
     }
 
@@ -1194,6 +1249,12 @@ private fun MainScreen(
         if (!hasPremiumAccess && contentView == MainContentView.Calendar) {
             contentView = MainContentView.List
             clearNoteSelection()
+        }
+    }
+
+    LaunchedEffect(hasPremiumAccess, quickFilter) {
+        if (!hasPremiumAccess && quickFilter == NoteQuickFilter.HasReminder) {
+            onQuickFilterChange(NoteQuickFilter.All)
         }
     }
 
@@ -1284,7 +1345,7 @@ private fun MainScreen(
                             modifier = Modifier.testTag("new_text_note_menu_item"),
                             onClick = {
                                 addMenuExpanded = false
-                                onCreateTextNote()
+                                createNoteWithAllowedFolder(onCreateTextNote)
                             },
                         )
                         DropdownMenuItem(
@@ -1292,7 +1353,7 @@ private fun MainScreen(
                             modifier = Modifier.testTag("new_checklist_note_menu_item"),
                             onClick = {
                                 addMenuExpanded = false
-                                onCreateChecklistNote()
+                                createNoteWithAllowedFolder(onCreateChecklistNote)
                             },
                         )
                         DropdownMenuItem(
@@ -1300,7 +1361,7 @@ private fun MainScreen(
                             modifier = Modifier.testTag("new_drawing_note_menu_item"),
                             onClick = {
                                 addMenuExpanded = false
-                                onCreateDrawingNote()
+                                createNoteWithAllowedFolder(onCreateDrawingNote)
                             },
                         )
                         DropdownMenuItem(
@@ -1311,18 +1372,16 @@ private fun MainScreen(
                                 onCreateOcrNote()
                             },
                         )
-                        DropdownMenuItem(
-                            text = { Text(text.newFolder) },
-                            modifier = Modifier.testTag("new_folder_menu_item"),
-                            onClick = {
-                                addMenuExpanded = false
-                                if (hasPremiumAccess) {
+                        if (hasPremiumAccess) {
+                            DropdownMenuItem(
+                                text = { Text(text.newFolder) },
+                                modifier = Modifier.testTag("new_folder_menu_item"),
+                                onClick = {
+                                    addMenuExpanded = false
                                     showCreateFolderDialog = true
-                                } else {
-                                    onOpenPremium()
-                                }
-                            },
-                        )
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -1345,17 +1404,20 @@ private fun MainScreen(
                     onListModeChange = onListModeChange,
                 )
 
-                FolderFilterRow(
-                    folders = folders,
-                    selectedFolderId = selectedFolderId,
-                    text = text,
-                    onSelectFolder = onSelectFolder,
-                )
+                if (showFolderUi) {
+                    FolderFilterRow(
+                        folders = folders,
+                        selectedFolderId = selectedFolderId,
+                        text = text,
+                        onSelectFolder = onSelectFolder,
+                    )
+                }
 
                 selectedFolder?.let { folder ->
                     FolderActionRow(
                         folder = folder,
                         text = text,
+                        canManageFolders = hasPremiumAccess,
                         onRename = { folderToRename = folder },
                         onDelete = { folderToDelete = folder },
                     )
@@ -1386,7 +1448,8 @@ private fun MainScreen(
                         contentView = contentView,
                         text = text,
                         isPrivacyLocked = isPrivacyLocked,
-                        showCalendarView = !isTrash,
+                        showCalendarView = !isTrash && hasPremiumAccess,
+                        showReminderQuickFilter = hasPremiumAccess,
                         onSortOptionChange = onSortOptionChange,
                         onQuickFilterChange = onQuickFilterChange,
                         onContentViewChange = { view ->
@@ -1424,6 +1487,7 @@ private fun MainScreen(
                     onOpenNote = onOpenNote,
                     onToggleNoteSelection = toggleNoteSelection,
                     onStartNoteSelection = startNoteSelection,
+                    canMoveNote = { note -> hasPremiumAccess || note.folderId != DEFAULT_FOLDER_ID },
                     onMoveNote = { note ->
                         if (hasPremiumAccess || note.folderId != DEFAULT_FOLDER_ID) {
                             noteToMove = note
@@ -1449,6 +1513,7 @@ private fun MainScreen(
                     onOpenNote = onOpenNote,
                     onToggleNoteSelection = toggleNoteSelection,
                     onStartNoteSelection = startNoteSelection,
+                    canMoveNote = { note -> hasPremiumAccess || note.folderId != DEFAULT_FOLDER_ID },
                     onMoveNote = { note ->
                         if (hasPremiumAccess || note.folderId != DEFAULT_FOLDER_ID) {
                             noteToMove = note
@@ -2156,6 +2221,53 @@ private fun SettingsScreen(
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            try {
+                                pendingBackupJson = viewModel.exportBackupJson()
+                                createBackupLauncher.launch(BACKUP_FILE_NAME)
+                            } catch (_: Exception) {
+                                Toast.makeText(context, text.backupFailed, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    enabled = !isBackupInProgress && !isRestoreInProgress,
+                    modifier = Modifier.testTag("choose_sync_file_button"),
+                ) {
+                    Text(if (onlineSyncTargetUri == null) text.chooseGoogleDriveSyncFile else text.changeGoogleDriveSyncFile)
+                }
+                TextButton(
+                    onClick = { showAccountSettingsDialog = true },
+                    modifier = Modifier.testTag("account_settings_button"),
+                ) {
+                    Text(text.accountSettings)
+                }
+            }
+            if (onlineSyncTargetUri != null) {
+                TextButton(
+                    onClick = { showDisconnectDialog = true },
+                    modifier = Modifier.testTag("disconnect_sync_button"),
+                ) {
+                    Text(text.disconnectSync)
+                }
+            }
+            HorizontalDivider()
+            Text(
+                text = importExportTitleLabel(appLanguage),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.testTag("import_export_title"),
+            )
+            Text(
+                text = importExportHintLabel(appLanguage),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
@@ -2188,41 +2300,6 @@ private fun SettingsScreen(
                         .testTag("batch_import_button"),
                 ) {
                     Text(text.batchImportTextFiles)
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                TextButton(
-                    onClick = {
-                        scope.launch {
-                            try {
-                                pendingBackupJson = viewModel.exportBackupJson()
-                                createBackupLauncher.launch(BACKUP_FILE_NAME)
-                            } catch (_: Exception) {
-                                Toast.makeText(context, text.backupFailed, Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    },
-                    enabled = !isBackupInProgress && !isRestoreInProgress,
-                    modifier = Modifier.testTag("choose_sync_file_button"),
-                ) {
-                    Text(if (onlineSyncTargetUri == null) text.chooseGoogleDriveSyncFile else text.changeGoogleDriveSyncFile)
-                }
-                TextButton(
-                    onClick = { showAccountSettingsDialog = true },
-                    modifier = Modifier.testTag("account_settings_button"),
-                ) {
-                    Text(text.accountSettings)
-                }
-            }
-            if (onlineSyncTargetUri != null) {
-                TextButton(
-                    onClick = { showDisconnectDialog = true },
-                    modifier = Modifier.testTag("disconnect_sync_button"),
-                ) {
-                    Text(text.disconnectSync)
                 }
             }
         }
@@ -2401,6 +2478,7 @@ private fun NoteFilterRow(
     text: UiText,
     isPrivacyLocked: Boolean,
     showCalendarView: Boolean,
+    showReminderQuickFilter: Boolean,
     onSortOptionChange: (NoteSortOption) -> Unit,
     onQuickFilterChange: (NoteQuickFilter) -> Unit,
     onContentViewChange: (MainContentView) -> Unit,
@@ -2433,7 +2511,9 @@ private fun NoteFilterRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            NoteQuickFilter.entries.forEach { filter ->
+            NoteQuickFilter.entries
+                .filter { filter -> showReminderQuickFilter || filter != NoteQuickFilter.HasReminder }
+                .forEach { filter ->
                 item {
                     FilterChip(
                         selected = quickFilter == filter,
@@ -2721,13 +2801,15 @@ private fun FolderFilterRow(
 private fun FolderActionRow(
     folder: FolderEntity,
     text: UiText,
+    canManageFolders: Boolean,
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .testTag("folder_action_row"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -2737,11 +2819,17 @@ private fun FolderActionRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (folder.id != DEFAULT_FOLDER_ID) {
-            TextButton(onClick = onRename) {
+        if (canManageFolders && folder.id != DEFAULT_FOLDER_ID) {
+            TextButton(
+                onClick = onRename,
+                modifier = Modifier.testTag("rename_folder_button"),
+            ) {
                 Text(text.rename)
             }
-            TextButton(onClick = onDelete) {
+            TextButton(
+                onClick = onDelete,
+                modifier = Modifier.testTag("delete_folder_button"),
+            ) {
                 Text(text.delete)
             }
         }
@@ -2761,6 +2849,7 @@ private fun NoteList(
     onOpenNote: (NoteEntity) -> Unit,
     onToggleNoteSelection: (NoteEntity) -> Unit,
     onStartNoteSelection: (NoteEntity) -> Unit,
+    canMoveNote: (NoteEntity) -> Boolean,
     onMoveNote: (NoteEntity) -> Unit,
     onDeleteNote: (NoteEntity) -> Unit,
     onRestoreNote: (NoteEntity) -> Unit,
@@ -2813,6 +2902,7 @@ private fun NoteList(
                 onOpen = { onOpenNote(note) },
                 onToggleSelection = { onToggleNoteSelection(note) },
                 onStartSelection = { onStartNoteSelection(note) },
+                canMove = canMoveNote(note),
                 onMove = { onMoveNote(note) },
                 onDelete = { onDeleteNote(note) },
                 onRestore = { onRestoreNote(note) },
@@ -2835,6 +2925,7 @@ private fun ReminderCalendarView(
     onOpenNote: (NoteEntity) -> Unit,
     onToggleNoteSelection: (NoteEntity) -> Unit,
     onStartNoteSelection: (NoteEntity) -> Unit,
+    canMoveNote: (NoteEntity) -> Boolean,
     onMoveNote: (NoteEntity) -> Unit,
     onDeleteNote: (NoteEntity) -> Unit,
     onTogglePinned: (NoteEntity) -> Unit,
@@ -2997,6 +3088,7 @@ private fun ReminderCalendarView(
                         onOpen = { onOpenNote(note) },
                         onToggleSelection = { onToggleNoteSelection(note) },
                         onStartSelection = { onStartNoteSelection(note) },
+                        canMove = canMoveNote(note),
                         onMove = { onMoveNote(note) },
                         onDelete = { onDeleteNote(note) },
                         onRestore = {},
@@ -3086,6 +3178,7 @@ private fun NoteRow(
     onOpen: () -> Unit,
     onToggleSelection: () -> Unit,
     onStartSelection: () -> Unit,
+    canMove: Boolean,
     onMove: () -> Unit,
     onDelete: () -> Unit,
     onRestore: () -> Unit,
@@ -3205,8 +3298,13 @@ private fun NoteRow(
                         ) {
                             Text(if (note.isPinned) text.unpin else text.pin)
                         }
-                        TextButton(onClick = onMove) {
-                            Text(text.move)
+                        if (canMove) {
+                            TextButton(
+                                onClick = onMove,
+                                modifier = Modifier.testTag("move_note_${note.id}"),
+                            ) {
+                                Text(text.move)
+                            }
                         }
                         TextButton(onClick = onDelete) {
                             Text(text.moveToTrash)
@@ -3915,7 +4013,7 @@ private fun TextEditorScreen(
                                     },
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(text.setReminder) },
+                                    text = { Text(setReminderActionLabel(text, billingState.hasPremiumAccess)) },
                                     modifier = Modifier.testTag("set_reminder_menu_item"),
                                     onClick = {
                                         isMoreMenuExpanded = false
@@ -3927,7 +4025,7 @@ private fun TextEditorScreen(
                                     },
                                 )
                                 if (loaded.reminderAt != null) {
-                                    ReminderRepeat.entries.forEach { repeat ->
+                                    if (billingState.hasPremiumAccess) ReminderRepeat.entries.forEach { repeat ->
                                         DropdownMenuItem(
                                             text = {
                                                 Text(text.reminderRepeat + ": " + reminderRepeatLabel(repeat.code, text))
@@ -4244,20 +4342,22 @@ private fun TextEditorScreen(
                     )
                 }
                 if (isCompactEditor) {
-	                    TextEditorAccessoryBar(
-	                        text = text,
-	                        appLanguage = appLanguage,
-	                        onInsertCheckbox = { insertIntoContent("- [ ] ") },
-	                        onInsertBullet = { insertIntoContent("- ") },
-	                        onHeading1 = { applyFormatting(TextFormatType.Heading1) },
-	                        onHeading2 = { applyFormatting(TextFormatType.Heading2) },
-	                        onBold = { applyFormatting(TextFormatType.Bold) },
-	                        onItalic = { applyFormatting(TextFormatType.Italic) },
-	                        onUnderline = { applyFormatting(TextFormatType.Underline) },
-	                        onHighlight = { applyFormatting(TextFormatType.Highlight) },
-	                        onLink = ::prepareLinkFormatting,
-	                        onClearFormatting = ::clearFormatting,
-	                        onHideKeyboard = {
+                    TextEditorAccessoryBar(
+                        text = text,
+                        appLanguage = appLanguage,
+                        hasPremiumAccess = billingState.hasPremiumAccess,
+                        onInsertCheckbox = { insertIntoContent("- [ ] ") },
+                        onInsertBullet = { insertIntoContent("- ") },
+                        onOpenPremium = ::openPremiumAfterSavingTextNote,
+                        onHeading1 = { applyFormatting(TextFormatType.Heading1) },
+                        onHeading2 = { applyFormatting(TextFormatType.Heading2) },
+                        onBold = { applyFormatting(TextFormatType.Bold) },
+                        onItalic = { applyFormatting(TextFormatType.Italic) },
+                        onUnderline = { applyFormatting(TextFormatType.Underline) },
+                        onHighlight = { applyFormatting(TextFormatType.Highlight) },
+                        onLink = ::prepareLinkFormatting,
+                        onClearFormatting = ::clearFormatting,
+                        onHideKeyboard = {
                             savePendingTextNote()
                             keyboardController?.hide()
                             focusManager.clearFocus()
@@ -4567,8 +4667,10 @@ private fun FindInNoteBar(
 private fun TextEditorAccessoryBar(
     text: UiText,
     appLanguage: AppLanguage,
+    hasPremiumAccess: Boolean,
     onInsertCheckbox: () -> Unit,
     onInsertBullet: () -> Unit,
+    onOpenPremium: () -> Unit,
     onHeading1: () -> Unit,
     onHeading2: () -> Unit,
     onBold: () -> Unit,
@@ -4602,67 +4704,76 @@ private fun TextEditorAccessoryBar(
             onClick = onInsertBullet,
             testTag = "quick_insert_bullet_button",
         )
-        TextEditorToolbarButton(
-            label = formatHeading1Label(appLanguage),
-            contentDescription = formatHeading1Label(appLanguage),
-            onClick = onHeading1,
-            testTag = "format_heading_1_button",
-            width = 56.dp,
-            fontWeight = FontWeight.Bold,
-        )
-        TextEditorToolbarButton(
-            label = formatHeading2Label(appLanguage),
-            contentDescription = formatHeading2Label(appLanguage),
-            onClick = onHeading2,
-            testTag = "format_heading_2_button",
-            width = 56.dp,
-            fontWeight = FontWeight.SemiBold,
-        )
-        TextEditorToolbarButton(
-            label = "B",
-            contentDescription = formatBoldLabel(appLanguage),
-            onClick = onBold,
-            testTag = "format_bold_button",
-            fontWeight = FontWeight.Bold,
-        )
-        TextEditorToolbarButton(
-            label = "I",
-            contentDescription = formatItalicLabel(appLanguage),
-            onClick = onItalic,
-            testTag = "format_italic_button",
-            fontStyle = FontStyle.Italic,
-        )
-        TextEditorToolbarButton(
-            label = "U",
-            contentDescription = formatUnderlineLabel(appLanguage),
-            onClick = onUnderline,
-            testTag = "format_underline_button",
-            textDecoration = TextDecoration.Underline,
-        )
-        TextEditorToolbarButton(
-            label = "HL",
-            contentDescription = formatHighlightLabel(appLanguage),
-            onClick = onHighlight,
-            testTag = "format_highlight_button",
-            fontWeight = FontWeight.SemiBold,
-            highlight = true,
-        )
-        TextEditorToolbarButton(
-            label = formatLinkLabel(appLanguage),
-            contentDescription = formatLinkLabel(appLanguage),
-            onClick = onLink,
-            testTag = "format_link_button",
-            width = 64.dp,
-            color = MaterialTheme.colorScheme.primary,
-            textDecoration = TextDecoration.Underline,
-        )
-        TextEditorToolbarButton(
-            label = "Tx",
-            contentDescription = clearFormattingLabel(appLanguage),
-            onClick = onClearFormatting,
-            testTag = "clear_formatting_button",
-            width = 56.dp,
-        )
+        if (hasPremiumAccess) {
+            TextEditorToolbarButton(
+                label = formatHeading1Label(appLanguage),
+                contentDescription = formatHeading1Label(appLanguage),
+                onClick = onHeading1,
+                testTag = "format_heading_1_button",
+                width = 56.dp,
+                fontWeight = FontWeight.Bold,
+            )
+            TextEditorToolbarButton(
+                label = formatHeading2Label(appLanguage),
+                contentDescription = formatHeading2Label(appLanguage),
+                onClick = onHeading2,
+                testTag = "format_heading_2_button",
+                width = 56.dp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            TextEditorToolbarButton(
+                label = "B",
+                contentDescription = formatBoldLabel(appLanguage),
+                onClick = onBold,
+                testTag = "format_bold_button",
+                fontWeight = FontWeight.Bold,
+            )
+            TextEditorToolbarButton(
+                label = "I",
+                contentDescription = formatItalicLabel(appLanguage),
+                onClick = onItalic,
+                testTag = "format_italic_button",
+                fontStyle = FontStyle.Italic,
+            )
+            TextEditorToolbarButton(
+                label = "U",
+                contentDescription = formatUnderlineLabel(appLanguage),
+                onClick = onUnderline,
+                testTag = "format_underline_button",
+                textDecoration = TextDecoration.Underline,
+            )
+            TextEditorToolbarButton(
+                label = "HL",
+                contentDescription = formatHighlightLabel(appLanguage),
+                onClick = onHighlight,
+                testTag = "format_highlight_button",
+                fontWeight = FontWeight.SemiBold,
+                highlight = true,
+            )
+            TextEditorToolbarButton(
+                label = formatLinkLabel(appLanguage),
+                contentDescription = formatLinkLabel(appLanguage),
+                onClick = onLink,
+                testTag = "format_link_button",
+                width = 64.dp,
+                color = MaterialTheme.colorScheme.primary,
+                textDecoration = TextDecoration.Underline,
+            )
+            TextEditorToolbarButton(
+                label = "Tx",
+                contentDescription = clearFormattingLabel(appLanguage),
+                onClick = onClearFormatting,
+                testTag = "clear_formatting_button",
+                width = 56.dp,
+            )
+        } else {
+            TextButton(
+                onClick = onOpenPremium,
+                modifier = Modifier.testTag("formatting_premium_entry_button"),
+            ) {
+                Text(formattingPremiumEntryLabel(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
         TextButton(
             onClick = onHideKeyboard,
             modifier = Modifier.testTag("hide_keyboard_button"),
@@ -6032,7 +6143,7 @@ private fun ReminderControls(
                 onClick = ::openDateTimePicker,
                 modifier = Modifier.testTag("set_reminder_button"),
             ) {
-                Text(text.setReminder)
+                Text(setReminderActionLabel(text, hasPremiumAccess))
             }
             if (note.reminderAt != null) {
                 TextButton(
@@ -6043,7 +6154,7 @@ private fun ReminderControls(
                 }
             }
         }
-        if (note.reminderAt != null) {
+        if (note.reminderAt != null && hasPremiumAccess) {
             Text(
                 text = text.reminderRepeat + ": " + reminderRepeatLabel(note.reminderRepeat, text),
                 style = MaterialTheme.typography.bodySmall,
@@ -6082,22 +6193,21 @@ private fun NoteFolderSelector(
         if (isPrivacyLocked) expanded = false
     }
     val canOpenFolderPicker = hasPremiumAccess || currentFolderId != DEFAULT_FOLDER_ID
+    val folderTargets = if (hasPremiumAccess) folders else folders.filter { it.id == DEFAULT_FOLDER_ID }
+
+    if (!canOpenFolderPicker) return
 
     Box {
         Button(onClick = {
-            if (canOpenFolderPicker) {
-                expanded = true
-            } else {
-                onOpenPremium()
-            }
-        }) {
+            expanded = true
+        }, modifier = Modifier.testTag("note_folder_selector_button")) {
             Text(currentFolderName, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(
             expanded = expanded && !isPrivacyLocked,
             onDismissRequest = { expanded = false },
         ) {
-            folders.forEach { folder ->
+            folderTargets.forEach { folder ->
                 DropdownMenuItem(
                     text = { Text(folderDisplayName(folder, text)) },
                     onClick = {
@@ -6186,12 +6296,14 @@ private fun MoveNoteDialog(
     onOpenPremium: () -> Unit,
     onMove: (Long) -> Unit,
 ) {
+    val folderTargets = if (hasPremiumAccess) folders else folders.filter { it.id == DEFAULT_FOLDER_ID }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text.moveNote) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                folders.forEach { folder ->
+                folderTargets.forEach { folder ->
                     Button(
                         onClick = {
                             if (hasPremiumAccess || folder.id == DEFAULT_FOLDER_ID) {
@@ -6201,7 +6313,9 @@ private fun MoveNoteDialog(
                             }
                         },
                         enabled = folder.id != currentFolderId,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("move_note_target_${folder.id}"),
                     ) {
                         Text(
                             folderDisplayName(folder, text),

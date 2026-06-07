@@ -115,6 +115,70 @@ class TextInputTest {
             .getOrNull(SemanticsProperties.ToggleableState)
     }
 
+    private fun tagCount(tag: String): Int {
+        return composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().size
+    }
+
+    private fun assertTagAbsent(tag: String) {
+        assertEquals(0, tagCount(tag))
+    }
+
+    private fun resetFoldersToDefault() {
+        runBlocking {
+            withContext(Dispatchers.IO) {
+                val dao = NotepadDatabase.getInstance(composeRule.activity).notepadDao()
+                val repository = NotepadRepository(dao)
+                repository.ensureDefaultFolder()
+                dao.getAllFolders()
+                    .filter { folder -> folder.id != DEFAULT_FOLDER_ID && !folder.isDeleted }
+                    .forEach { folder -> repository.deleteFolder(folder.id) }
+            }
+        }
+    }
+
+    private fun createFolder(name: String): Long {
+        return runBlocking {
+            withContext(Dispatchers.IO) {
+                NotepadRepository(NotepadDatabase.getInstance(composeRule.activity).notepadDao())
+                    .createFolder(name)
+            }
+        }
+    }
+
+    private fun createTextNote(
+        title: String,
+        body: String,
+        folderId: Long = DEFAULT_FOLDER_ID,
+        reminderAt: Long? = null,
+        reminderRepeat: String = ReminderRepeat.None.code,
+    ): Long {
+        return runBlocking {
+            withContext(Dispatchers.IO) {
+                val repository = NotepadRepository(NotepadDatabase.getInstance(composeRule.activity).notepadDao())
+                repository.ensureDefaultFolder()
+                val noteId = repository.createTextNote(folderId)
+                repository.saveTextNote(noteId, title, body)
+                if (reminderAt != null) {
+                    repository.setNoteReminder(noteId, reminderAt, reminderRepeat)
+                }
+                noteId
+            }
+        }
+    }
+
+    private fun waitForNoteFolder(noteId: Long, folderId: Long) {
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getNote(noteId)
+                        ?.folderId == folderId
+                }
+            }
+        }
+    }
+
     private fun exitInitialDrawingFocusModeIfNeeded() {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag("drawing_note_title").fetchSemanticsNodes().isNotEmpty() ||
@@ -182,7 +246,21 @@ class TextInputTest {
         composeRule.onNodeWithTag("text_note_content")
             .assertIsDisplayed()
             .performTextInput("Format me")
-        composeRule.onNodeWithTag("format_heading_1_button")
+
+        composeRule.onNodeWithTag("quick_insert_checkbox_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("quick_insert_bullet_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("hide_keyboard_button").performScrollTo().assertIsDisplayed()
+        assertTagAbsent("format_heading_1_button")
+        assertTagAbsent("format_heading_2_button")
+        assertTagAbsent("format_bold_button")
+        assertTagAbsent("format_italic_button")
+        assertTagAbsent("format_underline_button")
+        assertTagAbsent("format_highlight_button")
+        assertTagAbsent("format_link_button")
+        assertTagAbsent("clear_formatting_button")
+
+        composeRule.onNodeWithTag("formatting_premium_entry_button")
+            .performScrollTo()
             .assertIsDisplayed()
             .performClick()
 
@@ -259,14 +337,91 @@ class TextInputTest {
     }
 
     @Test
-    fun folderCreationRoutesNonPremiumUsersToPremium() {
-        openAddMenuItem("new_folder_menu_item")
+    fun freeDefaultOnlyFolderUiIsHidden() {
+        resetFoldersToDefault()
+        val suffix = System.currentTimeMillis()
+        val title = "Default folder note $suffix"
+        val noteId = createTextNote(title = title, body = "Default folder body")
 
-        waitForTag("premium_screen")
-        composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
-        assertEquals(0, composeRule.onAllNodesWithTag("folder_name_input").fetchSemanticsNodes().size)
-        composeRule.onNodeWithTag("notes_tab").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTagAbsent("folder_filter_row")
+        assertTagAbsent("folder_action_row")
+        assertTagAbsent("move_note_$noteId")
+
+        composeRule.onNodeWithTag("add_note_button").performClick()
+        assertTagAbsent("new_folder_menu_item")
+        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        waitForTag("text_note_content")
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
         waitForTag("add_note_button")
+
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("edit_note_button").assertIsDisplayed().performClick()
+        waitForTag("text_note_edit_metadata")
+        assertTagAbsent("note_folder_selector_button")
+    }
+
+    @Test
+    fun freeExistingFolderCanFilterAndMoveBackToDefaultOnly() {
+        resetFoldersToDefault()
+        val suffix = System.currentTimeMillis()
+        val folderId = createFolder("Legacy folder $suffix")
+        val title = "Legacy folder note $suffix"
+        val noteId = createTextNote(
+            title = title,
+            body = "Legacy folder body",
+            folderId = folderId,
+        )
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("folder_filter_row").fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("folder_filter_row").assertIsDisplayed()
+        composeRule.onNodeWithTag("folder_filter_$folderId").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("folder_action_row").assertIsDisplayed()
+        assertTagAbsent("rename_folder_button")
+        assertTagAbsent("delete_folder_button")
+
+        composeRule.onNodeWithTag("add_note_button").performClick()
+        assertTagAbsent("new_folder_menu_item")
+        composeRule.onNodeWithTag("new_text_note_menu_item").performClick()
+        waitForTag("text_note_content")
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        waitForTag("folder_filter_row")
+
+        composeRule.onNodeWithTag("move_note_$noteId").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("move_note_target_$DEFAULT_FOLDER_ID").assertIsDisplayed()
+        assertTagAbsent("move_note_target_$folderId")
+        composeRule.onNodeWithTag("move_note_target_$DEFAULT_FOLDER_ID").performClick()
+        waitForNoteFolder(noteId, DEFAULT_FOLDER_ID)
+    }
+
+    @Test
+    fun debugPremiumKeepsFolderCreationAndFolderRowVisible() {
+        resetFoldersToDefault()
+        val suffix = System.currentTimeMillis()
+        val folderName = "Debug premium folder $suffix"
+        DebugPremiumAccess.write(composeRule.activity, true)
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("folder_filter_row").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("folder_filter_row").assertIsDisplayed()
+        composeRule.onNodeWithTag("add_note_button").performClick()
+        composeRule.onNodeWithTag("new_folder_menu_item").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("folder_name_input").assertIsDisplayed().performTextInput(folderName)
+        composeRule.onNodeWithTag("folder_name_confirm_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(folderName).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(folderName).assertIsDisplayed()
     }
 
     @Test
@@ -278,7 +433,10 @@ class TextInputTest {
             .performTextInput("Reminder gate draft")
 
         composeRule.onNodeWithTag("more_note_button").assertIsDisplayed().performClick()
-        composeRule.onNodeWithTag("set_reminder_menu_item").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("set_reminder_menu_item")
+            .assertIsDisplayed()
+            .assertTextContains("Premium", substring = true)
+            .performClick()
 
         waitForTag("premium_screen")
         composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
@@ -297,6 +455,50 @@ class TextInputTest {
     }
 
     @Test
+    fun freeReminderClearWorksAndRepeatControlsAreHidden() {
+        val suffix = System.currentTimeMillis()
+        val title = "Existing reminder $suffix"
+        val reminderAt = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 12)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val noteId = createTextNote(
+            title = title,
+            body = "Reminder body",
+            reminderAt = reminderAt,
+            reminderRepeat = ReminderRepeat.Daily.code,
+        )
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(title).performClick()
+        waitForTag("text_note_read_mode")
+        composeRule.onNodeWithTag("note_reminder_status").assertIsDisplayed()
+        composeRule.onNodeWithTag("more_note_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("set_reminder_menu_item").assertTextContains("Premium", substring = true)
+        assertTagAbsent("text_reminder_repeat_None")
+        assertTagAbsent("text_reminder_repeat_Daily")
+        assertTagAbsent("text_reminder_repeat_Weekly")
+        assertTagAbsent("text_reminder_repeat_Monthly")
+        composeRule.onNodeWithTag("clear_reminder_menu_item").assertIsDisplayed().performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getNote(noteId)
+                        ?.reminderAt == null
+                }
+            }
+        }
+    }
+
+    @Test
     fun drawingReminderGateSavesDraftBeforePremium() {
         val title = "Drawing premium gate ${System.currentTimeMillis()}"
 
@@ -305,7 +507,10 @@ class TextInputTest {
         composeRule.onNodeWithTag("drawing_note_title")
             .assertIsDisplayed()
             .performTextInput(title)
-        composeRule.onNodeWithTag("set_reminder_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("set_reminder_button")
+            .assertIsDisplayed()
+            .assertTextContains("Premium", substring = true)
+            .performClick()
 
         waitForTag("premium_screen")
         composeRule.activityRule.scenario.onActivity { activity ->
@@ -326,7 +531,11 @@ class TextInputTest {
         composeRule.onNodeWithTag("checklist_note_title")
             .assertIsDisplayed()
             .performTextInput(title)
-        composeRule.onNodeWithTag("set_reminder_button").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("set_reminder_button")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertTextContains("Premium", substring = true)
+            .performClick()
 
         waitForTag("premium_screen")
         composeRule.activityRule.scenario.onActivity { activity ->
@@ -552,6 +761,14 @@ class TextInputTest {
     }
 
     @Test
+    fun freeUsersDoNotSeeCalendarViewChip() {
+        openFilterPanel()
+
+        assertTagAbsent("calendar_view_chip")
+        assertTagAbsent("quick_filter_HasReminder")
+    }
+
+    @Test
     fun reminderCalendarShowsTodayReminder() {
         val suffix = System.currentTimeMillis()
         val title = "Calendar reminder $suffix"
@@ -574,6 +791,7 @@ class TextInputTest {
                 )
             }
         }
+        DebugPremiumAccess.write(composeRule.activity, true)
 
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
@@ -1024,26 +1242,34 @@ class TextInputTest {
     fun settingsExposeManualBackupControls() {
         composeRule.onNodeWithTag("settings_button").performClick()
 
+        composeRule.onNodeWithTag("google_account_sync_title").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("google_sync_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("online_sync_title").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("online_sync_target_status").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("online_sync_note_count").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("online_sync_auto_checkbox").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("backup_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("restore_button").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("batch_export_button").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("batch_import_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("choose_sync_file_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("account_settings_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("import_export_title").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("batch_export_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("batch_import_button").performScrollTo().assertIsDisplayed()
     }
 
     @Test
-    fun premiumTabShowsSubscriptionPreview() {
+    fun premiumFallbackHidesCommerceAndShowsAllowedBenefits() {
         composeRule.onNodeWithTag("premium_tab").performClick()
 
         composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
-        composeRule.onNodeWithTag("annual_plan_option").assertIsDisplayed()
-        composeRule.onNodeWithTag("monthly_plan_option").assertIsDisplayed()
-        composeRule.onNodeWithTag("premium_subscribe_button").assertIsDisplayed()
+        assertTagAbsent("annual_plan_option")
+        assertTagAbsent("monthly_plan_option")
+        assertTagAbsent("premium_subscribe_button")
+        composeRule.onNodeWithTag("premium_restore_button").assertIsDisplayed()
+        assertEquals(0, composeRule.onAllNodesWithText("Price not available").fetchSemanticsNodes().size)
+        composeRule.onNodeWithText("Folders").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Text formatting").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Reminder/calendar tools").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_format_sample_h1").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_format_sample_h2").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_format_sample_bold").performScrollTo().assertIsDisplayed()
@@ -1053,6 +1279,7 @@ class TextInputTest {
         composeRule.onNodeWithTag("premium_format_sample_highlight").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_folder_sample").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_schedule_sample").performScrollTo().assertIsDisplayed()
+        assertEquals(0, composeRule.onAllNodesWithText("Import / Export").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Import and export").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Writing assistant").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Checklist notes").fetchSemanticsNodes().size)
