@@ -838,11 +838,6 @@ private fun PremiumScreen(
                 modifier = Modifier.padding(top = 10.dp),
             )
             PremiumFeature(
-                title = text.premiumFolders,
-                body = text.premiumFoldersBody,
-                sample = { PremiumFolderSample() },
-            )
-            PremiumFeature(
                 title = text.premiumTextFormatting,
                 body = text.premiumTextFormattingBody,
                 sample = { PremiumFormattingSample() },
@@ -2650,7 +2645,9 @@ private fun FolderFilterRow(
     onSelectFolder: (Long?) -> Unit,
 ) {
     LazyRow(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("folder_filter_row"),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -2659,12 +2656,14 @@ private fun FolderFilterRow(
                 selected = selectedFolderId == null,
                 onClick = { onSelectFolder(null) },
                 label = { Text(text.allNotes) },
+                modifier = Modifier.testTag("folder_filter_all"),
             )
         }
         items(folders, key = { it.id }) { folder ->
             FilterChip(
                 selected = selectedFolderId == folder.id,
                 onClick = { onSelectFolder(folder.id) },
+                modifier = Modifier.testTag("folder_filter_${folder.id}"),
                 label = {
                     Text(
                         folderDisplayName(folder, text),
@@ -6040,6 +6039,7 @@ private fun FolderNameDialog(
                     if (error == null) onConfirm(trimmedName)
                 },
                 enabled = validationError == null,
+                modifier = Modifier.testTag("folder_name_confirm_button"),
             ) {
                 Text(if (currentFolderId == null) text.create else text.save)
             }

@@ -246,6 +246,27 @@ class TextInputTest {
     }
 
     @Test
+    fun freeUsersCanCreateFoldersWithoutPremium() {
+        val folderName = "Free folder ${System.currentTimeMillis()}"
+
+        openAddMenuItem("new_folder_menu_item")
+        composeRule.onNodeWithTag("folder_name_input").assertIsDisplayed().performTextInput(folderName)
+        composeRule.onNodeWithTag("folder_name_confirm_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getAllFolders()
+                        .any { folder -> folder.name == folderName && !folder.isDeleted }
+                }
+            }
+        }
+        assertEquals(0, composeRule.onAllNodesWithTag("premium_screen").fetchSemanticsNodes().size)
+    }
+
+    @Test
     fun highlightLinkAndClearFormattingPersistThroughEditor() {
         val suffix = System.currentTimeMillis()
         val title = "Format full $suffix"
@@ -958,6 +979,8 @@ class TextInputTest {
         composeRule.onNodeWithTag("premium_format_sample_underline").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_format_sample_link").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_format_sample_highlight").performScrollTo().assertIsDisplayed()
+        assertEquals(0, composeRule.onAllNodesWithText("Folders").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Import and export").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("$480.00").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Start a 10-day free trial.").fetchSemanticsNodes().size)
 
