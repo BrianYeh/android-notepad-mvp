@@ -188,7 +188,19 @@ class TextInputTest {
 
         waitForTag("premium_screen")
         composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
-        composeRule.onNodeWithTag("notes_tab").performClick()
+        composeRule.onNodeWithTag("notes_tab").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("text_note_content").fetchSemanticsNodes().isNotEmpty() ||
+                composeRule.onAllNodesWithTag("text_note_read_content").fetchSemanticsNodes().isNotEmpty()
+        }
+        if (composeRule.onAllNodesWithTag("text_note_content").fetchSemanticsNodes().isNotEmpty()) {
+            composeRule.onNodeWithTag("text_note_content").assertTextContains("Format me")
+        } else {
+            composeRule.onNodeWithTag("text_note_read_content").assertTextContains("Format me")
+        }
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
         waitForTag("add_note_button")
     }
 
@@ -216,12 +228,13 @@ class TextInputTest {
         composeRule.onNodeWithTag("format_heading_1_button")
             .assertIsDisplayed()
             .performClick()
+        composeRule.waitForIdle()
 
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag("premium_screen").fetchSemanticsNodes().isEmpty() &&
                 composeRule.onAllNodesWithTag("text_note_content").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
             runBlocking {
                 withContext(Dispatchers.IO) {
                     NotepadDatabase.getInstance(composeRule.activity)
@@ -246,24 +259,83 @@ class TextInputTest {
     }
 
     @Test
-    fun freeUsersCanCreateFoldersWithoutPremium() {
-        val folderName = "Free folder ${System.currentTimeMillis()}"
-
+    fun folderCreationRoutesNonPremiumUsersToPremium() {
         openAddMenuItem("new_folder_menu_item")
-        composeRule.onNodeWithTag("folder_name_input").assertIsDisplayed().performTextInput(folderName)
-        composeRule.onNodeWithTag("folder_name_confirm_button").performClick()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            runBlocking {
-                withContext(Dispatchers.IO) {
-                    NotepadDatabase.getInstance(composeRule.activity)
-                        .notepadDao()
-                        .getAllFolders()
-                        .any { folder -> folder.name == folderName && !folder.isDeleted }
-                }
-            }
+        waitForTag("premium_screen")
+        composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
+        assertEquals(0, composeRule.onAllNodesWithTag("folder_name_input").fetchSemanticsNodes().size)
+        composeRule.onNodeWithTag("notes_tab").performClick()
+        waitForTag("add_note_button")
+    }
+
+    @Test
+    fun reminderControlsRouteNonPremiumUsersToPremium() {
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_content")
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .performTextInput("Reminder gate draft")
+
+        composeRule.onNodeWithTag("more_note_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("set_reminder_menu_item").assertIsDisplayed().performClick()
+
+        waitForTag("premium_screen")
+        composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
         }
-        assertEquals(0, composeRule.onAllNodesWithTag("premium_screen").fetchSemanticsNodes().size)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("text_note_content").fetchSemanticsNodes().isNotEmpty() ||
+                composeRule.onAllNodesWithTag("text_note_read_content").fetchSemanticsNodes().isNotEmpty()
+        }
+        if (composeRule.onAllNodesWithTag("text_note_content").fetchSemanticsNodes().isNotEmpty()) {
+            composeRule.onNodeWithTag("text_note_content").assertTextContains("Reminder gate draft")
+        } else {
+            composeRule.onNodeWithTag("text_note_read_content").assertTextContains("Reminder gate draft")
+        }
+    }
+
+    @Test
+    fun drawingReminderGateSavesDraftBeforePremium() {
+        val title = "Drawing premium gate ${System.currentTimeMillis()}"
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        exitInitialDrawingFocusModeIfNeeded()
+        composeRule.onNodeWithTag("drawing_note_title")
+            .assertIsDisplayed()
+            .performTextInput(title)
+        composeRule.onNodeWithTag("set_reminder_button").assertIsDisplayed().performClick()
+
+        waitForTag("premium_screen")
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        waitForTag("drawing_note_title")
+        composeRule.onNodeWithTag("drawing_note_title")
+            .assertIsDisplayed()
+            .assertTextContains(title)
+    }
+
+    @Test
+    fun checklistReminderGateSavesDraftBeforePremium() {
+        val title = "Checklist premium gate ${System.currentTimeMillis()}"
+
+        openAddMenuItem("new_checklist_note_menu_item")
+        waitForTag("checklist_note_title")
+        composeRule.onNodeWithTag("checklist_note_title")
+            .assertIsDisplayed()
+            .performTextInput(title)
+        composeRule.onNodeWithTag("set_reminder_button").performScrollTo().assertIsDisplayed().performClick()
+
+        waitForTag("premium_screen")
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        waitForTag("checklist_note_title")
+        composeRule.onNodeWithTag("checklist_note_title")
+            .assertIsDisplayed()
+            .assertTextContains(title)
     }
 
     @Test
@@ -979,8 +1051,11 @@ class TextInputTest {
         composeRule.onNodeWithTag("premium_format_sample_underline").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_format_sample_link").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_format_sample_highlight").performScrollTo().assertIsDisplayed()
-        assertEquals(0, composeRule.onAllNodesWithText("Folders").fetchSemanticsNodes().size)
+        composeRule.onNodeWithTag("premium_folder_sample").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_schedule_sample").performScrollTo().assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("Import and export").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Writing assistant").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Checklist notes").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("$480.00").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Start a 10-day free trial.").fetchSemanticsNodes().size)
 

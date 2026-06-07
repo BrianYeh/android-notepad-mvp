@@ -205,7 +205,7 @@ import kotlinx.coroutines.withContext
 private sealed interface AppScreen {
     data object Main : AppScreen
     data object Settings : AppScreen
-    data object Premium : AppScreen
+    data class Premium(val returnTo: AppScreen = Main) : AppScreen
     data class TextEditor(val noteId: Long) : AppScreen
     data class DrawingEditor(val noteId: Long) : AppScreen
     data class ChecklistEditor(val noteId: Long) : AppScreen
@@ -511,6 +511,7 @@ fun NotepadApp(
             quickFilter = quickFilter,
             appLanguage = appLanguage,
             text = text,
+            hasPremiumAccess = billingState.hasPremiumAccess,
             isPrivacyLocked = isPrivacyLocked,
             onSelectFolder = viewModel::selectFolder,
             onSearchQueryChange = viewModel::setSearchQuery,
@@ -520,7 +521,7 @@ fun NotepadApp(
             onReminderFilterChange = viewModel::setReminderFilter,
             onQuickFilterChange = viewModel::setQuickFilter,
             onOpenSettings = { screen = AppScreen.Settings },
-            onOpenPremium = { screen = AppScreen.Premium },
+            onOpenPremium = { screen = AppScreen.Premium() },
             onCreateFolder = viewModel::createFolder,
             onRenameFolder = viewModel::renameFolder,
             onDeleteFolder = viewModel::deleteFolder,
@@ -588,7 +589,7 @@ fun NotepadApp(
             onBack = { screen = AppScreen.Main },
         )
 
-        AppScreen.Premium -> PremiumScreen(
+        is AppScreen.Premium -> PremiumScreen(
             text = text,
             billingState = billingState,
             onSubscribe = { plan ->
@@ -600,7 +601,8 @@ fun NotepadApp(
                 }
             },
             onRefreshPurchaseStatus = viewModel::refreshPremiumEntitlement,
-            onOpenNotes = { screen = AppScreen.Main },
+            onBack = { screen = currentScreen.returnTo },
+            onOpenNotes = { screen = currentScreen.returnTo },
         )
 
         is AppScreen.TextEditor -> TextEditorScreen(
@@ -612,7 +614,7 @@ fun NotepadApp(
             billingState = billingState,
             isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
-            onOpenPremium = { screen = AppScreen.Premium },
+            onOpenPremium = { screen = AppScreen.Premium(returnTo = currentScreen) },
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
         )
@@ -622,8 +624,10 @@ fun NotepadApp(
             folders = folders,
             text = text,
             appLanguage = appLanguage,
+            billingState = billingState,
             isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
+            onOpenPremium = { screen = AppScreen.Premium(returnTo = currentScreen) },
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
         )
@@ -633,8 +637,10 @@ fun NotepadApp(
             folders = folders,
             text = text,
             appLanguage = appLanguage,
+            billingState = billingState,
             isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
+            onOpenPremium = { screen = AppScreen.Premium(returnTo = currentScreen) },
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
         )
@@ -728,6 +734,7 @@ private fun PremiumScreen(
     billingState: PremiumBillingState,
     onSubscribe: (PremiumPlan) -> Boolean,
     onRefreshPurchaseStatus: () -> Unit,
+    onBack: () -> Unit,
     onOpenNotes: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -741,14 +748,14 @@ private fun PremiumScreen(
         PremiumPlanSelection.Monthly -> billingState.monthlyPrice != null
     }
 
-    BackHandler(onBack = onOpenNotes)
+    BackHandler(onBack = onBack)
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(text.premium) },
                 navigationIcon = {
-                    TextButton(onClick = onOpenNotes) {
+                    TextButton(onClick = onBack) {
                         Text(text.back)
                     }
                 },
@@ -838,6 +845,11 @@ private fun PremiumScreen(
                 modifier = Modifier.padding(top = 10.dp),
             )
             PremiumFeature(
+                title = text.premiumFolders,
+                body = text.premiumFoldersBody,
+                sample = { PremiumFolderSample() },
+            )
+            PremiumFeature(
                 title = text.premiumTextFormatting,
                 body = text.premiumTextFormattingBody,
                 sample = { PremiumFormattingSample() },
@@ -846,14 +858,6 @@ private fun PremiumScreen(
                 title = text.premiumIcons,
                 body = text.premiumIconsBody,
                 sample = { PremiumIconSample() },
-            )
-            PremiumFeature(
-                title = text.premiumGrammar,
-                body = text.premiumGrammarBody,
-            )
-            PremiumFeature(
-                title = text.premiumWritingAssistant,
-                body = text.premiumWritingAssistantBody,
             )
         }
     }
@@ -921,7 +925,10 @@ private fun PremiumFeature(
 
 @Composable
 private fun PremiumFolderSample() {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(
+        modifier = Modifier.testTag("premium_folder_sample"),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         PremiumFolderRow(
             background = Color(0xFFFFF7A8),
             accent = Color(0xFFEFD64A),
@@ -1076,7 +1083,8 @@ private fun PremiumIconSample() {
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
-            .padding(8.dp),
+            .padding(8.dp)
+            .testTag("premium_schedule_sample"),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         listOf("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT").forEachIndexed { index, day ->
@@ -1102,6 +1110,7 @@ private fun MainScreen(
     quickFilter: NoteQuickFilter,
     appLanguage: AppLanguage,
     text: UiText,
+    hasPremiumAccess: Boolean,
     isPrivacyLocked: Boolean,
     onSelectFolder: (Long?) -> Unit,
     onSearchQueryChange: (String) -> Unit,
@@ -1179,6 +1188,13 @@ private fun MainScreen(
 
     LaunchedEffect(listMode) {
         if (isTrash) contentView = MainContentView.List
+    }
+
+    LaunchedEffect(hasPremiumAccess, contentView) {
+        if (!hasPremiumAccess && contentView == MainContentView.Calendar) {
+            contentView = MainContentView.List
+            clearNoteSelection()
+        }
     }
 
     LaunchedEffect(searchQuery) {
@@ -1300,7 +1316,11 @@ private fun MainScreen(
                             modifier = Modifier.testTag("new_folder_menu_item"),
                             onClick = {
                                 addMenuExpanded = false
-                                showCreateFolderDialog = true
+                                if (hasPremiumAccess) {
+                                    showCreateFolderDialog = true
+                                } else {
+                                    onOpenPremium()
+                                }
                             },
                         )
                     }
@@ -1370,8 +1390,12 @@ private fun MainScreen(
                         onSortOptionChange = onSortOptionChange,
                         onQuickFilterChange = onQuickFilterChange,
                         onContentViewChange = { view ->
-                            contentView = view
-                            clearNoteSelection()
+                            if (view == MainContentView.Calendar && !hasPremiumAccess) {
+                                onOpenPremium()
+                            } else {
+                                contentView = view
+                                clearNoteSelection()
+                            }
                         },
                     )
                 }
@@ -1400,7 +1424,13 @@ private fun MainScreen(
                     onOpenNote = onOpenNote,
                     onToggleNoteSelection = toggleNoteSelection,
                     onStartNoteSelection = startNoteSelection,
-                    onMoveNote = { noteToMove = it },
+                    onMoveNote = { note ->
+                        if (hasPremiumAccess || note.folderId != DEFAULT_FOLDER_ID) {
+                            noteToMove = note
+                        } else {
+                            onOpenPremium()
+                        }
+                    },
                     onDeleteNote = { noteToDelete = it },
                     onTogglePinned = onTogglePinned,
                     onCalendarDateChange = ::clearNoteSelection,
@@ -1419,7 +1449,13 @@ private fun MainScreen(
                     onOpenNote = onOpenNote,
                     onToggleNoteSelection = toggleNoteSelection,
                     onStartNoteSelection = startNoteSelection,
-                    onMoveNote = { noteToMove = it },
+                    onMoveNote = { note ->
+                        if (hasPremiumAccess || note.folderId != DEFAULT_FOLDER_ID) {
+                            noteToMove = note
+                        } else {
+                            onOpenPremium()
+                        }
+                    },
                     onDeleteNote = { noteToDelete = it },
                     onRestoreNote = { note -> onRestoreNote(note.id) },
                     onPermanentlyDeleteNote = { noteToPermanentlyDelete = it },
@@ -1480,7 +1516,12 @@ private fun MainScreen(
             folders = folders,
             text = text,
             currentFolderId = note.folderId,
+            hasPremiumAccess = hasPremiumAccess,
             onDismiss = { noteToMove = null },
+            onOpenPremium = {
+                noteToMove = null
+                onOpenPremium()
+            },
             onMove = { folderId ->
                 onMoveNote(note.id, folderId)
                 noteToMove = null
@@ -3542,6 +3583,16 @@ private fun TextEditorScreen(
         }
     }
 
+    fun openPremiumAfterSavingTextNote() {
+        if (note == null) {
+            onOpenPremium()
+            return
+        }
+        saveCurrentTextNoteThen {
+            onOpenPremium()
+        }
+    }
+
     fun submitReminder(reminderAt: Long) {
         if (reminderAt <= System.currentTimeMillis()) {
             Toast.makeText(context, text.reminderMustBeFuture, Toast.LENGTH_SHORT).show()
@@ -3638,7 +3689,7 @@ private fun TextEditorScreen(
     fun requirePremiumFormatting(): Boolean {
         if (billingState.hasPremiumAccess) return true
         Toast.makeText(context, formattingPremiumRequiredLabel(appLanguage), Toast.LENGTH_SHORT).show()
-        onOpenPremium()
+        openPremiumAfterSavingTextNote()
         return false
     }
 
@@ -3868,7 +3919,11 @@ private fun TextEditorScreen(
                                     modifier = Modifier.testTag("set_reminder_menu_item"),
                                     onClick = {
                                         isMoreMenuExpanded = false
-                                        openDateTimePicker(loaded.reminderAt)
+                                        if (billingState.hasPremiumAccess) {
+                                            openDateTimePicker(loaded.reminderAt)
+                                        } else {
+                                            openPremiumAfterSavingTextNote()
+                                        }
                                     },
                                 )
                                 if (loaded.reminderAt != null) {
@@ -3880,7 +3935,11 @@ private fun TextEditorScreen(
                                             modifier = Modifier.testTag("text_reminder_repeat_" + repeat.name),
                                             onClick = {
                                                 isMoreMenuExpanded = false
-                                                viewModel.setNoteReminder(noteId, loaded.reminderAt, repeat.code)
+                                                if (billingState.hasPremiumAccess) {
+                                                    viewModel.setNoteReminder(noteId, loaded.reminderAt, repeat.code)
+                                                } else {
+                                                    openPremiumAfterSavingTextNote()
+                                                }
                                             },
                                         )
                                     }
@@ -4057,6 +4116,8 @@ private fun TextEditorScreen(
                                     text = text,
                                     currentFolderId = currentNote.folderId,
                                     isPrivacyLocked = isPrivacyLocked,
+                                    hasPremiumAccess = billingState.hasPremiumAccess,
+                                    onOpenPremium = ::openPremiumAfterSavingTextNote,
                                     onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
@@ -4658,8 +4719,10 @@ private fun ChecklistEditorScreen(
     folders: List<FolderEntity>,
     text: UiText,
     appLanguage: AppLanguage,
+    billingState: PremiumBillingState,
     isPrivacyLocked: Boolean,
     viewModel: NotepadViewModel,
+    onOpenPremium: () -> Unit,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
 ) {
@@ -4753,6 +4816,23 @@ private fun ChecklistEditorScreen(
             lastSavedAt = viewModel.saveChecklistNoteNow(noteId, titleToSave, checklistJsonToSave) ?: lastSavedAt
             saveStatus = SaveStatus.Saved
             onBack()
+        }
+    }
+
+    fun openPremiumAfterSavingChecklist() {
+        val currentNote = latestNote
+        if (currentNote == null) {
+            onOpenPremium()
+            return
+        }
+        autoSaveVersion.incrementAndGet()
+        val titleToSave = latestTitle
+        val checklistJsonToSave = ChecklistJson.encode(latestItems)
+        scope.launch {
+            saveStatus = SaveStatus.Saving
+            lastSavedAt = viewModel.saveChecklistNoteNow(noteId, titleToSave, checklistJsonToSave) ?: currentNote.updatedAt
+            saveStatus = SaveStatus.Saved
+            onOpenPremium()
         }
     }
 
@@ -4870,6 +4950,8 @@ private fun ChecklistEditorScreen(
                                     text = text,
                                     currentFolderId = currentNote.folderId,
                                     isPrivacyLocked = isPrivacyLocked,
+                                    hasPremiumAccess = billingState.hasPremiumAccess,
+                                    onOpenPremium = ::openPremiumAfterSavingChecklist,
                                     onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
                                 )
                                 Text(
@@ -4884,6 +4966,8 @@ private fun ChecklistEditorScreen(
                                 text = text,
                                 appLanguage = appLanguage,
                                 isPrivacyLocked = isPrivacyLocked,
+                                hasPremiumAccess = billingState.hasPremiumAccess,
+                                onOpenPremium = ::openPremiumAfterSavingChecklist,
                                 onSetReminder = { reminderAt, repeat ->
                                     viewModel.setNoteReminder(noteId, reminderAt, repeat)
                                 },
@@ -4964,8 +5048,10 @@ private fun DrawingEditorScreen(
     folders: List<FolderEntity>,
     text: UiText,
     appLanguage: AppLanguage,
+    billingState: PremiumBillingState,
     isPrivacyLocked: Boolean,
     viewModel: NotepadViewModel,
+    onOpenPremium: () -> Unit,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
 ) {
@@ -5054,6 +5140,16 @@ private fun DrawingEditorScreen(
                 updatedAt = savedAt,
             )
             onSaved(savedNote, strokes)
+        }
+    }
+
+    fun openPremiumAfterSavingDrawingNote() {
+        if (note == null) {
+            onOpenPremium()
+            return
+        }
+        saveCurrentDrawingNoteThen { _, _ ->
+            onOpenPremium()
         }
     }
 
@@ -5291,6 +5387,8 @@ private fun DrawingEditorScreen(
                     text = text,
                     currentFolderId = currentNote.folderId,
                     isPrivacyLocked = isPrivacyLocked,
+                    hasPremiumAccess = billingState.hasPremiumAccess,
+                    onOpenPremium = ::openPremiumAfterSavingDrawingNote,
                     onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
                 )
                 ReminderControls(
@@ -5298,6 +5396,8 @@ private fun DrawingEditorScreen(
                     text = text,
                     appLanguage = appLanguage,
                     isPrivacyLocked = isPrivacyLocked,
+                    hasPremiumAccess = billingState.hasPremiumAccess,
+                    onOpenPremium = ::openPremiumAfterSavingDrawingNote,
                     onSetReminder = { reminderAt, repeat ->
                         viewModel.setNoteReminder(noteId, reminderAt, repeat)
                     },
@@ -5813,6 +5913,8 @@ private fun ReminderControls(
     text: UiText,
     appLanguage: AppLanguage,
     isPrivacyLocked: Boolean,
+    hasPremiumAccess: Boolean,
+    onOpenPremium: () -> Unit,
     onSetReminder: (Long, String) -> Unit,
     onClearReminder: () -> Unit,
 ) {
@@ -5854,12 +5956,20 @@ private fun ReminderControls(
     }
 
     fun setRepeat(repeat: ReminderRepeat) {
+        if (!hasPremiumAccess) {
+            onOpenPremium()
+            return
+        }
         note.reminderAt?.let { reminderAt ->
             onSetReminder(reminderAt, repeat.code)
         }
     }
 
     fun openDateTimePicker() {
+        if (!hasPremiumAccess) {
+            onOpenPremium()
+            return
+        }
         val calendar = Calendar.getInstance()
         val initialReminderAt = note.reminderAt?.takeIf { it > System.currentTimeMillis() }
         if (initialReminderAt == null) {
@@ -5962,6 +6072,8 @@ private fun NoteFolderSelector(
     text: UiText,
     currentFolderId: Long,
     isPrivacyLocked: Boolean,
+    hasPremiumAccess: Boolean,
+    onOpenPremium: () -> Unit,
     onMove: (Long) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -5969,9 +6081,16 @@ private fun NoteFolderSelector(
     LaunchedEffect(isPrivacyLocked) {
         if (isPrivacyLocked) expanded = false
     }
+    val canOpenFolderPicker = hasPremiumAccess || currentFolderId != DEFAULT_FOLDER_ID
 
     Box {
-        Button(onClick = { expanded = true }) {
+        Button(onClick = {
+            if (canOpenFolderPicker) {
+                expanded = true
+            } else {
+                onOpenPremium()
+            }
+        }) {
             Text(currentFolderName, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(
@@ -5983,8 +6102,13 @@ private fun NoteFolderSelector(
                     text = { Text(folderDisplayName(folder, text)) },
                     onClick = {
                         expanded = false
-                        onMove(folder.id)
+                        if (hasPremiumAccess || folder.id == DEFAULT_FOLDER_ID) {
+                            onMove(folder.id)
+                        } else {
+                            onOpenPremium()
+                        }
                     },
+                    enabled = folder.id != currentFolderId,
                 )
             }
         }
@@ -6057,7 +6181,9 @@ private fun MoveNoteDialog(
     folders: List<FolderEntity>,
     text: UiText,
     currentFolderId: Long,
+    hasPremiumAccess: Boolean,
     onDismiss: () -> Unit,
+    onOpenPremium: () -> Unit,
     onMove: (Long) -> Unit,
 ) {
     AlertDialog(
@@ -6067,7 +6193,13 @@ private fun MoveNoteDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 folders.forEach { folder ->
                     Button(
-                        onClick = { onMove(folder.id) },
+                        onClick = {
+                            if (hasPremiumAccess || folder.id == DEFAULT_FOLDER_ID) {
+                                onMove(folder.id)
+                            } else {
+                                onOpenPremium()
+                            }
+                        },
                         enabled = folder.id != currentFolderId,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
