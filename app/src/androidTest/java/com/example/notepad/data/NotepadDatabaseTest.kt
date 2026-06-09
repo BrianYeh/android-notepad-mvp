@@ -484,6 +484,23 @@ class NotepadDatabaseTest {
     }
 
     @Test
+    fun permanentlyDeleteBlankTextDraftAcceptsWhitespaceOnlyValues() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = repository.createTextNote(DEFAULT_FOLDER_ID)
+        repository.saveTextNote(
+            noteId = noteId,
+            title = " \n\t ",
+            content = " \n  ",
+            textFormattingJson = "\n\t",
+        )
+
+        assertTrue(repository.permanentlyDeleteBlankTextDraft(noteId))
+
+        assertNull(dao.getNote(noteId))
+    }
+
+    @Test
     fun notePinnedStatePersists() = runTest {
         val repository = NotepadRepository(dao)
         dao.ensureDefaultFolder(now = 1L)

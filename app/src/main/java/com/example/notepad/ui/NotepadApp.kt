@@ -50,6 +50,17 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FormatClear
+import androidx.compose.material.icons.filled.FormatColorFill
+import androidx.compose.material.icons.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.KeyboardHide
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -65,6 +76,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -100,9 +112,15 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -192,6 +210,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
@@ -206,7 +225,7 @@ private sealed interface AppScreen {
     data object Main : AppScreen
     data object Settings : AppScreen
     data class Premium(val returnTo: AppScreen = Main) : AppScreen
-    data class TextEditor(val noteId: Long) : AppScreen
+    data class TextEditor(val noteId: Long, val isNewDraft: Boolean = false) : AppScreen
     data class DrawingEditor(val noteId: Long) : AppScreen
     data class ChecklistEditor(val noteId: Long) : AppScreen
 }
@@ -228,7 +247,9 @@ private val NOTE_PAPER_SURFACE = Color(0xFFFFFBEA)
 
 private enum class SaveStatus {
     Saving,
+    Synced,
     Saved,
+    Failed,
 }
 
 private enum class MainTab {
@@ -279,7 +300,7 @@ private fun formatLinkLabel(language: AppLanguage): String = if (language == App
 private fun clearFormattingLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "清除格式" else "Clear format"
 
 private fun formattingPremiumEntryLabel(language: AppLanguage): String {
-    return if (language == AppLanguage.TraditionalChinese) "文字格式進階版" else "Text formatting Premium"
+    return if (language == AppLanguage.TraditionalChinese) "進階版文字格式" else "Premium formatting"
 }
 
 private fun formatBoldLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "粗體" else "Bold"
@@ -296,6 +317,18 @@ private fun hideHomeFiltersLabel(language: AppLanguage): String = if (language =
 
 private fun formattingPremiumRequiredLabel(language: AppLanguage): String {
     return if (language == AppLanguage.TraditionalChinese) "文字格式是進階版功能。" else "Text formatting is a Premium feature."
+}
+
+private fun doneLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "完成" else "Done"
+
+private fun savedJustNowLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "剛剛已儲存" else "Saved just now"
+
+private fun saveFailedLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "儲存失敗" else "Save failed"
+
+private fun retryLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "重試" else "Retry"
+
+private fun openLinkFailedLabel(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) "無法開啟連結。" else "Could not open link."
 }
 
 private fun setReminderActionLabel(text: UiText, hasPremiumAccess: Boolean): String {
@@ -491,7 +524,7 @@ fun NotepadApp(
                 viewModel.selectFolder(null)
             }
             viewModel.createTextNote { noteId ->
-                screen = AppScreen.TextEditor(noteId)
+                screen = AppScreen.TextEditor(noteId, isNewDraft = true)
             }
         }
     }
@@ -550,7 +583,7 @@ fun NotepadApp(
             onDeleteFolder = viewModel::deleteFolder,
             onCreateTextNote = {
                 viewModel.createTextNote { noteId ->
-                    screen = AppScreen.TextEditor(noteId)
+                    screen = AppScreen.TextEditor(noteId, isNewDraft = true)
                 }
             },
             onCreateDrawingNote = {
@@ -630,6 +663,7 @@ fun NotepadApp(
 
         is AppScreen.TextEditor -> TextEditorScreen(
             noteId = currentScreen.noteId,
+            isNewDraft = currentScreen.isNewDraft,
             folders = folders,
             text = text,
             editorFontSize = editorFontSize,
@@ -3320,6 +3354,7 @@ private fun NoteRow(
 @Composable
 private fun TextEditorScreen(
     noteId: Long,
+    isNewDraft: Boolean,
     folders: List<FolderEntity>,
     text: UiText,
     editorFontSize: EditorFontSize,
@@ -3332,9 +3367,14 @@ private fun TextEditorScreen(
     onDeleted: () -> Unit,
 ) {
     val note by viewModel.observeNote(noteId).collectAsStateWithLifecycle(initialValue = null)
-    var title by remember(noteId) { mutableStateOf("") }
-    var contentField by remember(noteId) { mutableStateOf(TextFieldValue("")) }
-    var formatRanges by remember(noteId) { mutableStateOf<List<TextFormatRange>>(emptyList()) }
+    val titleState = remember(noteId) { mutableStateOf("") }
+    var title by titleState
+    val contentFieldState = remember(noteId) { mutableStateOf(TextFieldValue("")) }
+    var contentField by contentFieldState
+    val formatRangesState = remember(noteId) { mutableStateOf<List<TextFormatRange>>(emptyList()) }
+    var formatRanges by formatRangesState
+    val latestTitleText = remember(noteId) { AtomicReference("") }
+    val latestContentText = remember(noteId) { AtomicReference("") }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var modeInitializedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
     var isEditing by remember(noteId) { mutableStateOf(false) }
@@ -3346,7 +3386,7 @@ private fun TextEditorScreen(
     var isFindVisible by remember(noteId) { mutableStateOf(false) }
     var findQuery by remember(noteId) { mutableStateOf("") }
     var activeFindIndex by remember(noteId) { mutableStateOf(0) }
-    var saveStatus by remember(noteId) { mutableStateOf(SaveStatus.Saved) }
+    var saveStatus by remember(noteId) { mutableStateOf(SaveStatus.Synced) }
     var isSavingAndLeaving by remember(noteId) { mutableStateOf(false) }
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
     var pendingExportText by remember { mutableStateOf<String?>(null) }
@@ -3388,6 +3428,11 @@ private fun TextEditorScreen(
     val textFormattingJson = remember(formatRanges, content) {
         encodedTextFormattingJson(formatRanges, content.length)
     }
+    val latestNote by rememberUpdatedState(note)
+    val latestLoadedNoteId by rememberUpdatedState(loadedNoteId)
+    val latestTitle by rememberUpdatedState(title)
+    val latestContentField by rememberUpdatedState(contentField)
+    val latestTextFormattingJson by rememberUpdatedState(textFormattingJson)
     val findMatches = remember(content, findQuery) { findInNoteMatches(content, findQuery) }
     val currentFindIndex = activeFindIndex.coerceIn(0, (findMatches.size - 1).coerceAtLeast(0))
 
@@ -3403,6 +3448,7 @@ private fun TextEditorScreen(
             activeTimePickerDialog = null
         }
     }
+
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { _ ->
@@ -3439,11 +3485,16 @@ private fun TextEditorScreen(
         title = loaded.title
         contentField = TextFieldValue(loaded.textContent.orEmpty())
         formatRanges = TextFormattingJson.decode(loaded.textFormattingJson, loaded.textContent.orEmpty().length)
+        latestTitleText.set(loaded.title)
+        latestContentText.set(loaded.textContent.orEmpty())
         loadedNoteId = loaded.id
         lastSavedAt = loaded.updatedAt
-        saveStatus = SaveStatus.Saved
+        saveStatus = SaveStatus.Synced
         if (modeInitializedNoteId != loaded.id) {
-            isEditing = loaded.title.isBlank() && loaded.textContent.orEmpty().isBlank()
+            val isBlankLoadedTextNote = loaded.title.isBlank() && loaded.textContent.orEmpty().isBlank()
+            isEditing = isBlankLoadedTextNote
+            isFocusWriting = isNewDraft && isBlankLoadedTextNote
+            isMetadataExpanded = false
             modeInitializedNoteId = loaded.id
         }
     }
@@ -3457,7 +3508,11 @@ private fun TextEditorScreen(
 
     LaunchedEffect(loadedNoteId) {
         if (loadedNoteId == noteId && isEditing) {
-            titleFocusRequester.requestFocus()
+            if (isFocusWriting) {
+                contentFocusRequester.requestFocus()
+            } else {
+                titleFocusRequester.requestFocus()
+            }
             keyboardController?.show()
         }
     }
@@ -3477,23 +3532,32 @@ private fun TextEditorScreen(
         }
     }
 
-    LaunchedEffect(noteId, loadedNoteId, title, content, textFormattingJson) {
-        if (loadedNoteId == noteId) {
+    LaunchedEffect(noteId, loadedNoteId, isEditing, title, content, textFormattingJson) {
+        if (loadedNoteId == noteId && isEditing) {
             val current = note ?: return@LaunchedEffect
             if (
                 title == current.title &&
                 content == current.textContent.orEmpty() &&
                 textFormattingJson == current.textFormattingJson.orEmpty()
             ) {
-                saveStatus = SaveStatus.Saved
+                saveStatus = SaveStatus.Synced
                 return@LaunchedEffect
             }
             val pendingVersion = autoSaveVersion.get()
             saveStatus = SaveStatus.Saving
             delay(500)
             if (pendingVersion != autoSaveVersion.get()) return@LaunchedEffect
-            lastSavedAt = viewModel.saveTextNoteNow(noteId, title, content, textFormattingJson) ?: System.currentTimeMillis()
-            saveStatus = SaveStatus.Saved
+            val savedAt = try {
+                viewModel.saveTextNoteNow(noteId, title, content, textFormattingJson)
+            } catch (_: Exception) {
+                null
+            }
+            if (savedAt == null) {
+                saveStatus = SaveStatus.Failed
+            } else {
+                lastSavedAt = savedAt
+                saveStatus = SaveStatus.Saved
+            }
         }
     }
 
@@ -3513,12 +3577,40 @@ private fun TextEditorScreen(
                 )
     }
 
+    fun isBlankDraftContent(
+        titleValue: String = title,
+        contentValue: String = contentField.text,
+        formattingValue: String = encodedTextFormattingJson(textLength = contentValue.length),
+    ): Boolean {
+        return isBlankDraftValues(titleValue, contentValue, formattingValue)
+    }
+
     fun savePendingTextNote() {
-        val titleToSave = title
-        val contentToSave = contentField.text
-        val formattingToSave = encodedTextFormattingJson(textLength = contentToSave.length)
-        if (hasUnsavedTextNote(note, titleToSave, contentToSave, formattingToSave, loadedNoteId)) {
+        val titleToSave = latestTitleText.get()
+        val contentToSave = latestContentText.get()
+        val formattingToSave = encodedTextFormattingJson(
+            ranges = formatRangesState.value,
+            textLength = contentToSave.length,
+        )
+        if (isNewDraft && isBlankDraftContent(titleToSave, contentToSave, formattingToSave)) {
+            autoSaveVersion.incrementAndGet()
+            viewModel.discardNewTextDraftIfBlank(noteId, titleToSave, contentToSave, formattingToSave)
+            return
+        }
+        if (hasUnsavedTextNote(latestNote, titleToSave, contentToSave, formattingToSave, latestLoadedNoteId)) {
             viewModel.saveTextNote(noteId, titleToSave, contentToSave, formattingToSave)
+        }
+    }
+
+    suspend fun saveTextNoteNowOrFail(
+        titleValue: String,
+        contentValue: String,
+        formattingValue: String,
+    ): Long? {
+        return try {
+            viewModel.saveTextNoteNow(noteId, titleValue, contentValue, formattingValue)
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -3539,15 +3631,59 @@ private fun TextEditorScreen(
         if (isSavingAndLeaving) return
         isSavingAndLeaving = true
         autoSaveVersion.incrementAndGet()
-        val titleToSave = title
-        val contentToSave = contentField.text
-        val formattingToSave = encodedTextFormattingJson(textLength = contentToSave.length)
+        val titleToSave = latestTitleText.get()
+        val contentToSave = latestContentText.get()
+        val formattingToSave = encodedTextFormattingJson(
+            ranges = formatRangesState.value,
+            textLength = contentToSave.length,
+        )
         keyboardController?.hide()
         scope.launch {
+            if (isNewDraft && isBlankDraftContent(titleToSave, contentToSave, formattingToSave)) {
+                val deleted = viewModel.discardNewTextDraftIfBlankNow(
+                    noteId,
+                    titleToSave,
+                    contentToSave,
+                    formattingToSave,
+                )
+                if (deleted) {
+                    onBack()
+                } else {
+                    saveStatus = SaveStatus.Failed
+                    isSavingAndLeaving = false
+                }
+                return@launch
+            }
             saveStatus = SaveStatus.Saving
-            lastSavedAt = viewModel.saveTextNoteNow(noteId, titleToSave, contentToSave, formattingToSave) ?: lastSavedAt
-            saveStatus = SaveStatus.Saved
-            onBack()
+            val savedAt = saveTextNoteNowOrFail(titleToSave, contentToSave, formattingToSave)
+            if (savedAt == null) {
+                saveStatus = SaveStatus.Failed
+                isSavingAndLeaving = false
+            } else {
+                lastSavedAt = savedAt
+                saveStatus = SaveStatus.Saved
+                onBack()
+            }
+        }
+    }
+
+    fun retrySaveTextNote() {
+        autoSaveVersion.incrementAndGet()
+        val titleToSave = latestTitleText.get()
+        val contentToSave = latestContentText.get()
+        val formattingToSave = encodedTextFormattingJson(
+            ranges = formatRangesState.value,
+            textLength = contentToSave.length,
+        )
+        scope.launch {
+            saveStatus = SaveStatus.Saving
+            val savedAt = saveTextNoteNowOrFail(titleToSave, contentToSave, formattingToSave)
+            if (savedAt == null) {
+                saveStatus = SaveStatus.Failed
+            } else {
+                lastSavedAt = savedAt
+                saveStatus = SaveStatus.Saved
+            }
         }
     }
 
@@ -3639,14 +3775,21 @@ private fun TextEditorScreen(
     }
 
     fun saveCurrentTextNoteThen(onSaved: (NoteEntity) -> Unit) {
-        val currentNote = note ?: return
-        val titleToSave = title
-        val contentToSave = contentField.text
-        val formattingToSave = encodedTextFormattingJson(textLength = contentToSave.length)
+        val currentNote = latestNote ?: return
+        val titleToSave = latestTitleText.get()
+        val contentToSave = latestContentText.get()
+        val formattingToSave = encodedTextFormattingJson(
+            ranges = formatRangesState.value,
+            textLength = contentToSave.length,
+        )
         autoSaveVersion.incrementAndGet()
         scope.launch {
             saveStatus = SaveStatus.Saving
-            val savedAt = viewModel.saveTextNoteNow(noteId, titleToSave, contentToSave, formattingToSave) ?: currentNote.updatedAt
+            val savedAt = saveTextNoteNowOrFail(titleToSave, contentToSave, formattingToSave)
+            if (savedAt == null) {
+                saveStatus = SaveStatus.Failed
+                return@launch
+            }
             lastSavedAt = savedAt
             saveStatus = SaveStatus.Saved
             onSaved(
@@ -3688,6 +3831,25 @@ private fun TextEditorScreen(
         }
         saveCurrentTextNoteThen {
             onOpenPremium()
+        }
+    }
+
+    fun toggleReadModeCheckbox(lineIndex: Int) {
+        val currentContent = contentField.text
+        val updatedContent = toggleMarkdownCheckboxLine(currentContent, lineIndex) ?: return
+        autoSaveVersion.incrementAndGet()
+        contentField = contentField.copy(text = updatedContent)
+        latestContentText.set(updatedContent)
+        scope.launch {
+            saveStatus = SaveStatus.Saving
+            val formattingToSave = encodedTextFormattingJson(textLength = updatedContent.length)
+            val savedAt = saveTextNoteNowOrFail(title, updatedContent, formattingToSave)
+            if (savedAt == null) {
+                saveStatus = SaveStatus.Failed
+            } else {
+                lastSavedAt = savedAt
+                saveStatus = SaveStatus.Saved
+            }
         }
     }
 
@@ -3780,8 +3942,38 @@ private fun TextEditorScreen(
             text = updatedContent,
             selection = TextRange(start + prefix.length),
         )
+        latestContentText.set(updatedContent)
         contentFocusRequester.requestFocus()
         keyboardController?.show()
+    }
+
+    fun removeEmptyListMarkerBeforeCursor(): Boolean {
+        val currentContent = contentField.text
+        val selection = contentField.selection
+        if (!selection.collapsed) return false
+        val cursor = selection.start.coerceIn(0, currentContent.length)
+        val lineStart = if (cursor <= 0) {
+            0
+        } else {
+            currentContent.lastIndexOf('\n', cursor - 1).let { if (it < 0) 0 else it + 1 }
+        }
+        val linePrefix = currentContent.substring(lineStart, cursor)
+        if (linePrefix != "- " && linePrefix != "- [ ] " && linePrefix != "- [x] " && linePrefix != "- [X] ") {
+            return false
+        }
+        val updatedContent = currentContent.removeRange(lineStart, cursor)
+        autoSaveVersion.incrementAndGet()
+        formatRanges = adjustTextFormattingAfterEdit(
+            ranges = formatRanges,
+            oldText = currentContent,
+            newText = updatedContent,
+        )
+        contentField = TextFieldValue(
+            text = updatedContent,
+            selection = TextRange(lineStart),
+        )
+        latestContentText.set(updatedContent)
+        return true
     }
 
     fun requirePremiumFormatting(): Boolean {
@@ -3911,6 +4103,13 @@ private fun TextEditorScreen(
     }
 
     val currentNote = note
+    val currentDisplayTitle = remember(title, content, currentNote?.type) {
+        if (currentNote?.type == NoteTypes.TEXT) {
+            title.ifBlank { firstTextContentTitle(content) ?: text.untitledTextNote }
+        } else {
+            title.ifBlank { text.untitledTextNote }
+        }
+    }
     val isCompactEditor = isEditing && (isFocusWriting || isContentFocused)
     val findActionLabel = findInNoteActionLabel(appLanguage)
 
@@ -3924,12 +4123,12 @@ private fun TextEditorScreen(
                     if (isEditing) {
                         Column {
                             Text(
-                                title.ifBlank { text.untitledTextNote },
+                                currentDisplayTitle,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                saveStatus.label(text),
+                                saveStatus.label(text, appLanguage),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1,
@@ -3949,38 +4148,46 @@ private fun TextEditorScreen(
                         onClick = ::saveAndBack,
                         modifier = Modifier.testTag("back_button"),
                     ) {
-                        Text(text.back)
+                        Text(if (isEditing) doneLabel(appLanguage) else text.back)
                     }
                 },
                 actions = {
                     if (currentNote != null && !isEditing) {
                         TextButton(
-                            onClick = { isEditing = true },
+                            onClick = {
+                                isFocusWriting = true
+                                isMetadataExpanded = false
+                                isEditing = true
+                            },
                             modifier = Modifier.testTag("edit_note_button"),
                         ) {
                             Text(text.edit)
                         }
                     }
-                    TextButton(
+                    IconButton(
                         onClick = {
                             isMoreMenuExpanded = false
                             isFindVisible = true
                         },
                         modifier = Modifier
+                            .size(48.dp)
                             .semantics { contentDescription = text.findInNote }
                             .testTag("find_in_note_button"),
                     ) {
-                        Text(findActionLabel, maxLines = 1)
+                        Icon(Icons.Filled.Search, contentDescription = null)
                     }
                     Box {
-                        TextButton(
+                        IconButton(
                             onClick = {
                                 keyboardController?.hide()
                                 isMoreMenuExpanded = true
                             },
-                            modifier = Modifier.testTag("more_note_button"),
+                            modifier = Modifier
+                                .size(48.dp)
+                                .semantics { contentDescription = text.more }
+                                .testTag("more_note_button"),
                         ) {
-                            Text("...")
+                            Icon(Icons.Filled.MoreVert, contentDescription = null)
                         }
                         DropdownMenu(
                             expanded = isMoreMenuExpanded && !isPrivacyLocked,
@@ -4133,7 +4340,7 @@ private fun TextEditorScreen(
                                 .testTag("text_note_compact_metadata"),
                         ) {
                             Text(
-                                text = title.ifBlank { text.untitledTextNote },
+                                text = currentDisplayTitle,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -4143,11 +4350,19 @@ private fun TextEditorScreen(
                                     .testTag("text_note_compact_title"),
                             )
                             Text(
-                                text = saveStatus.label(text),
+                                text = saveStatus.label(text, appLanguage),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.testTag("text_note_save_status"),
                             )
+                        }
+                        if (saveStatus == SaveStatus.Failed) {
+                            TextButton(
+                                onClick = ::retrySaveTextNote,
+                                modifier = Modifier.testTag("text_note_retry_save_button"),
+                            ) {
+                                Text(retryLabel(appLanguage), maxLines = 1)
+                            }
                         }
                         TextButton(
                             onClick = { isMetadataExpanded = !isMetadataExpanded },
@@ -4192,6 +4407,7 @@ private fun TextEditorScreen(
                                 onValueChange = {
                                     autoSaveVersion.incrementAndGet()
                                     title = it
+                                    latestTitleText.set(it)
                                 },
                                 placeholder = { Text(text.title) },
                                 singleLine = true,
@@ -4220,11 +4436,19 @@ private fun TextEditorScreen(
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = saveStatus.label(text),
+                                        text = saveStatus.label(text, appLanguage),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.testTag("text_note_save_status"),
                                     )
+                                    if (saveStatus == SaveStatus.Failed) {
+                                        TextButton(
+                                            onClick = ::retrySaveTextNote,
+                                            modifier = Modifier.testTag("text_note_retry_save_metadata_button"),
+                                        ) {
+                                            Text(retryLabel(appLanguage), maxLines = 1)
+                                        }
+                                    }
                                     Text(
                                         text = "${text.lastUpdated}: ${formatTime(lastSavedAt ?: currentNote.updatedAt, appLanguage)}",
                                         style = MaterialTheme.typography.bodySmall,
@@ -4308,13 +4532,15 @@ private fun TextEditorScreen(
                     BasicTextField(
                         value = contentField,
                         onValueChange = { nextValue ->
+                            val adjustedNextValue = continuedListValue(contentField, nextValue)
                             autoSaveVersion.incrementAndGet()
                             formatRanges = adjustTextFormattingAfterEdit(
                                 ranges = formatRanges,
                                 oldText = contentField.text,
-                                newText = nextValue.text,
+                                newText = adjustedNextValue.text,
                             )
-                            contentField = nextValue
+                            contentField = adjustedNextValue
+                            latestContentText.set(adjustedNextValue.text)
                         },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -4336,6 +4562,11 @@ private fun TextEditorScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 72.dp)
+                            .onPreviewKeyEvent { event ->
+                                event.type == KeyEventType.KeyDown &&
+                                    event.key == Key.Backspace &&
+                                    removeEmptyListMarkerBeforeCursor()
+                            }
                             .focusRequester(contentFocusRequester)
                             .onFocusChanged { isContentFocused = it.isFocused }
                             .testTag("text_note_content"),
@@ -4422,12 +4653,11 @@ private fun TextEditorScreen(
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Text(
-                                text = title.ifBlank { text.untitledTextNote },
+                                text = currentDisplayTitle,
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier
-                                    .clickable { editTitleFromReadMode() }
                                     .testTag("text_note_read_title"),
                             )
                             Row(
@@ -4459,6 +4689,34 @@ private fun TextEditorScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = saveStatus.label(text, appLanguage),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (saveStatus == SaveStatus.Failed) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("text_note_read_save_status"),
+                                )
+                                if (saveStatus == SaveStatus.Failed) {
+                                    TextButton(
+                                        onClick = ::retrySaveTextNote,
+                                        modifier = Modifier.testTag("text_note_read_retry_save_button"),
+                                    ) {
+                                        Text(retryLabel(appLanguage), maxLines = 1)
+                                    }
+                                }
+                            }
                             Text(
                                 text = reminderStatus(currentNote.reminderAt, text, appLanguage),
                                 style = MaterialTheme.typography.bodySmall,
@@ -4481,47 +4739,97 @@ private fun TextEditorScreen(
                                 linkColor = MaterialTheme.colorScheme.primary,
                                 linkifyUrls = content.isNotBlank(),
                             )
-                            Text(
-                                text = readContentText,
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = editorFontSize.fontSizeSp.sp,
-                                    lineHeight = (editorFontSize.fontSizeSp + 10).sp,
-                                ),
-                                color = if (content.isBlank()) {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                                onTextLayout = { readContentLayout = it },
-                                modifier = Modifier
-                                    .pointerInput(readContentLayout, readContentText, contentField.text) {
-                                        detectTapGestures { tapOffset ->
-                                            val tappedUrl = if (content.isNotBlank()) {
-                                                readContentLayout
-                                                    ?.getOffsetForPosition(tapOffset)
-                                                    ?.let(readContentText::webUrlAt)
-                                            } else {
-                                                null
-                                            }
-                                            if (tappedUrl == null || !openWebUrl(context, tappedUrl)) {
-                                                editContentFromReadMode(tapOffset)
+                            val readLines = content.lines()
+                            val renderCheckboxRows = content.isNotBlank() &&
+                                findQuery.isBlank() &&
+                                formatRanges.isEmpty() &&
+                                content.webUrlRanges().isEmpty() &&
+                                readLines.any { parseMarkdownCheckboxLine(it) != null }
+                            if (renderCheckboxRows) {
+                                Column(
+                                    modifier = Modifier
+                                        .onGloballyPositioned { coordinates ->
+                                            readContentTopInScroll =
+                                                coordinates.positionInRoot().y -
+                                                    readViewportTopInRoot +
+                                                    readScrollState.value
+                                        }
+                                        .semantics(mergeDescendants = true) {}
+                                        .testTag("text_note_read_content"),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    readLines.forEachIndexed { lineIndex, line ->
+                                        val checkbox = parseMarkdownCheckboxLine(line)
+                                        if (checkbox == null) {
+                                            Text(
+                                                text = line,
+                                                style = MaterialTheme.typography.bodyLarge.copy(
+                                                    fontSize = editorFontSize.fontSizeSp.sp,
+                                                    lineHeight = (editorFontSize.fontSizeSp + 10).sp,
+                                                ),
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                        } else {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            ) {
+                                                Checkbox(
+                                                    checked = checkbox.checked,
+                                                    onCheckedChange = { toggleReadModeCheckbox(lineIndex) },
+                                                    modifier = Modifier.testTag("text_note_read_checkbox_$lineIndex"),
+                                                )
+                                                Text(
+                                                    text = checkbox.label,
+                                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                                        fontSize = editorFontSize.fontSizeSp.sp,
+                                                        lineHeight = (editorFontSize.fontSizeSp + 10).sp,
+                                                    ),
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    modifier = Modifier.weight(1f),
+                                                )
                                             }
                                         }
                                     }
-                                    .onGloballyPositioned { coordinates ->
-                                        readContentTopInScroll =
-                                            coordinates.positionInRoot().y -
-                                                readViewportTopInRoot +
-                                                readScrollState.value
-                                    }
-                                    .semantics {
-                                        onClick {
-                                            editContentFromReadMode()
-                                            true
+                                }
+                            } else {
+                                Text(
+                                    text = readContentText,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = editorFontSize.fontSizeSp.sp,
+                                        lineHeight = (editorFontSize.fontSizeSp + 10).sp,
+                                    ),
+                                    color = if (content.isBlank()) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                    onTextLayout = { readContentLayout = it },
+                                    modifier = Modifier
+                                        .pointerInput(readContentLayout, readContentText, contentField.text) {
+                                            detectTapGestures { tapOffset ->
+                                                val tappedUrl = if (content.isNotBlank()) {
+                                                    readContentLayout
+                                                        ?.getOffsetForPosition(tapOffset)
+                                                        ?.let(readContentText::webUrlAt)
+                                                } else {
+                                                    null
+                                                }
+                                                if (tappedUrl != null && !openWebUrl(context, tappedUrl)) {
+                                                    Toast.makeText(context, openLinkFailedLabel(appLanguage), Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
                                         }
-                                    }
-                                    .testTag("text_note_read_content"),
-                            )
+                                        .onGloballyPositioned { coordinates ->
+                                            readContentTopInScroll =
+                                                coordinates.positionInRoot().y -
+                                                    readViewportTopInRoot +
+                                                    readScrollState.value
+                                        }
+                                        .testTag("text_note_read_content"),
+                                )
+                            }
                         }
                     }
                 }
@@ -4634,31 +4942,34 @@ private fun FindInNoteBar(
                 .width(52.dp)
                 .testTag("find_match_status"),
         )
-        TextButton(
+        IconButton(
             onClick = onPrevious,
             enabled = query.isNotBlank() && matchCount > 0,
             modifier = Modifier
-                .width(40.dp)
+                .size(48.dp)
+                .semantics { contentDescription = text.previousMatch }
                 .testTag("previous_find_match_button"),
         ) {
-            Text("<", maxLines = 1)
+            Icon(Icons.Filled.ArrowBack, contentDescription = null)
         }
-        TextButton(
+        IconButton(
             onClick = onNext,
             enabled = query.isNotBlank() && matchCount > 0,
             modifier = Modifier
-                .width(40.dp)
+                .size(48.dp)
+                .semantics { contentDescription = text.nextMatch }
                 .testTag("next_find_match_button"),
         ) {
-            Text(">", maxLines = 1)
+            Icon(Icons.Filled.ArrowForward, contentDescription = null)
         }
-        TextButton(
+        IconButton(
             onClick = onClearSearch,
             modifier = Modifier
-                .width(44.dp)
+                .size(48.dp)
+                .semantics { contentDescription = text.clearSearch }
                 .testTag("clear_find_in_note_button"),
         ) {
-            Text("x", maxLines = 1)
+            Icon(Icons.Filled.Close, contentDescription = null)
         }
     }
 }
@@ -4691,15 +5002,14 @@ private fun TextEditorAccessoryBar(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextEditorToolbarButton(
-            label = "[ ]",
+        TextEditorIconToolbarButton(
+            icon = Icons.Filled.CheckBoxOutlineBlank,
             contentDescription = text.checkboxItem,
             onClick = onInsertCheckbox,
             testTag = "quick_insert_checkbox_button",
-            width = 64.dp,
         )
-        TextEditorToolbarButton(
-            label = "-",
+        TextEditorIconToolbarButton(
+            icon = Icons.Filled.FormatListBulleted,
             contentDescription = text.bulletItem,
             onClick = onInsertBullet,
             testTag = "quick_insert_bullet_button",
@@ -4742,44 +5052,62 @@ private fun TextEditorAccessoryBar(
                 testTag = "format_underline_button",
                 textDecoration = TextDecoration.Underline,
             )
-            TextEditorToolbarButton(
-                label = "HL",
+            TextEditorIconToolbarButton(
+                icon = Icons.Filled.FormatColorFill,
                 contentDescription = formatHighlightLabel(appLanguage),
                 onClick = onHighlight,
                 testTag = "format_highlight_button",
-                fontWeight = FontWeight.SemiBold,
-                highlight = true,
             )
-            TextEditorToolbarButton(
-                label = formatLinkLabel(appLanguage),
+            TextEditorIconToolbarButton(
+                icon = Icons.Filled.Link,
                 contentDescription = formatLinkLabel(appLanguage),
                 onClick = onLink,
                 testTag = "format_link_button",
-                width = 64.dp,
-                color = MaterialTheme.colorScheme.primary,
-                textDecoration = TextDecoration.Underline,
             )
-            TextEditorToolbarButton(
-                label = "Tx",
+            TextEditorIconToolbarButton(
+                icon = Icons.Filled.FormatClear,
                 contentDescription = clearFormattingLabel(appLanguage),
                 onClick = onClearFormatting,
                 testTag = "clear_formatting_button",
-                width = 56.dp,
             )
         } else {
-            TextButton(
+            IconButton(
                 onClick = onOpenPremium,
-                modifier = Modifier.testTag("formatting_premium_entry_button"),
+                modifier = Modifier
+                    .size(48.dp)
+                    .semantics { contentDescription = formattingPremiumEntryLabel(appLanguage) }
+                    .testTag("formatting_premium_entry_button"),
             ) {
-                Text(formattingPremiumEntryLabel(appLanguage), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Icon(Icons.Filled.Lock, contentDescription = null)
             }
         }
-        TextButton(
+        IconButton(
             onClick = onHideKeyboard,
-            modifier = Modifier.testTag("hide_keyboard_button"),
+            modifier = Modifier
+                .size(48.dp)
+                .semantics { contentDescription = text.hideKeyboard }
+                .testTag("hide_keyboard_button"),
         ) {
-            Text(text.hideKeyboard, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(Icons.Filled.KeyboardHide, contentDescription = null)
         }
+    }
+}
+
+@Composable
+private fun TextEditorIconToolbarButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    testTag: String,
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(48.dp)
+            .semantics { this.contentDescription = contentDescription }
+            .testTag(testTag),
+    ) {
+        Icon(icon, contentDescription = null)
     }
 }
 
@@ -4841,7 +5169,7 @@ private fun ChecklistEditorScreen(
     var title by remember(noteId) { mutableStateOf("") }
     var items by remember(noteId) { mutableStateOf(ChecklistJson.emptyItems()) }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
-    var saveStatus by remember(noteId) { mutableStateOf(SaveStatus.Saved) }
+    var saveStatus by remember(noteId) { mutableStateOf(SaveStatus.Synced) }
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isSavingAndLeaving by remember(noteId) { mutableStateOf(false) }
@@ -4865,14 +5193,14 @@ private fun ChecklistEditorScreen(
         items = ChecklistJson.decode(loaded.textContent)
         loadedNoteId = loaded.id
         lastSavedAt = loaded.updatedAt
-        saveStatus = SaveStatus.Saved
+        saveStatus = SaveStatus.Synced
     }
 
     LaunchedEffect(noteId, loadedNoteId, title, checklistJson) {
         if (loadedNoteId != noteId) return@LaunchedEffect
         val current = note ?: return@LaunchedEffect
         if (title == current.title && checklistJson == current.textContent.orEmpty()) {
-            saveStatus = SaveStatus.Saved
+            saveStatus = SaveStatus.Synced
             return@LaunchedEffect
         }
         val pendingVersion = autoSaveVersion.get()
@@ -4982,7 +5310,7 @@ private fun ChecklistEditorScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            saveStatus.label(text),
+                            saveStatus.label(text, appLanguage),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             maxLines = 1,
@@ -6412,13 +6740,80 @@ private fun folderDisplayNameById(
 }
 
 private fun noteTitle(note: NoteEntity, text: UiText): String {
-    return note.title.ifBlank {
-        when (note.type) {
-            NoteTypes.DRAWING -> text.untitledDrawing
-            NoteTypes.CHECKLIST -> text.untitledChecklist
-            else -> text.untitledTextNote
-        }
+    if (note.title.isNotBlank()) return note.title
+    if (note.type == NoteTypes.TEXT) {
+        firstTextContentTitle(note.textContent.orEmpty())?.let { return it }
     }
+    return when (note.type) {
+        NoteTypes.DRAWING -> text.untitledDrawing
+        NoteTypes.CHECKLIST -> text.untitledChecklist
+        else -> text.untitledTextNote
+    }
+}
+
+private fun firstTextContentTitle(content: String): String? {
+    return content
+        .lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.isNotBlank() }
+        ?.take(80)
+}
+
+private fun isBlankDraftValues(
+    title: String,
+    content: String,
+    formatting: String,
+): Boolean {
+    return title.isBlank() && content.isBlank() && formatting.isBlank()
+}
+
+private data class MarkdownCheckboxLine(
+    val checked: Boolean,
+    val label: String,
+)
+
+private fun parseMarkdownCheckboxLine(line: String): MarkdownCheckboxLine? {
+    return when {
+        line.startsWith("- [ ] ") -> MarkdownCheckboxLine(checked = false, label = line.removePrefix("- [ ] "))
+        line.startsWith("- [x] ") -> MarkdownCheckboxLine(checked = true, label = line.removePrefix("- [x] "))
+        line.startsWith("- [X] ") -> MarkdownCheckboxLine(checked = true, label = line.removePrefix("- [X] "))
+        else -> null
+    }
+}
+
+private fun toggleMarkdownCheckboxLine(content: String, lineIndex: Int): String? {
+    val lines = content.lines().toMutableList()
+    val line = lines.getOrNull(lineIndex) ?: return null
+    val checkbox = parseMarkdownCheckboxLine(line) ?: return null
+    lines[lineIndex] = if (checkbox.checked) {
+        "- [ ] ${checkbox.label}"
+    } else {
+        "- [x] ${checkbox.label}"
+    }
+    return lines.joinToString("\n")
+}
+
+private fun continuedListValue(oldValue: TextFieldValue, newValue: TextFieldValue): TextFieldValue {
+    if (!oldValue.selection.collapsed) return newValue
+    val cursor = oldValue.selection.start
+    if (newValue.text.length != oldValue.text.length + 1) return newValue
+    if (newValue.text.getOrNull(cursor) != '\n') return newValue
+    val lineStart = oldValue.text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+    val currentLine = oldValue.text.substring(lineStart, cursor)
+    val marker = when {
+        currentLine.startsWith("- [ ] ") || currentLine.startsWith("- [x] ") || currentLine.startsWith("- [X] ") -> "- [ ] "
+        currentLine.startsWith("- ") -> "- "
+        else -> null
+    } ?: return newValue
+    val updated = buildString {
+        append(newValue.text.substring(0, cursor + 1))
+        append(marker)
+        append(newValue.text.substring(cursor + 1))
+    }
+    return newValue.copy(
+        text = updated,
+        selection = TextRange(cursor + 1 + marker.length),
+    )
 }
 
 private fun notePreview(note: NoteEntity, query: String): String? {
@@ -6973,10 +7368,12 @@ private fun DrawingColorOption.label(text: UiText): String {
     }
 }
 
-private fun SaveStatus.label(text: UiText): String {
+private fun SaveStatus.label(text: UiText, appLanguage: AppLanguage): String {
     return when (this) {
         SaveStatus.Saving -> text.saving
-        SaveStatus.Saved -> text.saved
+        SaveStatus.Synced -> text.saved
+        SaveStatus.Saved -> savedJustNowLabel(appLanguage)
+        SaveStatus.Failed -> saveFailedLabel(appLanguage)
     }
 }
 

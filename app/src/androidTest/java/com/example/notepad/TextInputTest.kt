@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -19,7 +20,9 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
@@ -46,6 +49,7 @@ import com.example.notepad.ui.previousFindMatchIndex
 import com.example.notepad.ui.webUrlAt
 import com.example.notepad.ui.webUrlRanges
 import androidx.compose.ui.graphics.Color
+import com.example.notepad.debug.DebugSaveFailure
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.After
@@ -66,17 +70,27 @@ class TextInputTest {
     @Before
     fun resetDebugPremiumOverride() {
         DebugPremiumAccess.write(composeRule.activity, false)
+        DebugSaveFailure.clear()
     }
 
     @After
     fun clearDebugPremiumOverride() {
         DebugPremiumAccess.write(composeRule.activity, false)
+        DebugSaveFailure.clear()
     }
 
     private fun waitForTag(tag: String) {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    private fun showTextNoteMetadata() {
+        if (composeRule.onAllNodesWithTag("text_note_title").fetchSemanticsNodes().isEmpty()) {
+            waitForTag("toggle_metadata_button")
+            composeRule.onNodeWithTag("toggle_metadata_button").performClick()
+        }
+        waitForTag("text_note_title")
     }
 
     private fun verticalScrollValue(tag: String, useUnmergedTree: Boolean = false): Float {
@@ -115,12 +129,72 @@ class TextInputTest {
             .getOrNull(SemanticsProperties.ToggleableState)
     }
 
+    private fun enableDebugPremiumAccess() {
+        DebugPremiumAccess.write(composeRule.activity, true)
+        composeRule.waitForIdle()
+    }
+
     private fun tagCount(tag: String): Int {
         return composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().size
     }
 
     private fun assertTagAbsent(tag: String) {
         assertEquals(0, tagCount(tag))
+    }
+
+    private fun assertExactTextAbsent(value: String) {
+        assertEquals(
+            "Unexpected raw label '$value' is visible",
+            0,
+            composeRule.onAllNodesWithText(
+                text = value,
+                substring = false,
+                useUnmergedTree = true,
+            ).fetchSemanticsNodes().size,
+        )
+    }
+
+    private fun assertContentDescriptionAbsent(value: String) {
+        assertEquals(
+            "Unexpected content description '$value' is exposed",
+            0,
+            composeRule.onAllNodes(
+                matcher = hasContentDescription(value, substring = false),
+                useUnmergedTree = true,
+            ).fetchSemanticsNodes().size,
+        )
+    }
+
+    private fun assertTaggedContentDescription(tag: String, expected: String) {
+        val descriptions = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config
+            .getOrNull(SemanticsProperties.ContentDescription)
+            .orEmpty()
+        assertTrue(
+            "$tag content descriptions were $descriptions, expected $expected",
+            descriptions.contains(expected),
+        )
+    }
+
+    private fun assertTaggedTouchTargetAtLeast48Dp(tag: String) {
+        val minimumPx = with(composeRule.density) { 48.dp.roundToPx() }
+        val size = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .size
+        assertTrue(
+            "$tag touch target was ${size.width}x${size.height}px, expected at least ${minimumPx}px",
+            size.width >= minimumPx && size.height >= minimumPx,
+        )
+    }
+
+    private fun assertIconControl(tag: String, contentDescription: String, scrollTo: Boolean = false) {
+        if (scrollTo) {
+            composeRule.onNodeWithTag(tag).performScrollTo()
+        }
+        composeRule.onNodeWithTag(tag).assertIsDisplayed()
+        assertTaggedContentDescription(tag, contentDescription)
+        assertTaggedTouchTargetAtLeast48Dp(tag)
     }
 
     private fun resetFoldersToDefault() {
@@ -166,6 +240,47 @@ class TextInputTest {
         }
     }
 
+    private fun noteIds(): Set<Long> {
+        return runBlocking {
+            withContext(Dispatchers.IO) {
+                NotepadDatabase.getInstance(composeRule.activity)
+                    .notepadDao()
+                    .getAllNotes()
+                    .map { it.id }
+                    .toSet()
+            }
+        }
+    }
+
+    private fun noteTombstoneCount(): Int {
+        return runBlocking {
+            withContext(Dispatchers.IO) {
+                NotepadDatabase.getInstance(composeRule.activity)
+                    .notepadDao()
+                    .getNoteTombstones()
+                    .size
+            }
+        }
+    }
+
+    private fun noteTextContent(noteId: Long): String? {
+        return runBlocking {
+            withContext(Dispatchers.IO) {
+                NotepadDatabase.getInstance(composeRule.activity)
+                    .notepadDao()
+                    .getNote(noteId)
+                    ?.textContent
+            }
+        }
+    }
+
+    private fun waitForSingleNewNoteId(beforeIds: Set<Long>): Long {
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            (noteIds() - beforeIds).size == 1
+        }
+        return (noteIds() - beforeIds).single()
+    }
+
     private fun waitForNoteFolder(noteId: Long, folderId: Long) {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             runBlocking {
@@ -197,7 +312,7 @@ class TextInputTest {
         val body = "這是中文內容 $suffix"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
 
         composeRule.onNodeWithTag("text_note_title")
             .assertIsDisplayed()
@@ -283,6 +398,59 @@ class TextInputTest {
     }
 
     @Test
+    fun textEditorFindAndAccessoryChromeUseIconSemanticsWithoutRawLabels() {
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_content")
+
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .performTextInput("Icon chrome body")
+        composeRule.onNodeWithTag("text_editor_accessory_bar").assertIsDisplayed()
+
+        assertIconControl("find_in_note_button", "Find in note")
+        assertIconControl("more_note_button", "More")
+        assertIconControl("quick_insert_checkbox_button", "Checkbox", scrollTo = true)
+        assertIconControl("quick_insert_bullet_button", "Bullet", scrollTo = true)
+        assertIconControl("formatting_premium_entry_button", "Premium formatting", scrollTo = true)
+        assertIconControl("hide_keyboard_button", "Hide keyboard", scrollTo = true)
+
+        composeRule.onNodeWithTag("find_in_note_button").performClick()
+        composeRule.onNodeWithTag("find_in_note_input")
+            .assertIsDisplayed()
+            .performTextInput("Icon")
+        assertIconControl("previous_find_match_button", "Previous match")
+        assertIconControl("next_find_match_button", "Next match")
+        assertIconControl("clear_find_in_note_button", "Clear search")
+
+        listOf("...", "<", ">", "x", "HL", "Tx", "Text formatting Premium").forEach(::assertExactTextAbsent)
+        assertContentDescriptionAbsent("Text formatting Premium")
+    }
+
+    @Test
+    fun premiumTextFormattingAccessoryChromeOmitsOldRawLabels() {
+        enableDebugPremiumAccess()
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_content")
+
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .performTextInput("Premium icon chrome body")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("format_highlight_button") > 0
+        }
+        composeRule.onNodeWithTag("text_editor_accessory_bar").assertIsDisplayed()
+
+        assertTagAbsent("formatting_premium_entry_button")
+        assertIconControl("format_highlight_button", "Highlight", scrollTo = true)
+        assertIconControl("format_link_button", "Link", scrollTo = true)
+        assertIconControl("clear_formatting_button", "Clear format", scrollTo = true)
+        listOf("HL", "Tx", "Text formatting Premium").forEach { rawLabel ->
+            assertExactTextAbsent(rawLabel)
+            assertContentDescriptionAbsent(rawLabel)
+        }
+    }
+
+    @Test
     fun debugPremiumSwitchUnlocksTextFormattingWithoutSubscription() {
         val body = "Debug format body ${System.currentTimeMillis()}"
 
@@ -361,7 +529,7 @@ class TextInputTest {
 
         composeRule.onNodeWithText(title).performClick()
         composeRule.onNodeWithTag("edit_note_button").assertIsDisplayed().performClick()
-        waitForTag("text_note_edit_metadata")
+        showTextNoteMetadata()
         assertTagAbsent("note_folder_selector_button")
     }
 
@@ -555,7 +723,7 @@ class TextInputTest {
         DebugPremiumAccess.write(composeRule.activity, true)
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().performTextInput(body)
         composeRule.onNodeWithTag("format_highlight_button").performScrollTo().assertIsDisplayed().performClick()
@@ -622,7 +790,7 @@ class TextInputTest {
         DebugPremiumAccess.write(composeRule.activity, true)
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().performTextInput(body)
         composeRule.onNodeWithTag("format_heading_1_button").assertIsDisplayed().performClick()
@@ -810,7 +978,9 @@ class TextInputTest {
         val body = "Friendly read body $suffix"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        waitForTag("text_note_content")
+        composeRule.onNodeWithTag("text_note_content").assertIsFocused()
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().performTextInput(body)
         composeRule.onNodeWithTag("back_button").performClick()
@@ -829,18 +999,120 @@ class TextInputTest {
         }
 
         composeRule.onNodeWithTag("edit_note_button").assertIsDisplayed().performClick()
-        composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().assertTextContains(title)
-        composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().assertTextContains(body)
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .assertTextContains(body)
+            .assertIsFocused()
     }
 
     @Test
-    fun existingTextNoteCanEnterEditModeFromTitleAndContent() {
+    fun bodyOnlyTextNoteUsesFirstContentLineAsTitle() {
+        val suffix = System.currentTimeMillis()
+        val firstLine = "Body first title $suffix"
+        val body = "$firstLine\nSecond line"
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_content")
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .assertIsFocused()
+            .performTextInput(body)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(firstLine).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(firstLine).performClick()
+        composeRule.onNodeWithTag("text_note_read_title").assertTextContains(firstLine)
+        composeRule.onNodeWithTag("text_note_read_content").assertTextContains("Second line", substring = true)
+    }
+
+    @Test
+    fun blankNewTextDraftIsDiscardedInsteadOfMovedToTrash() {
+        val beforeIds = noteIds()
+        val beforeTombstones = noteTombstoneCount()
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_content")
+        composeRule.onNodeWithTag("back_button").performClick()
+        waitForTag("add_note_button")
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteIds() == beforeIds
+        }
+        assertEquals(beforeTombstones, noteTombstoneCount())
+    }
+
+    @Test
+    fun whitespaceOnlyNewTextDraftIsDiscardedWithoutSaveFailure() {
+        val beforeIds = noteIds()
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_content")
+        val draftId = waitForSingleNewNoteId(beforeIds)
+        composeRule.onNodeWithTag("text_note_content")
+            .performTextInput(" \n  ")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteTextContent(draftId)?.let { savedContent ->
+                savedContent.isNotEmpty() && savedContent.isBlank()
+            } == true
+        }
+
+        composeRule.onNodeWithTag("back_button").performClick()
+        waitForTag("add_note_button")
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteIds() == beforeIds
+        }
+    }
+
+    @Test
+    fun blankNewTextDraftIsDiscardedWhenActivityStops() {
+        val beforeIds = noteIds()
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_content")
+        waitForSingleNewNoteId(beforeIds)
+
+        composeRule.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteIds() == beforeIds
+        }
+        composeRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+    }
+
+    @Test
+    fun newDraftThatHadContentIsDiscardedAfterBeingCleared() {
+        val beforeIds = noteIds()
+        val temporaryContent = "temporary content"
+
+        openAddMenuItem("new_text_note_menu_item")
+        waitForTag("text_note_content")
+        val draftId = waitForSingleNewNoteId(beforeIds)
+        composeRule.onNodeWithTag("text_note_content")
+            .performTextInput(temporaryContent)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteTextContent(draftId) == temporaryContent
+        }
+        composeRule.onNodeWithTag("text_note_content")
+            .performTextReplacement("")
+        composeRule.onNodeWithTag("back_button").performClick()
+        waitForTag("add_note_button")
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteIds() == beforeIds
+        }
+    }
+
+    @Test
+    fun existingTextNoteStaysReadOnlyUntilEditButton() {
         val suffix = System.currentTimeMillis()
         val title = "Tap edit title $suffix"
         val body = "Tap edit body $suffix"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextInput(body)
         composeRule.onNodeWithTag("back_button").performClick()
@@ -853,20 +1125,14 @@ class TextInputTest {
         composeRule.onNodeWithText(title).performClick()
         composeRule.onNodeWithTag("text_note_read_mode").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_read_title").performClick()
-        composeRule.onNodeWithTag("text_note_title")
-            .assertIsDisplayed()
-            .assertTextContains(title)
-            .assertIsFocused()
-        composeRule.onNodeWithTag("back_button").performClick()
+        assertTagAbsent("text_note_content")
+        assertTagAbsent("text_note_title")
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithTag("text_note_title").fetchSemanticsNodes().isEmpty() &&
-                composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
-        }
-
-        composeRule.onNodeWithText(title).performClick()
         composeRule.onNodeWithTag("text_note_read_mode").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_read_content").performClick()
+        assertTagAbsent("text_note_content")
+
+        composeRule.onNodeWithTag("edit_note_button").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("text_note_content")
             .assertIsDisplayed()
             .assertTextContains(body)
@@ -975,7 +1241,7 @@ class TextInputTest {
         val secondTitle = "Multi select second $suffix"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(firstTitle)
         composeRule.onNodeWithTag("back_button").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -983,7 +1249,7 @@ class TextInputTest {
         }
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(secondTitle)
         composeRule.onNodeWithTag("back_button").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -1012,7 +1278,7 @@ class TextInputTest {
         val title = "Back exits multi select ${System.currentTimeMillis()}"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("back_button").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -1040,7 +1306,7 @@ class TextInputTest {
         val body = "Focus writer body $suffix"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextInput(body)
         composeRule.onNodeWithTag("text_note_compact_metadata").assertIsDisplayed()
@@ -1057,15 +1323,13 @@ class TextInputTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag("text_note_edit_metadata").fetchSemanticsNodes().isEmpty()
         }
+        composeRule.onNodeWithTag("text_note_content").performTextInput("\n")
         composeRule.onNodeWithTag("quick_insert_checkbox_button").performClick()
         composeRule.onNodeWithTag("text_note_content").assertTextContains("- [ ]", substring = true)
 
         composeRule.onNodeWithTag("toggle_metadata_button").performClick()
         composeRule.onNodeWithTag("text_note_edit_metadata").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_updated_time").assertIsDisplayed()
-
-        composeRule.onNodeWithTag("toggle_focus_writer_button").performClick()
-        composeRule.onNodeWithTag("text_note_edit_metadata").assertIsDisplayed()
         composeRule.onNodeWithTag("back_button").performClick()
 
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -1076,7 +1340,60 @@ class TextInputTest {
         composeRule.onNodeWithText(title).performClick()
         composeRule.onNodeWithTag("text_note_read_content")
             .assertTextContains("Focus writer body", substring = true)
-        composeRule.onNodeWithTag("text_note_read_content").assertTextContains("- [ ]", substring = true)
+    }
+
+    @Test
+    fun readModeCheckboxTogglePersists() {
+        val suffix = System.currentTimeMillis()
+        val title = "Read checkbox $suffix"
+        createTextNote(title = title, body = "- [ ] Task $suffix")
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("text_note_read_checkbox_0")
+            .assertIsDisplayed()
+            .performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getAllNotes()
+                        .any { note -> note.title == title && note.textContent.orEmpty().contains("- [x] ") }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun readModeCheckboxSaveFailureShowsRetryAndCanRetry() {
+        val suffix = System.currentTimeMillis()
+        val title = "Read checkbox retry $suffix"
+        val noteId = createTextNote(title = title, body = "- [ ] Retry task $suffix")
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("text_note_read_checkbox_0").assertIsDisplayed()
+
+        DebugSaveFailure.failNextTextSave(noteId)
+        composeRule.onNodeWithTag("text_note_read_checkbox_0").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("text_note_read_retry_save_button") > 0
+        }
+        composeRule.onNodeWithTag("text_note_read_save_status").assertTextContains("Save failed")
+        assertTrue(noteTextContent(noteId).orEmpty().contains("- [ ] Retry task"))
+
+        composeRule.onNodeWithTag("text_note_read_retry_save_button")
+            .assertIsDisplayed()
+            .performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteTextContent(noteId).orEmpty().contains("- [x] Retry task")
+        }
     }
 
     @Test
@@ -1088,7 +1405,7 @@ class TextInputTest {
         val secondContent = "Persist updated content after system back $suffix"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(firstTitle)
         composeRule.onNodeWithTag("text_note_content").performTextInput(firstContent)
         composeRule.onNodeWithTag("back_button").performClick()
@@ -1102,8 +1419,11 @@ class TextInputTest {
         composeRule.onNodeWithTag("text_note_read_title").assertTextContains(firstTitle)
         composeRule.onNodeWithTag("text_note_read_content").assertTextContains(firstContent)
         composeRule.onNodeWithTag("edit_note_button").performClick()
+        composeRule.onNodeWithTag("text_note_content")
+            .assertTextContains(firstContent)
+            .assertIsFocused()
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").assertTextContains(firstTitle)
-        composeRule.onNodeWithTag("text_note_content").assertTextContains(firstContent)
 
         composeRule.onNodeWithTag("text_note_title").performTextReplacement(secondTitle)
         composeRule.onNodeWithTag("text_note_content").performTextReplacement(secondContent)
@@ -1120,8 +1440,11 @@ class TextInputTest {
         composeRule.onNodeWithTag("text_note_read_title").assertTextContains(secondTitle)
         composeRule.onNodeWithTag("text_note_read_content").assertTextContains(secondContent)
         composeRule.onNodeWithTag("edit_note_button").performClick()
+        composeRule.onNodeWithTag("text_note_content")
+            .assertTextContains(secondContent)
+            .assertIsFocused()
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").assertTextContains(secondTitle)
-        composeRule.onNodeWithTag("text_note_content").assertTextContains(secondContent)
     }
 
     @Test
@@ -1131,7 +1454,7 @@ class TextInputTest {
         val body = "banana alpha banana beta banana"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextInput(body)
         composeRule.onNodeWithTag("back_button").performClick()
@@ -1158,14 +1481,16 @@ class TextInputTest {
         val body = "menu search target"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextInput(body)
         composeRule.onNodeWithTag("back_button").performClick()
 
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithTag("add_note_button").fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
+        composeRule.onNodeWithText(title).assertIsDisplayed()
 
         composeRule.onNodeWithText(title).performClick()
         composeRule.onNodeWithTag("more_note_button").performClick()
@@ -1184,7 +1509,7 @@ class TextInputTest {
         val body = "needle top\n$filler\nneedle bottom"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextReplacement(body)
         composeRule.onNodeWithTag("back_button").performClick()
@@ -1350,7 +1675,7 @@ class TextInputTest {
         val contentNeedle = "content-needle-$suffix"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
 
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").performTextInput(contentNeedle)
@@ -1384,7 +1709,7 @@ class TextInputTest {
         composeRule.onNodeWithTag("note_result_count").assertIsDisplayed()
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(title)
         composeRule.onNodeWithTag("back_button").performClick()
 
@@ -1408,7 +1733,7 @@ class TextInputTest {
         val drawingTitle = "Alpha sketch $suffix"
 
         openAddMenuItem("new_text_note_menu_item")
-        waitForTag("text_note_title")
+        showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(textTitle)
         composeRule.onNodeWithTag("text_note_content").performTextInput(textBody)
         composeRule.onNodeWithTag("back_button").performClick()

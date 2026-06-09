@@ -126,6 +126,19 @@ abstract class NotepadDao {
     @Query("DELETE FROM notes WHERE id = :noteId")
     abstract suspend fun deleteNote(noteId: Long)
 
+    @Transaction
+    open suspend fun deleteBlankLocalTextDraftNote(noteId: Long): Int {
+        val current = getNote(noteId) ?: return 0
+        val isBlankTextDraft = current.type == NoteTypes.TEXT &&
+            !current.isDeleted &&
+            current.title.isBlank() &&
+            current.textContent.orEmpty().isBlank() &&
+            current.textFormattingJson.isNullOrBlank()
+        if (!isBlankTextDraft) return 0
+        deleteNote(noteId)
+        return 1
+    }
+
     @Query("DELETE FROM notes")
     abstract suspend fun deleteAllNotes()
 

@@ -193,6 +193,30 @@ class NotepadRepository(
         dao.permanentlyDeleteNote(noteId)
     }
 
+    suspend fun permanentlyDeleteBlankTextDraft(noteId: Long): Boolean {
+        val current = dao.getNote(noteId) ?: return true
+        val isBlankTextDraft = current.type == NoteTypes.TEXT &&
+            !current.isDeleted &&
+            current.title.isBlank() &&
+            current.textContent.orEmpty().isBlank() &&
+            current.textFormattingJson.isNullOrBlank()
+        if (!isBlankTextDraft) return false
+        return dao.deleteBlankLocalTextDraftNote(noteId) > 0
+    }
+
+    suspend fun discardNewTextDraftIfBlank(
+        noteId: Long,
+        title: String,
+        content: String,
+        textFormattingJson: String?,
+    ): Boolean {
+        if (title.isNotBlank() || content.isNotBlank() || !textFormattingJson.isNullOrBlank()) return false
+        val current = dao.getNote(noteId) ?: return true
+        if (current.type != NoteTypes.TEXT || current.isDeleted) return false
+        dao.deleteNote(noteId)
+        return true
+    }
+
     suspend fun setNotePinned(noteId: Long, isPinned: Boolean) {
         dao.setNotePinned(noteId, isPinned, System.currentTimeMillis())
     }

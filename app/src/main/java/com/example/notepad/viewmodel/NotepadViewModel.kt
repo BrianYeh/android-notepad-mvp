@@ -38,6 +38,7 @@ import com.example.notepad.data.TextImportFile
 import com.example.notepad.data.buildSharedNoteTitle
 import com.example.notepad.data.normalizedReminderRepeat
 import com.example.notepad.debug.DebugPremiumAccess
+import com.example.notepad.debug.DebugSaveFailure
 import com.example.notepad.ocr.MlKitOcrTextRecognizer
 import com.example.notepad.ocr.OcrNoteResult
 import com.example.notepad.ocr.OcrNoteUseCase
@@ -539,6 +540,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         content: String,
         textFormattingJson: String? = null,
     ): Long? {
+        if (DebugSaveFailure.consumeTextSaveFailure(noteId)) return null
         return repository.saveTextNote(noteId, title, content, textFormattingJson).also { refreshWidgets() }
     }
 
@@ -596,6 +598,61 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             repository.permanentlyDeleteNote(noteId)
             refreshWidgets()
         }
+    }
+
+    fun discardNewTextDraftIfBlank(
+        noteId: Long,
+        title: String,
+        content: String,
+        textFormattingJson: String?,
+    ) {
+        viewModelScope.launch {
+            discardNewTextDraftIfBlankAndRefresh(noteId, title, content, textFormattingJson)
+        }
+    }
+
+    suspend fun discardNewTextDraftIfBlankNow(
+        noteId: Long,
+        title: String,
+        content: String,
+        textFormattingJson: String?,
+    ): Boolean {
+        return discardNewTextDraftIfBlankAndRefresh(noteId, title, content, textFormattingJson)
+    }
+
+    fun permanentlyDeleteBlankTextDraft(noteId: Long) {
+        viewModelScope.launch {
+            deleteBlankTextDraftAndRefresh(noteId)
+        }
+    }
+
+    suspend fun permanentlyDeleteBlankTextDraftNow(noteId: Long): Boolean {
+        return deleteBlankTextDraftAndRefresh(noteId)
+    }
+
+    private suspend fun discardNewTextDraftIfBlankAndRefresh(
+        noteId: Long,
+        title: String,
+        content: String,
+        textFormattingJson: String?,
+    ): Boolean {
+        val deleted = repository.discardNewTextDraftIfBlank(noteId, title, content, textFormattingJson)
+        if (deleted) {
+            ReminderScheduler.cancel(getApplication(), noteId)
+            ReminderScheduler.cancelNotification(getApplication(), noteId)
+            refreshWidgets()
+        }
+        return deleted
+    }
+
+    private suspend fun deleteBlankTextDraftAndRefresh(noteId: Long): Boolean {
+        val deleted = repository.permanentlyDeleteBlankTextDraft(noteId)
+        if (deleted) {
+            ReminderScheduler.cancel(getApplication(), noteId)
+            ReminderScheduler.cancelNotification(getApplication(), noteId)
+            refreshWidgets()
+        }
+        return deleted
     }
 
     fun setNotePinned(noteId: Long, isPinned: Boolean) {
