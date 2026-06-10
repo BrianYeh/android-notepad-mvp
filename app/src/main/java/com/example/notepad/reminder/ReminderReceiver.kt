@@ -117,6 +117,9 @@ class ReminderReceiver : BroadcastReceiver() {
         ReminderScheduler.ensureNotificationChannel(context)
         val notificationManager = context.getSystemService(NotificationManager::class.java)
         val openAppIntent = Intent(context, MainActivity::class.java)
+            .setAction(ACTION_REMINDER_OPEN_NOTE)
+            .putExtra(EXTRA_REMINDER_NOTE_ID, noteId)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val contentIntent = PendingIntent.getActivity(
             context,
             noteId.requestCode(),

@@ -32,6 +32,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.notepad.data.AppLanguage
+import com.example.notepad.reminder.ACTION_REMINDER_OPEN_NOTE
+import com.example.notepad.reminder.EXTRA_REMINDER_NOTE_ID
 import com.example.notepad.ui.LocalNotepadTheme
 import com.example.notepad.ui.NotepadApp
 import com.example.notepad.ui.PrivacyLockScreen
@@ -54,7 +56,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         configureSystemBars()
         handleIncomingShareIntent(intent)
-        handleWidgetIntent(intent)
+        handleLaunchActionIntent(intent)
 
         setContent {
             val viewModel: NotepadViewModel = viewModel()
@@ -232,7 +234,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncomingShareIntent(intent)
-        handleWidgetIntent(intent)
+        handleLaunchActionIntent(intent)
     }
 
     private fun handleIncomingShareIntent(intent: Intent?) {
@@ -259,11 +261,16 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun handleWidgetIntent(intent: Intent?) {
+    private fun handleLaunchActionIntent(intent: Intent?) {
         val action = when (intent?.action) {
             ACTION_WIDGET_NEW_TEXT_NOTE -> WidgetAction.NewTextNote
             ACTION_WIDGET_OPEN_NOTE -> {
                 val noteId = intent.getLongExtra(EXTRA_WIDGET_NOTE_ID, 0L)
+                if (noteId <= 0L) return
+                WidgetAction.OpenNote(noteId)
+            }
+            ACTION_REMINDER_OPEN_NOTE -> {
+                val noteId = intent.getLongExtra(EXTRA_REMINDER_NOTE_ID, 0L)
                 if (noteId <= 0L) return
                 WidgetAction.OpenNote(noteId)
             }

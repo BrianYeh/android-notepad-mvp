@@ -581,14 +581,16 @@ fun NotepadApp(
         }
     }
 
-    LaunchedEffect(pendingWidgetAction?.id, allNotes) {
+    LaunchedEffect(pendingWidgetAction?.id) {
         val widgetAction = pendingWidgetAction ?: return@LaunchedEffect
         val action = widgetAction.action as? WidgetAction.OpenNote ?: return@LaunchedEffect
-        val note = allNotes.firstOrNull { it.id == action.noteId && !it.isDeleted }
+        val note = viewModel.getActiveNote(action.noteId)
         if (note != null) {
             screen = note.toEditorScreen()
-            onWidgetActionHandled(widgetAction.id)
+        } else {
+            screen = AppScreen.Main
         }
+        onWidgetActionHandled(widgetAction.id)
     }
 
     LaunchedEffect(onlineSyncAutoOnStart, onlineSyncTargetUri) {

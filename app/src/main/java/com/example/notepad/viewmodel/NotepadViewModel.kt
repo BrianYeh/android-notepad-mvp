@@ -225,6 +225,12 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun observeNote(noteId: Long) = repository.observeNote(noteId)
 
+    suspend fun getActiveNote(noteId: Long): NoteEntity? {
+        return withContext(Dispatchers.IO) {
+            repository.getNote(noteId)?.takeUnless { it.isDeleted }
+        }
+    }
+
     fun selectFolder(folderId: Long?) {
         _selectedFolderId.value = folderId
     }

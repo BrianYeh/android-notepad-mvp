@@ -19,6 +19,8 @@ class NotepadRepository(
 
     fun observeNote(noteId: Long): Flow<NoteEntity?> = dao.observeNote(noteId)
 
+    suspend fun getNote(noteId: Long): NoteEntity? = dao.getNote(noteId)
+
     suspend fun ensureDefaultFolder() {
         dao.ensureSyncMetadata()
     }
