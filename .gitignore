@@ -6,4 +6,4 @@ captures/
 local.properties
 *.iml
 app/build/
-
+artifacts/
