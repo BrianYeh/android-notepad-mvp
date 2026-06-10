@@ -1,5 +1,7 @@
 package com.example.notepad
 
+import android.Manifest
+import android.os.Build
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextEquals
@@ -24,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
 import com.example.notepad.data.DrawingTools
@@ -122,6 +125,52 @@ class TextInputTest {
         }
     }
 
+    private fun selectReminderFilter(filterName: String) {
+        composeRule.onNodeWithTag("reminder_filter_selector").performClick()
+        waitForTag("reminder_$filterName")
+        composeRule.onNodeWithTag("reminder_$filterName").performClick()
+    }
+
+    private fun clickFirstCalendarPreset() {
+        listOf(
+            "calendar_preset_morning",
+            "calendar_preset_afternoon",
+            "calendar_preset_evening",
+            "calendar_preset_next_hour",
+        ).firstOrNull { tag -> composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
+            ?.let { tag -> composeRule.onNodeWithTag(tag).performClick() }
+            ?: error("No calendar reminder preset was shown")
+    }
+
+    private fun startOfDayMillisForTest(timestamp: Long): Long {
+        return Calendar.getInstance().apply {
+            timeInMillis = timestamp
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+
+    private fun addDaysForTest(dayStart: Long, days: Int): Long {
+        return Calendar.getInstance().apply {
+            timeInMillis = dayStart
+            add(Calendar.DAY_OF_YEAR, days)
+        }.timeInMillis
+    }
+
+    private fun moveCalendarToDay(dayStart: Long) {
+        var selectedDayStart = startOfDayMillisForTest(System.currentTimeMillis())
+        while (selectedDayStart < dayStart) {
+            composeRule.onNodeWithTag("calendar_next_day").performScrollTo().performClick()
+            selectedDayStart = addDaysForTest(selectedDayStart, 1)
+        }
+        while (selectedDayStart > dayStart) {
+            composeRule.onNodeWithTag("calendar_previous_day").performScrollTo().performClick()
+            selectedDayStart = addDaysForTest(selectedDayStart, -1)
+        }
+    }
+
     private fun debugPremiumSwitchState(): ToggleableState? {
         return composeRule.onNodeWithTag("debug_premium_switch")
             .fetchSemanticsNode()
@@ -132,6 +181,27 @@ class TextInputTest {
     private fun enableDebugPremiumAccess() {
         DebugPremiumAccess.write(composeRule.activity, true)
         composeRule.waitForIdle()
+    }
+
+    private fun grantPostNotificationsIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            runCatching {
+                InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(
+                    composeRule.activity.packageName,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                )
+            }
+            runCatching {
+                InstrumentationRegistry.getInstrumentation().uiAutomation
+                    .executeShellCommand("pm grant ${composeRule.activity.packageName} ${Manifest.permission.POST_NOTIFICATIONS}")
+                    .close()
+            }
+            runCatching {
+                InstrumentationRegistry.getInstrumentation().uiAutomation
+                    .executeShellCommand("appops set ${composeRule.activity.packageName} POST_NOTIFICATION allow")
+                    .close()
+            }
+        }
     }
 
     private fun tagCount(tag: String): Int {
@@ -329,7 +399,9 @@ class TextInputTest {
         composeRule.onNodeWithTag("text_editor_accessory_bar").assertIsDisplayed()
         composeRule.onNodeWithTag("toggle_metadata_button").performClick()
         composeRule.onNodeWithTag("text_note_updated_time").assertIsDisplayed()
+        assertEquals(1, tagCount("note_reminder_status"))
         composeRule.onNodeWithTag("note_reminder_status").assertIsDisplayed()
+        composeRule.onNodeWithTag("set_reminder_button").assertIsDisplayed()
         composeRule.onNodeWithTag("find_in_note_button").performClick()
         composeRule.onNodeWithTag("find_in_note_input")
             .assertIsDisplayed()
@@ -643,7 +715,7 @@ class TextInputTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
         waitForTag("text_note_read_mode")
         composeRule.onNodeWithTag("note_reminder_status").assertIsDisplayed()
         composeRule.onNodeWithTag("more_note_button").assertIsDisplayed().performClick()
@@ -932,21 +1004,32 @@ class TextInputTest {
     fun freeUsersDoNotSeeCalendarViewChip() {
         openFilterPanel()
 
+        assertTagAbsent("home_reminders_button")
         assertTagAbsent("calendar_view_chip")
         assertTagAbsent("quick_filter_HasReminder")
     }
 
     @Test
-    fun reminderCalendarShowsTodayReminder() {
+    fun premiumHomeReminderButtonOpensCalendar() {
+        enableDebugPremiumAccess()
+
+        waitForTag("home_reminders_button")
+        composeRule.onNodeWithTag("home_reminders_button").assertIsDisplayed().performClick()
+
+        composeRule.onNodeWithTag("reminder_calendar").assertIsDisplayed()
+        composeRule.onNodeWithTag("calendar_selected_day_title").performScrollTo().assertIsDisplayed()
+        assertIconControl("calendar_previous_day", "Previous day", scrollTo = true)
+        assertIconControl("calendar_next_day", "Next day", scrollTo = true)
+        composeRule.onNodeWithTag("calendar_add_reminder").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun reminderCalendarShowsScheduledDayReminder() {
         val suffix = System.currentTimeMillis()
         val title = "Calendar reminder $suffix"
-        val todayReminderAt = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 12)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-        runBlocking {
+        val reminderAt = System.currentTimeMillis() + 600_000
+        val reminderDayStart = startOfDayMillisForTest(reminderAt)
+        val noteId = runBlocking {
             withContext(Dispatchers.IO) {
                 val repository = NotepadRepository(NotepadDatabase.getInstance(composeRule.activity).notepadDao())
                 repository.ensureDefaultFolder()
@@ -954,9 +1037,10 @@ class TextInputTest {
                 repository.saveTextNote(noteId, title, "Calendar reminder body")
                 repository.setNoteReminder(
                     noteId = noteId,
-                    reminderAt = todayReminderAt,
+                    reminderAt = reminderAt,
                     reminderRepeat = ReminderRepeat.None.code,
                 )
+                noteId
             }
         }
         DebugPremiumAccess.write(composeRule.activity, true)
@@ -964,11 +1048,159 @@ class TextInputTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
-        openFilterPanel()
-        composeRule.onNodeWithTag("calendar_view_chip").performClick()
+        waitForTag("home_reminders_button")
+        composeRule.onNodeWithTag("home_reminders_button").performClick()
         composeRule.onNodeWithTag("reminder_calendar").assertIsDisplayed()
+        moveCalendarToDay(reminderDayStart)
+        composeRule.onNodeWithTag("calendar_selected_day_title").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("calendar_selected_day_count").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText(title).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("note_reminder_summary_$noteId", useUnmergedTree = true)
+            .performScrollTo()
+            .assertTextContains("Upcoming", substring = true)
+    }
+
+    @Test
+    fun calendarAddCreatesReminderDraftForSelectedFutureDay() {
+        enableDebugPremiumAccess()
+        grantPostNotificationsIfNeeded()
+        val beforeIds = noteIds()
+
+        waitForTag("home_reminders_button")
+        composeRule.onNodeWithTag("home_reminders_button").performClick()
+        waitForTag("reminder_calendar")
+        composeRule.onNodeWithTag("calendar_next_day").performScrollTo().performClick()
+        composeRule.onNodeWithTag("calendar_add_reminder").performScrollTo().assertIsDisplayed().performClick()
+        waitForTag("calendar_add_reminder_dialog")
+        clickFirstCalendarPreset()
+
+        waitForTag("text_note_content")
+        showTextNoteMetadata()
+        composeRule.onNodeWithTag("note_reminder_status")
+            .assertIsDisplayed()
+            .assertTextContains("Upcoming", substring = true)
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getNote(noteId)
+                        ?.reminderAt != null
+                }
+            }
+        }
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getNote(noteId) == null
+                }
+            }
+        }
+    }
+
+    @Test
+    fun premiumReminderFiltersSeparateWithOverdueAndUpcomingNotes() {
+        enableDebugPremiumAccess()
+        val suffix = System.currentTimeMillis()
+        val noReminderTitle = "Reminder filter none $suffix"
+        val overdueTitle = "Reminder filter overdue $suffix"
+        val upcomingTitle = "Reminder filter upcoming $suffix"
+        val todayStart = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val overdueId = createTextNote(
+            title = overdueTitle,
+            body = "Overdue body $suffix",
+            reminderAt = todayStart,
+        )
+        val upcomingId = createTextNote(
+            title = upcomingTitle,
+            body = "Upcoming body $suffix",
+            reminderAt = System.currentTimeMillis() + 86_400_000,
+            reminderRepeat = ReminderRepeat.Daily.code,
+        )
+        createTextNote(
+            title = noReminderTitle,
+            body = "No reminder body $suffix",
+        )
+
+        openSearchPanel()
+        composeRule.onNodeWithTag("note_search_input").performTextInput(suffix.toString())
+        openFilterPanel()
+
+        selectReminderFilter("WithReminder")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(overdueTitle).fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithText(upcomingTitle).fetchSemanticsNodes().isNotEmpty()
+        }
+        assertExactTextAbsent(noReminderTitle)
+
+        selectReminderFilter("Overdue")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(overdueTitle).fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithText(upcomingTitle).fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag("note_reminder_summary_$overdueId", useUnmergedTree = true)
+            .performScrollTo()
+            .assertTextContains("Overdue", substring = true)
+
+        selectReminderFilter("Upcoming")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(upcomingTitle).fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithText(overdueTitle).fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag("note_reminder_summary_$upcomingId", useUnmergedTree = true)
+            .performScrollTo()
+            .assertTextContains("Upcoming", substring = true)
+            .assertTextContains("Daily", substring = true)
+
+        composeRule.onNodeWithTag("home_reminders_button").performClick()
+        waitForTag("reminder_calendar")
+        composeRule.onNodeWithText(overdueTitle).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun overdueReminderRepeatCanBeChangedFromTextOverflow() {
+        enableDebugPremiumAccess()
+        grantPostNotificationsIfNeeded()
+        val title = "Overdue repeat edit ${System.currentTimeMillis()}"
+        val noteId = createTextNote(
+            title = title,
+            body = "Overdue repeat body",
+            reminderAt = System.currentTimeMillis() - 60_000,
+        )
+
+        openSearchPanel()
+        composeRule.onNodeWithTag("note_search_input").performTextReplacement(title)
+        openFilterPanel()
+        selectReminderFilter("All")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        waitForTag("more_note_button")
+        composeRule.onNodeWithTag("more_note_button").performClick()
+        composeRule.onNodeWithTag("text_reminder_repeat_Daily").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_reminder_repeat_Daily").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 15_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    val note = NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getNote(noteId)
+                    note?.reminderRepeat == ReminderRepeat.Daily.code &&
+                        (note.reminderAt ?: 0L) > System.currentTimeMillis()
+                }
+            }
+        }
     }
 
     @Test
@@ -1507,6 +1739,7 @@ class TextInputTest {
             "filler line $index keeps the next match below the visible area"
         }
         val body = "needle top\n$filler\nneedle bottom"
+        val beforeIds = noteIds()
 
         openAddMenuItem("new_text_note_menu_item")
         showTextNoteMetadata()
@@ -1514,11 +1747,10 @@ class TextInputTest {
         composeRule.onNodeWithTag("text_note_content").performTextReplacement(body)
         composeRule.onNodeWithTag("back_button").performClick()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
-        }
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        waitForTag("note_card_$noteId")
 
-        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
         composeRule.onNodeWithTag("find_in_note_button").performClick()
         composeRule.onNodeWithTag("find_in_note_input").performTextInput("needle")
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/2")

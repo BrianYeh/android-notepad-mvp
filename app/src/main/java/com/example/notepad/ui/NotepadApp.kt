@@ -8,7 +8,6 @@ import android.app.TimePickerDialog
 import android.content.ClipData
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
@@ -202,6 +201,7 @@ import com.example.notepad.data.normalizedReminderRepeat
 import com.example.notepad.data.normalizedFormatUrl
 import com.example.notepad.data.renderDrawingPng
 import com.example.notepad.data.selectedTextRange
+import com.example.notepad.reminder.ReminderScheduler
 import com.example.notepad.viewmodel.NotepadViewModel
 import java.io.File
 import java.text.DateFormat
@@ -333,6 +333,53 @@ private fun openLinkFailedLabel(language: AppLanguage): String {
 
 private fun setReminderActionLabel(text: UiText, hasPremiumAccess: Boolean): String {
     return if (hasPremiumAccess) text.setReminder else "${text.setReminder} (${text.premium})"
+}
+
+@Composable
+private fun rememberReminderDeliveryGate(text: UiText): (() -> Unit) -> Unit {
+    val context = LocalContext.current
+    var pendingReminderAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    fun showBlockedMessage() {
+        Toast.makeText(context, text.reminderNotificationsBlockedLabel(), Toast.LENGTH_SHORT).show()
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) {
+        val action = pendingReminderAction
+        pendingReminderAction = null
+        if (ReminderScheduler.notificationDeliveryStatus(context) == ReminderScheduler.NotificationDeliveryStatus.Ready) {
+            action?.invoke()
+        } else {
+            showBlockedMessage()
+        }
+    }
+
+    return { onReady ->
+        when (ReminderScheduler.notificationDeliveryStatus(context)) {
+            ReminderScheduler.NotificationDeliveryStatus.Ready -> onReady()
+            ReminderScheduler.NotificationDeliveryStatus.PermissionRequired -> {
+                pendingReminderAction = onReady
+                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            ReminderScheduler.NotificationDeliveryStatus.AppNotificationsDisabled,
+            ReminderScheduler.NotificationDeliveryStatus.ReminderChannelDisabled,
+            -> showBlockedMessage()
+        }
+    }
+}
+
+@Composable
+private fun rememberFutureReminderSubmissionGate(text: UiText): (Long, () -> Unit) -> Unit {
+    val context = LocalContext.current
+    val requireReminderDeliveryReady = rememberReminderDeliveryGate(text)
+    return { reminderAt, onReady ->
+        if (reminderAt <= System.currentTimeMillis()) {
+            Toast.makeText(context, text.reminderMustBeFuture, Toast.LENGTH_SHORT).show()
+        } else {
+            requireReminderDeliveryReady(onReady)
+        }
+    }
 }
 
 private fun importExportTitleLabel(language: AppLanguage): String {
@@ -485,6 +532,11 @@ fun NotepadApp(
     val restoreRollbackCheckpoint by viewModel.restoreRollbackCheckpoint.collectAsStateWithLifecycle()
     val syncMetadata by viewModel.syncMetadata.collectAsStateWithLifecycle()
     var onlineSyncAutoAttempted by remember { mutableStateOf(false) }
+    val calendarNotes = remember(allNotes, selectedFolderId, listMode) {
+        allNotes
+            .filter { note -> note.isDeleted == (listMode == NoteListMode.Trash) }
+            .filter { note -> selectedFolderId == null || note.folderId == selectedFolderId }
+    }
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri ->
@@ -558,6 +610,7 @@ fun NotepadApp(
         AppScreen.Main -> MainScreen(
             folders = folders,
             notes = notes,
+            calendarNotes = calendarNotes,
             selectedFolderId = selectedFolderId,
             searchQuery = searchQuery,
             listMode = listMode,
@@ -598,6 +651,11 @@ fun NotepadApp(
             },
             onCreateOcrNote = {
                 imagePickerLauncher.launch("image/*")
+            },
+            onCreateReminderTextNote = { reminderAt ->
+                viewModel.createTextNoteWithReminder(reminderAt) { noteId ->
+                    screen = AppScreen.TextEditor(noteId, isNewDraft = true)
+                }
             },
             onOpenNote = { note ->
                 screen = when (note.type) {
@@ -1175,6 +1233,7 @@ private fun PremiumIconSample() {
 private fun MainScreen(
     folders: List<FolderEntity>,
     notes: List<NoteEntity>,
+    calendarNotes: List<NoteEntity>,
     selectedFolderId: Long?,
     searchQuery: String,
     listMode: NoteListMode,
@@ -1202,6 +1261,7 @@ private fun MainScreen(
     onCreateDrawingNote: () -> Unit,
     onCreateChecklistNote: () -> Unit,
     onCreateOcrNote: () -> Unit,
+    onCreateReminderTextNote: (Long) -> Unit,
     onOpenNote: (NoteEntity) -> Unit,
     onMoveNote: (Long, Long) -> Unit,
     onDeleteNote: (Long) -> Unit,
@@ -1229,8 +1289,12 @@ private fun MainScreen(
     val selectedFolder = if (showFolderUi) folders.firstOrNull { it.id == selectedFolderId } else null
     val isTrash = listMode == NoteListMode.Trash
     val isSelectionMode = selectedNoteIds.isNotEmpty()
-    val visibleNoteIds = remember(notes) { notes.map { it.id }.toSet() }
+    val visibleNoteIds = remember(notes, calendarNotes, contentView) {
+        val visibleNotes = if (contentView == MainContentView.Calendar) calendarNotes else notes
+        visibleNotes.map { it.id }.toSet()
+    }
     val hasActiveFilterPanel = quickFilter != NoteQuickFilter.All ||
+        reminderFilter != ReminderFilter.All ||
         sortOption != NoteSortOption.UpdatedAt ||
         (!isTrash && contentView != MainContentView.List)
     val shouldShowSearchBar = isSearchVisible || searchQuery.isNotBlank()
@@ -1289,6 +1353,12 @@ private fun MainScreen(
     LaunchedEffect(hasPremiumAccess, quickFilter) {
         if (!hasPremiumAccess && quickFilter == NoteQuickFilter.HasReminder) {
             onQuickFilterChange(NoteQuickFilter.All)
+        }
+    }
+
+    LaunchedEffect(hasPremiumAccess, reminderFilter) {
+        if (!hasPremiumAccess && reminderFilter != ReminderFilter.All) {
+            onReminderFilterChange(ReminderFilter.All)
         }
     }
 
@@ -1472,6 +1542,12 @@ private fun MainScreen(
                     text = text,
                     appLanguage = appLanguage,
                     filtersExpanded = shouldShowFilterPanel,
+                    showHomeRemindersButton = hasPremiumAccess && !isTrash,
+                    isCalendarSelected = contentView == MainContentView.Calendar,
+                    onOpenReminders = {
+                        contentView = MainContentView.Calendar
+                        clearNoteSelection()
+                    },
                     onToggleFilters = { areFiltersExpanded = !areFiltersExpanded },
                 )
 
@@ -1479,13 +1555,16 @@ private fun MainScreen(
                     NoteFilterRow(
                         sortOption = sortOption,
                         quickFilter = quickFilter,
+                        reminderFilter = reminderFilter,
                         contentView = contentView,
                         text = text,
                         isPrivacyLocked = isPrivacyLocked,
                         showCalendarView = !isTrash && hasPremiumAccess,
                         showReminderQuickFilter = hasPremiumAccess,
+                        showReminderFilter = hasPremiumAccess,
                         onSortOptionChange = onSortOptionChange,
                         onQuickFilterChange = onQuickFilterChange,
+                        onReminderFilterChange = onReminderFilterChange,
                         onContentViewChange = { view ->
                             if (view == MainContentView.Calendar && !hasPremiumAccess) {
                                 onOpenPremium()
@@ -1510,9 +1589,9 @@ private fun MainScreen(
             val startNoteSelection: (NoteEntity) -> Unit = { note ->
                 selectedNoteIds = selectedNoteIds + note.id
             }
-            if (contentView == MainContentView.Calendar && !isTrash) {
+            if (contentView == MainContentView.Calendar && !isTrash && hasPremiumAccess) {
                 ReminderCalendarView(
-                    notes = notes,
+                    notes = calendarNotes,
                     folders = folders,
                     text = text,
                     searchQuery = searchQuery,
@@ -1532,6 +1611,7 @@ private fun MainScreen(
                     onDeleteNote = { noteToDelete = it },
                     onTogglePinned = onTogglePinned,
                     onCalendarDateChange = ::clearNoteSelection,
+                    onCreateReminderAt = onCreateReminderTextNote,
                     modifier = Modifier.weight(1f),
                 )
             } else {
@@ -1540,7 +1620,7 @@ private fun MainScreen(
                     folders = folders,
                     text = text,
                     searchQuery = searchQuery,
-                    hasActiveFilters = quickFilter != NoteQuickFilter.All,
+                    hasActiveFilters = quickFilter != NoteQuickFilter.All || reminderFilter != ReminderFilter.All,
                     listMode = listMode,
                     appLanguage = appLanguage,
                     selectedNoteIds = selectedNoteIds,
@@ -2508,13 +2588,16 @@ private fun ListModeRow(
 private fun NoteFilterRow(
     sortOption: NoteSortOption,
     quickFilter: NoteQuickFilter,
+    reminderFilter: ReminderFilter,
     contentView: MainContentView,
     text: UiText,
     isPrivacyLocked: Boolean,
     showCalendarView: Boolean,
     showReminderQuickFilter: Boolean,
+    showReminderFilter: Boolean,
     onSortOptionChange: (NoteSortOption) -> Unit,
     onQuickFilterChange: (NoteQuickFilter) -> Unit,
+    onReminderFilterChange: (ReminderFilter) -> Unit,
     onContentViewChange: (MainContentView) -> Unit,
 ) {
     Column(
@@ -2558,6 +2641,14 @@ private fun NoteFilterRow(
                 }
             }
         }
+        if (showReminderFilter) {
+            ReminderFilterSelector(
+                reminderFilter = reminderFilter,
+                text = text,
+                isPrivacyLocked = isPrivacyLocked,
+                onReminderFilterChange = onReminderFilterChange,
+            )
+        }
         if (showCalendarView) {
             LazyRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -2590,6 +2681,9 @@ private fun HomeHeaderSummaryRow(
     text: UiText,
     appLanguage: AppLanguage,
     filtersExpanded: Boolean,
+    showHomeRemindersButton: Boolean,
+    isCalendarSelected: Boolean,
+    onOpenReminders: () -> Unit,
     onToggleFilters: () -> Unit,
 ) {
     Row(
@@ -2607,6 +2701,15 @@ private fun HomeHeaderSummaryRow(
                 .weight(1f)
                 .testTag("note_result_count"),
         )
+        if (showHomeRemindersButton) {
+            TextButton(
+                onClick = onOpenReminders,
+                enabled = !isCalendarSelected,
+                modifier = Modifier.testTag("home_reminders_button"),
+            ) {
+                Text(text.calendarView)
+            }
+        }
         TextButton(
             onClick = onToggleFilters,
             modifier = Modifier.testTag("filter_panel_toggle"),
@@ -2720,7 +2823,9 @@ private fun ReminderFilterSelector(
     Box {
         Button(
             onClick = { expanded = true },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("reminder_filter_selector"),
         ) {
             Text(
                 "${text.reminderFilter}: ${reminderFilter.label(text)}",
@@ -2964,9 +3069,12 @@ private fun ReminderCalendarView(
     onDeleteNote: (NoteEntity) -> Unit,
     onTogglePinned: (NoteEntity) -> Unit,
     onCalendarDateChange: () -> Unit,
+    onCreateReminderAt: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val submitReminderWithDeliveryCheck = rememberFutureReminderSubmissionGate(text)
     var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showAddReminderDialog by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(60_000)
@@ -2988,6 +3096,9 @@ private fun ReminderCalendarView(
         remindersByDay[selectedDayStart].orEmpty().sortedBy { it.reminderAt }
     }
     val isSelectionMode = selectedNoteIds.isNotEmpty()
+    val canAddReminderOnSelectedDay = remember(selectedDayStart, nowMillis, text) {
+        calendarCanAddReminderOnDay(selectedDayStart, nowMillis, text)
+    }
 
     Column(
         modifier = modifier
@@ -3083,12 +3194,80 @@ private fun ReminderCalendarView(
             }
         }
 
-        Text(
-            text = text.remindersOnDate(selectedDayNotes.size),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.testTag("calendar_selected_day_count"),
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            IconButton(
+                onClick = {
+                    val previousDayStart = addDays(selectedDayStart, -1)
+                    selectedDayStart = previousDayStart
+                    visibleMonthStart = startOfMonthMillis(previousDayStart)
+                    onCalendarDateChange()
+                },
+                modifier = Modifier
+                    .size(48.dp)
+                    .semantics { contentDescription = text.previousDayLabel() }
+                    .testTag("calendar_previous_day"),
+            ) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = null)
+            }
+            Text(
+                text = calendarDateTitle(selectedDayStart, appLanguage),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("calendar_selected_day_title"),
+            )
+            IconButton(
+                onClick = {
+                    val nextDayStart = addDays(selectedDayStart, 1)
+                    selectedDayStart = nextDayStart
+                    visibleMonthStart = startOfMonthMillis(nextDayStart)
+                    onCalendarDateChange()
+                },
+                modifier = Modifier
+                    .size(48.dp)
+                    .semantics { contentDescription = text.nextDayLabel() }
+                    .testTag("calendar_next_day"),
+            ) {
+                Icon(Icons.Filled.ArrowForward, contentDescription = null)
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = text.remindersOnDate(selectedDayNotes.size),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("calendar_selected_day_count"),
+            )
+            TextButton(
+                onClick = {
+                    selectedDayStart = todayStart
+                    visibleMonthStart = startOfMonthMillis(todayStart)
+                    onCalendarDateChange()
+                },
+                modifier = Modifier.testTag("calendar_selected_day_today"),
+            ) {
+                Text(text.today)
+            }
+        }
+        Button(
+            onClick = { showAddReminderDialog = true },
+            enabled = canAddReminderOnSelectedDay,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("calendar_add_reminder"),
+        ) {
+            Text(text.addReminderLabel())
+        }
 
         if (selectedDayNotes.isEmpty()) {
             Box(
@@ -3133,6 +3312,99 @@ private fun ReminderCalendarView(
             }
         }
     }
+
+    if (showAddReminderDialog) {
+        CalendarReminderPresetDialog(
+            dayStart = selectedDayStart,
+            nowMillis = nowMillis,
+            text = text,
+            onDismiss = { showAddReminderDialog = false },
+            onSelect = { reminderAt ->
+                showAddReminderDialog = false
+                submitReminderWithDeliveryCheck(reminderAt) {
+                    onCreateReminderAt(reminderAt)
+                }
+            },
+        )
+    }
+}
+
+internal data class ReminderPresetOption(
+    val label: String,
+    val reminderAt: Long,
+    val tag: String,
+)
+
+@Composable
+private fun CalendarReminderPresetDialog(
+    dayStart: Long,
+    nowMillis: Long,
+    text: UiText,
+    onDismiss: () -> Unit,
+    onSelect: (Long) -> Unit,
+) {
+    val options = remember(dayStart, nowMillis, text) {
+        calendarReminderPresetOptions(dayStart, nowMillis, text)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text.addReminderLabel()) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                options.forEach { option ->
+                    Button(
+                        onClick = { onSelect(option.reminderAt) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(option.tag),
+                    ) {
+                        Text(option.label)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text.cancel)
+            }
+        },
+        modifier = Modifier.testTag("calendar_add_reminder_dialog"),
+    )
+}
+
+internal fun calendarReminderPresetOptions(
+    dayStart: Long,
+    nowMillis: Long,
+    text: UiText,
+): List<ReminderPresetOption> {
+    val presets = listOf(
+        ReminderPresetOption(text.reminderPresetMorningLabel(), reminderTimeOnDay(dayStart, hour = 9), "calendar_preset_morning"),
+        ReminderPresetOption(text.reminderPresetAfternoonLabel(), reminderTimeOnDay(dayStart, hour = 14), "calendar_preset_afternoon"),
+        ReminderPresetOption(text.reminderPresetEveningLabel(), reminderTimeOnDay(dayStart, hour = 18), "calendar_preset_evening"),
+    ).filter { it.reminderAt > nowMillis }
+    if (presets.isNotEmpty()) return presets
+    val fallback = nextHourReminderTime(nowMillis)
+    return if (dayStart == startOfDayMillis(nowMillis) && startOfDayMillis(fallback) == dayStart) {
+        listOf(
+            ReminderPresetOption(
+                label = text.reminderPresetNextHourLabel(),
+                reminderAt = fallback,
+                tag = "calendar_preset_next_hour",
+            ),
+        )
+    } else {
+        emptyList()
+    }
+}
+
+internal fun calendarCanAddReminderOnDay(
+    dayStart: Long,
+    nowMillis: Long,
+    text: UiText,
+): Boolean {
+    return dayStart >= startOfDayMillis(nowMillis) &&
+        calendarReminderPresetOptions(dayStart, nowMillis, text).isNotEmpty()
 }
 
 @Composable
@@ -3299,6 +3571,21 @@ private fun NoteRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            reminderRowSummary(note, text, appLanguage)?.let { summary ->
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (note.reminderAt != null && note.reminderAt <= System.currentTimeMillis()) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("note_reminder_summary_${note.id}"),
+                )
+            }
             notePreview(note, searchQuery)?.let { preview ->
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -3390,7 +3677,6 @@ private fun TextEditorScreen(
     var isSavingAndLeaving by remember(noteId) { mutableStateOf(false) }
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
     var pendingExportText by remember { mutableStateOf<String?>(null) }
-    var pendingReminderAt by remember { mutableStateOf<Long?>(null) }
     var showLinkDialog by remember { mutableStateOf(false) }
     var linkDraft by remember { mutableStateOf("") }
     var pendingLinkRange by remember { mutableStateOf<IntRange?>(null) }
@@ -3398,6 +3684,8 @@ private fun TextEditorScreen(
     var activeTimePickerDialog by remember { mutableStateOf<TimePickerDialog?>(null) }
     var titleFocusRequest by remember(noteId) { mutableStateOf(0) }
     val context = LocalContext.current
+    val submitReminderWithDeliveryCheck = rememberFutureReminderSubmissionGate(text)
+    val requireReminderDeliveryReady = rememberReminderDeliveryGate(text)
     val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
     val contentFocusRequester = remember(noteId) { FocusRequester() }
@@ -3449,18 +3737,6 @@ private fun TextEditorScreen(
         }
     }
 
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { _ ->
-        pendingReminderAt?.let { reminderAt ->
-            viewModel.setNoteReminder(
-                noteId = noteId,
-                reminderAt = reminderAt,
-                reminderRepeat = note?.reminderRepeat ?: ReminderRepeat.None.code,
-            )
-        }
-        pendingReminderAt = null
-    }
     val exportTextLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain"),
     ) { uri ->
@@ -3494,7 +3770,7 @@ private fun TextEditorScreen(
             val isBlankLoadedTextNote = loaded.title.isBlank() && loaded.textContent.orEmpty().isBlank()
             isEditing = isBlankLoadedTextNote
             isFocusWriting = isNewDraft && isBlankLoadedTextNote
-            isMetadataExpanded = false
+            isMetadataExpanded = isNewDraft && loaded.reminderAt != null
             modeInitializedNoteId = loaded.id
         }
     }
@@ -3854,17 +4130,7 @@ private fun TextEditorScreen(
     }
 
     fun submitReminder(reminderAt: Long) {
-        if (reminderAt <= System.currentTimeMillis()) {
-            Toast.makeText(context, text.reminderMustBeFuture, Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            pendingReminderAt = reminderAt
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
+        submitReminderWithDeliveryCheck(reminderAt) {
             viewModel.setNoteReminder(
                 noteId = noteId,
                 reminderAt = reminderAt,
@@ -4241,7 +4507,9 @@ private fun TextEditorScreen(
                                             onClick = {
                                                 isMoreMenuExpanded = false
                                                 if (billingState.hasPremiumAccess) {
-                                                    viewModel.setNoteReminder(noteId, loaded.reminderAt, repeat.code)
+                                                    requireReminderDeliveryReady {
+                                                        viewModel.setNoteReminder(noteId, loaded.reminderAt, repeat.code)
+                                                    }
                                                 } else {
                                                     openPremiumAfterSavingTextNote()
                                                 }
@@ -4324,7 +4592,7 @@ private fun TextEditorScreen(
                         },
                     )
                 }
-                if (isCompactEditor) {
+                if (isCompactEditor && !isMetadataExpanded) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -4459,15 +4727,17 @@ private fun TextEditorScreen(
                                     )
                                 }
                             }
-                            Text(
-                                text = reminderStatus(currentNote.reminderAt, text, appLanguage),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (currentNote.reminderAt != null && currentNote.reminderAt <= System.currentTimeMillis()) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            ReminderControls(
+                                note = currentNote,
+                                text = text,
+                                appLanguage = appLanguage,
+                                isPrivacyLocked = isPrivacyLocked,
+                                hasPremiumAccess = billingState.hasPremiumAccess,
+                                onOpenPremium = ::openPremiumAfterSavingTextNote,
+                                onSetReminder = { reminderAt, repeat ->
+                                    viewModel.setNoteReminder(noteId, reminderAt, repeat)
                                 },
-                                modifier = Modifier.testTag("note_reminder_status"),
+                                onClearReminder = { viewModel.setNoteReminder(noteId, null) },
                             )
                             if (currentNote.isPinned) {
                                 Text(
@@ -6358,7 +6628,8 @@ private fun ReminderControls(
     onClearReminder: () -> Unit,
 ) {
     val context = LocalContext.current
-    var pendingReminderAt by remember { mutableStateOf<Long?>(null) }
+    val submitReminderWithDeliveryCheck = rememberFutureReminderSubmissionGate(text)
+    val requireReminderDeliveryReady = rememberReminderDeliveryGate(text)
     var activeDatePickerDialog by remember { mutableStateOf<DatePickerDialog?>(null) }
     var activeTimePickerDialog by remember { mutableStateOf<TimePickerDialog?>(null) }
 
@@ -6371,25 +6642,8 @@ private fun ReminderControls(
         }
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { _ ->
-        pendingReminderAt?.let { onSetReminder(it, note.reminderRepeat) }
-        pendingReminderAt = null
-    }
-
     fun submitReminder(reminderAt: Long) {
-        if (reminderAt <= System.currentTimeMillis()) {
-            Toast.makeText(context, text.reminderMustBeFuture, Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            pendingReminderAt = reminderAt
-            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
+        submitReminderWithDeliveryCheck(reminderAt) {
             onSetReminder(reminderAt, note.reminderRepeat)
         }
     }
@@ -6400,7 +6654,9 @@ private fun ReminderControls(
             return
         }
         note.reminderAt?.let { reminderAt ->
-            onSetReminder(reminderAt, repeat.code)
+            requireReminderDeliveryReady {
+                onSetReminder(reminderAt, repeat.code)
+            }
         }
     }
 
@@ -7270,8 +7526,25 @@ private fun noteMetadata(
     val timestamps = "${text.updated} ${formatTime(note.updatedAt, appLanguage)} • " +
         "${text.created} ${formatTime(note.createdAt, appLanguage)}"
     val pinned = if (note.isPinned && !note.isDeleted) " • ${text.pinned}" else ""
-    val reminder = note.reminderAt?.let { " • ${reminderStatus(it, text, appLanguage)}" }.orEmpty()
-    return "$folderName • $timestamps$pinned$reminder"
+    return "$folderName • $timestamps$pinned"
+}
+
+private fun reminderRowSummary(
+    note: NoteEntity,
+    text: UiText,
+    appLanguage: AppLanguage,
+): String? {
+    val reminderAt = note.reminderAt ?: return null
+    val status = if (reminderAt <= System.currentTimeMillis()) {
+        text.reminderOverdue
+    } else {
+        text.reminderUpcoming
+    }
+    val repeat = normalizedReminderRepeat(note.reminderRepeat)
+        .takeIf { it != ReminderRepeat.None.code }
+        ?.let { " • ${text.reminderRepeat}: ${reminderRepeatLabel(it, text)}" }
+        .orEmpty()
+    return "${text.reminder}: ${formatTime(reminderAt, appLanguage)} • $status$repeat"
 }
 
 private fun NoteSortOption.label(text: UiText): String {
@@ -7422,6 +7695,33 @@ private fun addMonths(monthStart: Long, months: Int): Long {
     }.timeInMillis
 }
 
+private fun addDays(dayStart: Long, days: Int): Long {
+    return Calendar.getInstance().apply {
+        timeInMillis = startOfDayMillis(dayStart)
+        add(Calendar.DAY_OF_YEAR, days)
+    }.timeInMillis
+}
+
+private fun reminderTimeOnDay(dayStart: Long, hour: Int, minute: Int = 0): Long {
+    return Calendar.getInstance().apply {
+        timeInMillis = startOfDayMillis(dayStart)
+        set(Calendar.HOUR_OF_DAY, hour)
+        set(Calendar.MINUTE, minute)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+}
+
+private fun nextHourReminderTime(nowMillis: Long): Long {
+    return Calendar.getInstance().apply {
+        timeInMillis = nowMillis
+        add(Calendar.HOUR_OF_DAY, 1)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+}
+
 private fun monthDayStarts(monthStart: Long): List<Long?> {
     val calendar = Calendar.getInstance().apply {
         timeInMillis = startOfMonthMillis(monthStart)
@@ -7456,6 +7756,14 @@ private fun calendarMonthTitle(monthStart: Long, language: AppLanguage): String 
         AppLanguage.TraditionalChinese -> Locale.TRADITIONAL_CHINESE
     }
     return SimpleDateFormat("LLLL yyyy", locale).format(Date(monthStart))
+}
+
+private fun calendarDateTitle(dayStart: Long, language: AppLanguage): String {
+    val locale = when (language) {
+        AppLanguage.English -> Locale.ENGLISH
+        AppLanguage.TraditionalChinese -> Locale.TRADITIONAL_CHINESE
+    }
+    return DateFormat.getDateInstance(DateFormat.MEDIUM, locale).format(Date(dayStart))
 }
 
 private fun weekdayLabels(language: AppLanguage): List<String> {

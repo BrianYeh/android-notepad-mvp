@@ -1,12 +1,15 @@
 package com.example.notepad.reminder
 
+import android.Manifest
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
+import androidx.core.app.NotificationManagerCompat
 import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.ReminderRepeat
@@ -21,6 +24,13 @@ object ReminderScheduler {
     const val ACTION_SNOOZE = "com.example.notepad.reminder.SNOOZE"
     const val ACTION_CLEAR = "com.example.notepad.reminder.CLEAR"
     const val SNOOZE_MILLIS = 10 * 60 * 1000L
+
+    enum class NotificationDeliveryStatus {
+        Ready,
+        PermissionRequired,
+        AppNotificationsDisabled,
+        ReminderChannelDisabled,
+    }
 
     fun schedule(context: Context, note: NoteEntity) {
         val reminderAt = note.reminderAt
@@ -139,6 +149,39 @@ object ReminderScheduler {
             NotificationManager.IMPORTANCE_DEFAULT,
         )
         notificationManager.createNotificationChannel(channel)
+    }
+
+    fun notificationDeliveryStatus(context: Context): NotificationDeliveryStatus {
+        ensureNotificationChannel(context)
+        val hasRuntimePermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        val channelImportance = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.getSystemService(NotificationManager::class.java)
+                .getNotificationChannel(CHANNEL_ID)
+                ?.importance
+        } else {
+            null
+        }
+        return notificationDeliveryStatusFor(
+            requiresRuntimePermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
+            hasRuntimePermission = hasRuntimePermission,
+            appNotificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled(),
+            channelImportance = channelImportance,
+        )
+    }
+
+    fun notificationDeliveryStatusFor(
+        requiresRuntimePermission: Boolean,
+        hasRuntimePermission: Boolean,
+        appNotificationsEnabled: Boolean,
+        channelImportance: Int?,
+    ): NotificationDeliveryStatus {
+        return when {
+            requiresRuntimePermission && !hasRuntimePermission -> NotificationDeliveryStatus.PermissionRequired
+            !appNotificationsEnabled -> NotificationDeliveryStatus.AppNotificationsDisabled
+            channelImportance == NotificationManager.IMPORTANCE_NONE -> NotificationDeliveryStatus.ReminderChannelDisabled
+            else -> NotificationDeliveryStatus.Ready
+        }
     }
 
     private fun reminderPendingIntent(context: Context, noteId: Long, firedReminderAt: Long? = null): PendingIntent {

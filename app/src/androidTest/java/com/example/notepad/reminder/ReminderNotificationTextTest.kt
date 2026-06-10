@@ -1,5 +1,6 @@
 package com.example.notepad.reminder
 
+import android.app.NotificationManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.notepad.data.DEFAULT_FOLDER_ID
 import com.example.notepad.data.ChecklistItem
@@ -143,6 +144,54 @@ class ReminderNotificationTextTest {
         assertEquals(true, isCurrentReminderAction(note, firedReminderAt = 3_000L))
         assertEquals(false, isCurrentReminderAction(note, firedReminderAt = 2_000L))
         assertEquals(false, isCurrentReminderAction(note, firedReminderAt = -1L))
+    }
+
+    @Test
+    fun notificationDeliveryStatusRequestsRuntimePermissionFirst() {
+        val status = ReminderScheduler.notificationDeliveryStatusFor(
+            requiresRuntimePermission = true,
+            hasRuntimePermission = false,
+            appNotificationsEnabled = false,
+            channelImportance = NotificationManager.IMPORTANCE_NONE,
+        )
+
+        assertEquals(ReminderScheduler.NotificationDeliveryStatus.PermissionRequired, status)
+    }
+
+    @Test
+    fun notificationDeliveryStatusBlocksDisabledAppNotifications() {
+        val status = ReminderScheduler.notificationDeliveryStatusFor(
+            requiresRuntimePermission = true,
+            hasRuntimePermission = true,
+            appNotificationsEnabled = false,
+            channelImportance = NotificationManager.IMPORTANCE_DEFAULT,
+        )
+
+        assertEquals(ReminderScheduler.NotificationDeliveryStatus.AppNotificationsDisabled, status)
+    }
+
+    @Test
+    fun notificationDeliveryStatusBlocksDisabledReminderChannel() {
+        val status = ReminderScheduler.notificationDeliveryStatusFor(
+            requiresRuntimePermission = false,
+            hasRuntimePermission = true,
+            appNotificationsEnabled = true,
+            channelImportance = NotificationManager.IMPORTANCE_NONE,
+        )
+
+        assertEquals(ReminderScheduler.NotificationDeliveryStatus.ReminderChannelDisabled, status)
+    }
+
+    @Test
+    fun notificationDeliveryStatusAllowsReadyNotifications() {
+        val status = ReminderScheduler.notificationDeliveryStatusFor(
+            requiresRuntimePermission = true,
+            hasRuntimePermission = true,
+            appNotificationsEnabled = true,
+            channelImportance = NotificationManager.IMPORTANCE_DEFAULT,
+        )
+
+        assertEquals(ReminderScheduler.NotificationDeliveryStatus.Ready, status)
     }
 
     private fun note(

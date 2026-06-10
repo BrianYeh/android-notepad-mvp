@@ -297,6 +297,42 @@ data class UiText(
             "$count reminders"
         }
     }
+
+    fun addReminderLabel(): String {
+        return if (this === TraditionalChineseText) "新增提醒" else "Add reminder"
+    }
+
+    fun reminderPresetMorningLabel(): String {
+        return if (this === TraditionalChineseText) "上午 09:00" else "Morning 09:00"
+    }
+
+    fun reminderPresetAfternoonLabel(): String {
+        return if (this === TraditionalChineseText) "下午 14:00" else "Afternoon 14:00"
+    }
+
+    fun reminderPresetEveningLabel(): String {
+        return if (this === TraditionalChineseText) "晚上 18:00" else "Evening 18:00"
+    }
+
+    fun reminderPresetNextHourLabel(): String {
+        return if (this === TraditionalChineseText) "下一小時" else "Next hour"
+    }
+
+    fun previousDayLabel(): String {
+        return if (this === TraditionalChineseText) "前一天" else "Previous day"
+    }
+
+    fun nextDayLabel(): String {
+        return if (this === TraditionalChineseText) "下一天" else "Next day"
+    }
+
+    fun reminderNotificationsBlockedLabel(): String {
+        return if (this === TraditionalChineseText) {
+            "請開啟通知才能使用提醒。"
+        } else {
+            "Turn on notifications to use reminders."
+        }
+    }
 }
 
 val EnglishText = UiText(

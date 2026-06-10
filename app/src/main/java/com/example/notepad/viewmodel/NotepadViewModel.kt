@@ -172,17 +172,21 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             sortOption = sort,
             quickFilter = quickFilter,
         )
+    }.combine(reminderFilter) { filters, reminderFilter ->
+        filters.copy(reminderFilter = reminderFilter)
     }
 
     private val noteFilters = baseNoteFilters
 
     val notes = allNotes
         .combine(noteFilters) { notes, filters ->
+            val now = System.currentTimeMillis()
             notes
                 .asSequence()
                 .filter { note -> note.isDeleted == (filters.listMode == NoteListMode.Trash) }
                 .filter { note -> filters.selectedFolderId == null || note.folderId == filters.selectedFolderId }
                 .filter { note -> note.matchesQuickFilter(filters.quickFilter) }
+                .filter { note -> note.matchesReminderFilter(filters.reminderFilter, now) }
                 .filter { note -> filters.searchQuery.isBlank() || note.matchesSearch(filters.searchQuery) }
                 .toList()
                 .sortedFor(filters)
@@ -468,6 +472,34 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             onCreated(repository.createTextNote(_selectedFolderId.value))
             refreshWidgets()
+        }
+    }
+
+    fun createTextNoteWithReminder(
+        reminderAt: Long,
+        reminderRepeat: String = ReminderRepeat.None.code,
+        onCreated: (Long) -> Unit,
+    ) {
+        viewModelScope.launch {
+            if (reminderAt <= System.currentTimeMillis()) return@launch
+            val noteId = repository.createTextNote(_selectedFolderId.value)
+            val normalizedRepeat = normalizedReminderRepeat(reminderRepeat)
+            val scheduledReminderAt = if (normalizedRepeat == ReminderRepeat.None.code) {
+                reminderAt
+            } else {
+                ReminderScheduler.nextRepeatTime(reminderAt, normalizedRepeat) ?: reminderAt
+            }
+            val note = repository.setNoteReminder(noteId, scheduledReminderAt, normalizedRepeat)
+            if (note == null) {
+                repository.permanentlyDeleteBlankTextDraft(noteId)
+                ReminderScheduler.cancel(getApplication(), noteId)
+                ReminderScheduler.cancelNotification(getApplication(), noteId)
+                refreshWidgets()
+                return@launch
+            }
+            ReminderScheduler.schedule(getApplication(), note)
+            refreshWidgets()
+            onCreated(noteId)
         }
     }
 
@@ -760,6 +792,7 @@ private data class NoteListFilters(
     val listMode: NoteListMode,
     val sortOption: NoteSortOption,
     val quickFilter: NoteQuickFilter,
+    val reminderFilter: ReminderFilter = ReminderFilter.All,
 )
 
 private fun NoteEntity.matchesSearch(query: String): Boolean {
@@ -775,6 +808,16 @@ private fun NoteEntity.matchesQuickFilter(filter: NoteQuickFilter): Boolean {
         NoteQuickFilter.Checklist -> type == NoteTypes.CHECKLIST
         NoteQuickFilter.HasReminder -> reminderAt != null
         NoteQuickFilter.Pinned -> isPinned
+    }
+}
+
+private fun NoteEntity.matchesReminderFilter(filter: ReminderFilter, now: Long): Boolean {
+    val reminderAt = reminderAt
+    return when (filter) {
+        ReminderFilter.All -> true
+        ReminderFilter.WithReminder -> reminderAt != null
+        ReminderFilter.Overdue -> reminderAt != null && reminderAt <= now
+        ReminderFilter.Upcoming -> reminderAt != null && reminderAt > now
     }
 }
 
