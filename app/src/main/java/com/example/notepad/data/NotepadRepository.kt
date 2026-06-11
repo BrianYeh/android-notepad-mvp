@@ -1,6 +1,8 @@
 package com.example.notepad.data
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 
 class NotepadRepository(
@@ -144,19 +146,105 @@ class NotepadRepository(
     }
 
     suspend fun saveDrawingNote(noteId: Long, title: String, drawingData: String): Long? {
-        val current = dao.getNote(noteId) ?: return null
-        if (current.title == title && current.drawingData == drawingData) return current.updatedAt
-        val now = System.currentTimeMillis()
+        return saveDrawingNote(
+            noteId = noteId,
+            title = title,
+            drawingData = drawingData,
+            expectedUpdatedAt = null,
+            expectedTitle = null,
+            expectedDrawingData = null,
+            saveEditGate = null,
+            isCurrentBeforeWrite = { true },
+        )
+    }
 
-        dao.updateNote(
-            current.copy(
+    suspend fun saveDrawingNoteIfCurrent(
+        noteId: Long,
+        title: String,
+        drawingData: String,
+        expectedUpdatedAt: Long,
+        expectedTitle: String,
+        expectedDrawingData: String,
+        saveEditGate: DrawingSaveEditGate,
+        isCurrentBeforeWrite: () -> Boolean,
+    ): Long? {
+        return saveDrawingNote(
+            noteId = noteId,
+            title = title,
+            drawingData = drawingData,
+            expectedUpdatedAt = expectedUpdatedAt,
+            expectedTitle = expectedTitle,
+            expectedDrawingData = expectedDrawingData,
+            saveEditGate = saveEditGate,
+            isCurrentBeforeWrite = isCurrentBeforeWrite,
+        )
+    }
+
+    private suspend fun saveDrawingNote(
+        noteId: Long,
+        title: String,
+        drawingData: String,
+        expectedUpdatedAt: Long?,
+        expectedTitle: String?,
+        expectedDrawingData: String?,
+        saveEditGate: DrawingSaveEditGate?,
+        isCurrentBeforeWrite: () -> Boolean,
+    ): Long? {
+        val current = dao.getNote(noteId) ?: return null
+        if (current.type != NoteTypes.DRAWING || current.isDeleted) return null
+        if (!isCurrentBeforeWrite()) return null
+        if (current.title == title && current.drawingData == drawingData) return current.updatedAt
+        if (
+            expectedUpdatedAt != null &&
+            current.updatedAt != expectedUpdatedAt &&
+            (expectedTitle == null || current.title != expectedTitle || current.drawingData != expectedDrawingData)
+        ) {
+            return null
+        }
+        val now = maxOf(System.currentTimeMillis(), current.updatedAt + 1)
+
+        val updatedRows = if (expectedUpdatedAt == null) {
+            dao.updateDrawingNoteContent(
+                noteId = noteId,
                 title = title,
-                textContent = null,
                 drawingData = drawingData,
                 updatedAt = now,
-            ),
-        )
-        return now
+            )
+        } else if (saveEditGate != null) {
+            withContext(Dispatchers.IO) {
+                saveEditGate.withSaveCommitSection {
+                    if (!isCurrentBeforeWrite()) {
+                        0
+                    } else {
+                        dao.updateDrawingNoteContentIfUnchangedBlocking(
+                            noteId = noteId,
+                            title = title,
+                            drawingData = drawingData,
+                            updatedAt = now,
+                            expectedUpdatedAt = expectedUpdatedAt,
+                            expectedTitle = expectedTitle.orEmpty(),
+                            expectedDrawingData = expectedDrawingData.orEmpty(),
+                        )
+                    }
+                }
+            }
+        } else {
+            if (!isCurrentBeforeWrite()) return null
+            dao.updateDrawingNoteContentIfUnchanged(
+                noteId = noteId,
+                title = title,
+                drawingData = drawingData,
+                updatedAt = now,
+                expectedUpdatedAt = expectedUpdatedAt,
+                expectedTitle = expectedTitle.orEmpty(),
+                expectedDrawingData = expectedDrawingData.orEmpty(),
+            )
+        }
+        return if (updatedRows > 0) {
+            dao.getNote(noteId)?.updatedAt ?: now
+        } else {
+            null
+        }
     }
 
     suspend fun saveChecklistNote(noteId: Long, title: String, checklistJson: String): Long? {
@@ -217,6 +305,19 @@ class NotepadRepository(
         if (current.type != NoteTypes.TEXT || current.isDeleted) return false
         dao.deleteNote(noteId)
         return true
+    }
+
+    suspend fun discardNewDrawingDraftIfBlank(
+        noteId: Long,
+        isNewDraft: Boolean,
+        title: String,
+        drawingData: String,
+    ): Boolean {
+        if (!isNewDraft) return false
+        if (title.isNotBlank() || DrawingJson.decode(drawingData).isNotEmpty()) return false
+        val current = dao.getNote(noteId) ?: return true
+        if (current.type != NoteTypes.DRAWING || current.isDeleted) return false
+        return dao.deleteBlankLocalDrawingDraftNote(noteId, isNewDraft = true) > 0
     }
 
     suspend fun setNotePinned(noteId: Long, isPinned: Boolean) {

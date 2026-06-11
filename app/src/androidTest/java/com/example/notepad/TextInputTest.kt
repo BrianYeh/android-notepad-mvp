@@ -2,8 +2,11 @@ package com.example.notepad
 
 import android.Manifest
 import android.os.Build
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasContentDescription
@@ -27,10 +30,12 @@ import androidx.compose.ui.unit.em
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.example.notepad.data.DEFAULT_FOLDER_ID
+import com.example.notepad.data.DrawingJson
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
 import com.example.notepad.data.DrawingTools
-import com.example.notepad.data.DEFAULT_FOLDER_ID
+import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
 import com.example.notepad.data.ReminderRepeat
@@ -51,9 +56,9 @@ import com.example.notepad.ui.nextFindMatchIndex
 import com.example.notepad.ui.previousFindMatchIndex
 import com.example.notepad.ui.webUrlAt
 import com.example.notepad.ui.webUrlRanges
-import androidx.compose.ui.graphics.Color
 import com.example.notepad.debug.DebugSaveFailure
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Before
@@ -258,6 +263,14 @@ class TextInputTest {
         )
     }
 
+    private fun assertTaggedSelected(tag: String, expected: Boolean) {
+        val selected = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config
+            .getOrNull(SemanticsProperties.Selected)
+        assertEquals("$tag selected state", expected, selected)
+    }
+
     private fun assertIconControl(tag: String, contentDescription: String, scrollTo: Boolean = false) {
         if (scrollTo) {
             composeRule.onNodeWithTag(tag).performScrollTo()
@@ -344,6 +357,78 @@ class TextInputTest {
         }
     }
 
+    private fun noteById(noteId: Long): NoteEntity? {
+        return runBlocking {
+            withContext(Dispatchers.IO) {
+                NotepadDatabase.getInstance(composeRule.activity)
+                    .notepadDao()
+                    .getNote(noteId)
+            }
+        }
+    }
+
+    private fun drawingStrokes(noteId: Long): List<DrawingStroke> {
+        return DrawingJson.decode(noteById(noteId)?.drawingData)
+    }
+
+    private fun encodedTestStroke(startX: Float, startY: Float): String {
+        return DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(
+                        DrawingPoint(startX, startY),
+                        DrawingPoint(startX + 24f, startY + 16f),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    private fun createDrawingNote(
+        title: String = "",
+        drawingData: String = "[]",
+        folderId: Long = DEFAULT_FOLDER_ID,
+    ): Long {
+        return runBlocking {
+            withContext(Dispatchers.IO) {
+                val repository = NotepadRepository(NotepadDatabase.getInstance(composeRule.activity).notepadDao())
+                repository.ensureDefaultFolder()
+                val noteId = repository.createDrawingNote(folderId)
+                if (title.isNotEmpty() || drawingData != "[]") {
+                    repository.saveDrawingNote(noteId, title, drawingData)
+                }
+                noteId
+            }
+        }
+    }
+
+    private fun replaceDrawingNoteRow(noteId: Long, title: String, drawingData: String) {
+        runBlocking {
+            withContext(Dispatchers.IO) {
+                val dao = NotepadDatabase.getInstance(composeRule.activity).notepadDao()
+                val current = dao.getNote(noteId) ?: error("Missing note $noteId")
+                dao.updateNote(
+                    current.copy(
+                        title = title,
+                        textContent = null,
+                        drawingData = drawingData,
+                        updatedAt = maxOf(System.currentTimeMillis(), current.updatedAt + 1L),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun deleteNoteRow(noteId: Long) {
+        runBlocking {
+            withContext(Dispatchers.IO) {
+                NotepadDatabase.getInstance(composeRule.activity)
+                    .notepadDao()
+                    .deleteNote(noteId)
+            }
+        }
+    }
+
     private fun waitForSingleNewNoteId(beforeIds: Set<Long>): Long {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             (noteIds() - beforeIds).size == 1
@@ -373,6 +458,16 @@ class TextInputTest {
             composeRule.onNodeWithTag("exit_fullscreen_drawing_button").performClick()
         }
         waitForTag("drawing_note_title")
+    }
+
+    private fun drawShortStrokeOnFullscreenCanvas() {
+        composeRule.onNodeWithTag("fullscreen_drawing_canvas")
+            .assertIsDisplayed()
+            .performTouchInput {
+                down(center)
+                moveBy(Offset(80f, 40f))
+                up()
+            }
     }
 
     @Test
@@ -1729,6 +1824,10 @@ class TextInputTest {
         composeRule.onNodeWithTag("find_in_note_menu_item").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("find_in_note_input").assertIsDisplayed().performTextInput("target")
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/1")
+        composeRule.onNodeWithTag("clear_find_in_note_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("find_in_note_bar") == 0
+        }
     }
 
     @Test
@@ -1856,23 +1955,305 @@ class TextInputTest {
     }
 
     @Test
+    fun newBlankDrawingHardwareBackExitsFullscreenThenDeletesDraftWithoutTombstone() {
+        val beforeIds = noteIds()
+        val beforeTombstones = noteTombstoneCount()
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val draftId = waitForSingleNewNoteId(beforeIds)
+        waitForTag("fullscreen_drawing_mode")
+
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        waitForTag("drawing_note_title")
+        assertTrue(noteById(draftId) != null)
+
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("add_note_button") > 0 && noteIds() == beforeIds
+        }
+
+        assertNull(noteById(draftId))
+        assertEquals(beforeTombstones, noteTombstoneCount())
+    }
+
+    @Test
+    fun newDrawingDraftWithTitleIsKeptAfterBack() {
+        val beforeIds = noteIds()
+        val title = "Drawing title ${System.currentTimeMillis()}"
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        exitInitialDrawingFocusModeIfNeeded()
+        composeRule.onNodeWithTag("drawing_note_title")
+            .assertIsDisplayed()
+            .performTextInput(title)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("add_note_button") > 0 && noteById(noteId)?.title == title
+        }
+        composeRule.onNodeWithText(title).assertIsDisplayed()
+    }
+
+    @Test
+    fun newDrawingDraftWithEraserOnlyStrokeIsKeptAfterBack() {
+        val beforeIds = noteIds()
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        waitForTag("fullscreen_drawing_mode")
+        composeRule.onNodeWithTag("drawing_tool_Eraser").assertIsDisplayed().performClick()
+        drawShortStrokeOnFullscreenCanvas()
+
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        waitForTag("drawing_note_title")
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            val savedStrokes = drawingStrokes(noteId)
+            tagCount("add_note_button") > 0 &&
+                savedStrokes.isNotEmpty() &&
+                savedStrokes.all { it.tool == DrawingTools.ERASER }
+        }
+    }
+
+    @Test
+    fun existingBlankDrawingOpenedFromListIsKeptAfterBack() {
+        val noteId = createDrawingNote()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("note_card_$noteId") > 0
+        }
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        waitForTag("fullscreen_drawing_mode")
+
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        waitForTag("drawing_note_title")
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("add_note_button") > 0 && noteById(noteId) != null
+        }
+        assertEquals(emptyList<DrawingStroke>(), drawingStrokes(noteId))
+    }
+
+    @Test
+    fun drawingSaveDoesNotOverwriteNewerExternalDrawingUpdate() {
+        val originalTitle = "Original drawing ${System.currentTimeMillis()}"
+        val localTitle = "Local stale ${System.currentTimeMillis()}"
+        val remoteTitle = "Remote newer ${System.currentTimeMillis()}"
+        val originalDrawing = encodedTestStroke(4f, 8f)
+        val remoteDrawing = encodedTestStroke(40f, 56f)
+        val noteId = createDrawingNote(title = originalTitle, drawingData = originalDrawing)
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("note_card_$noteId") > 0
+        }
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        exitInitialDrawingFocusModeIfNeeded()
+
+        DebugSaveFailure.delayNextDrawingSave(noteId, 1_500L)
+        composeRule.onNodeWithTag("drawing_note_title").performTextReplacement(localTitle)
+        replaceDrawingNoteRow(noteId, title = remoteTitle, drawingData = remoteDrawing)
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("drawing_note_retry_save_button") > 0
+        }
+
+        val saved = noteById(noteId)
+        assertEquals(remoteTitle, saved?.title)
+        assertEquals(remoteDrawing, saved?.drawingData)
+    }
+
+    @Test
+    fun drawingSaveAfterMetadataMoveKeepsLocalContentAndNewFolder() {
+        resetFoldersToDefault()
+        enableDebugPremiumAccess()
+        val folderName = "Sketch folder ${System.currentTimeMillis()}"
+        val folderId = createFolder(folderName)
+        val localTitle = "Metadata local ${System.currentTimeMillis()}"
+        val beforeIds = noteIds()
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        exitInitialDrawingFocusModeIfNeeded()
+
+        DebugSaveFailure.delayNextDrawingSave(noteId, 1_500L)
+        composeRule.onNodeWithTag("drawing_note_title").performTextInput(localTitle)
+        composeRule.onNodeWithTag("note_folder_selector_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText(folderName).assertIsDisplayed().performClick()
+        waitForNoteFolder(noteId, folderId)
+
+        composeRule.waitUntil(timeoutMillis = 15_000) {
+            val saved = noteById(noteId)
+            saved?.title == localTitle &&
+                saved.folderId == folderId &&
+                saved.drawingData == "[]"
+        }
+    }
+
+    @Test
+    fun deletedOpenDrawingNoteHardwareBackNavigatesToList() {
+        val beforeIds = noteIds()
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        waitForTag("fullscreen_drawing_mode")
+        deleteNoteRow(noteId)
+
+        waitForTag("drawing_note_not_found")
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("add_note_button") > 0
+        }
+    }
+
+    @Test
+    fun metadataIntentKeepsOtherwiseBlankNewDrawingDraft() {
+        resetFoldersToDefault()
+        enableDebugPremiumAccess()
+        val beforeIds = noteIds()
+        val folderName = "Drawing metadata ${System.currentTimeMillis()}"
+        val folderId = createFolder(folderName)
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        exitInitialDrawingFocusModeIfNeeded()
+        composeRule.onNodeWithTag("note_folder_selector_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText(folderName).assertIsDisplayed().performClick()
+        waitForNoteFolder(noteId, folderId)
+
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("add_note_button") > 0 && noteById(noteId)?.folderId == folderId
+        }
+        assertEquals("", noteById(noteId)?.title)
+        assertEquals(emptyList<DrawingStroke>(), drawingStrokes(noteId))
+    }
+
+    @Test
+    fun openingFolderMenuWithoutMoveStillDeletesBlankDrawingDraft() {
+        resetFoldersToDefault()
+        enableDebugPremiumAccess()
+        val beforeIds = noteIds()
+        val folderName = "Unused folder ${System.currentTimeMillis()}"
+        createFolder(folderName)
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        exitInitialDrawingFocusModeIfNeeded()
+        composeRule.onNodeWithTag("note_folder_selector_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText(folderName).assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_note_title").performClick()
+
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("add_note_button") > 0 && noteIds() == beforeIds
+        }
+
+        assertNull(noteById(noteId))
+    }
+
+    @Test
+    fun drawingTitleAndStrokeShowSavedStatusAndPersistAfterReopen() {
+        val beforeIds = noteIds()
+        val title = "Saved drawing ${System.currentTimeMillis()}"
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        waitForTag("fullscreen_drawing_mode")
+        drawShortStrokeOnFullscreenCanvas()
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        waitForTag("drawing_note_title")
+        composeRule.onNodeWithTag("drawing_note_title").performTextInput(title)
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteById(noteId)?.title == title && drawingStrokes(noteId).isNotEmpty()
+        }
+        composeRule.onNodeWithTag("drawing_note_save_status").assertTextContains("Saved", substring = true)
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("add_note_button") > 0
+        }
+
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        waitForTag("drawing_note_title")
+        assertEquals(title, noteById(noteId)?.title)
+        assertTrue(drawingStrokes(noteId).isNotEmpty())
+    }
+
+    @Test
+    fun drawingShareExportControlsDisableWhileRenderingAndFailedSaveStopsShare() {
+        val beforeIds = noteIds()
+        val title = "Drawing share busy ${System.currentTimeMillis()}"
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        exitInitialDrawingFocusModeIfNeeded()
+        composeRule.onNodeWithTag("drawing_note_title").performTextInput(title)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteById(noteId)?.title == title
+        }
+
+        DebugSaveFailure.delayNextDrawingSave(noteId, 3_000L)
+        DebugSaveFailure.failNextDrawingSave(noteId)
+        composeRule.onNodeWithTag("share_drawing_png_button").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runCatching {
+                composeRule.onNodeWithTag("share_drawing_png_button").assertIsNotEnabled()
+                composeRule.onNodeWithTag("export_drawing_png_button").assertIsNotEnabled()
+            }.isSuccess
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("drawing_note_retry_save_button") > 0
+        }
+        composeRule.onNodeWithTag("drawing_note_save_status").assertTextContains("Save failed")
+    }
+
+    @Test
     fun drawingEditorShowsUpgradedDrawingTools() {
         openAddMenuItem("new_drawing_note_menu_item")
         waitForTag("exit_fullscreen_drawing_button")
         composeRule.onNodeWithTag("exit_fullscreen_drawing_button").performClick()
         waitForTag("drawing_undo_button")
 
-        composeRule.onNodeWithTag("drawing_fullscreen_button").assertIsDisplayed()
-        composeRule.onNodeWithTag("drawing_undo_button").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("drawing_redo_button").performScrollTo().assertIsDisplayed()
+        assertIconControl("drawing_fullscreen_button", "Full-screen writing")
+        assertIconControl("drawing_undo_button", "Undo")
+        assertIconControl("drawing_redo_button", "Redo")
+        assertIconControl("drawing_clear_button", "Clear drawing")
+        assertIconControl("share_drawing_png_button", "Share PNG")
+        assertIconControl("export_drawing_png_button", "Export PNG")
         composeRule.onNodeWithTag("drawing_tool_Pen").performScrollTo().assertIsDisplayed()
+        assertTaggedContentDescription("drawing_tool_Pen", "Pen")
+        assertTaggedTouchTargetAtLeast48Dp("drawing_tool_Pen")
+        assertTaggedSelected("drawing_tool_Pen", true)
         composeRule.onNodeWithTag("drawing_tool_Eraser").performScrollTo().assertIsDisplayed()
+        assertTaggedContentDescription("drawing_tool_Eraser", "Eraser")
+        assertTaggedTouchTargetAtLeast48Dp("drawing_tool_Eraser")
+        assertTaggedSelected("drawing_tool_Eraser", false)
         composeRule.onNodeWithTag("drawing_brush_Thin").performScrollTo().assertIsDisplayed()
+        assertTaggedContentDescription("drawing_brush_Thin", "Thin")
+        assertTaggedTouchTargetAtLeast48Dp("drawing_brush_Thin")
         composeRule.onNodeWithTag("drawing_color_Red").performScrollTo().assertIsDisplayed()
+        assertTaggedContentDescription("drawing_color_Red", "Red")
+        assertTaggedTouchTargetAtLeast48Dp("drawing_color_Red")
         composeRule.onNodeWithTag("drawing_tool_Eraser").performScrollTo().performClick()
+        assertTaggedSelected("drawing_tool_Eraser", true)
         composeRule.onNodeWithTag("drawing_eraser_hint").assertIsDisplayed()
-        composeRule.onNodeWithTag("share_drawing_png_button").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("export_drawing_png_button").performScrollTo().assertIsDisplayed()
     }
 
     @Test

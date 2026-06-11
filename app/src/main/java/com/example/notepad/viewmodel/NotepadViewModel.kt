@@ -16,6 +16,7 @@ import com.example.notepad.data.GoogleDriveSyncClient
 import com.example.notepad.data.BackupData
 import com.example.notepad.data.ChecklistJson
 import com.example.notepad.data.DecodedBackup
+import com.example.notepad.data.DrawingSaveEditGate
 import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NoteQuickFilter
 import com.example.notepad.data.NoteListMode
@@ -70,6 +71,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     private val driveSyncClient = GoogleDriveSyncClient(application)
     private val premiumBilling = PremiumBilling(application)
     private val googleSyncMutex = Mutex()
+    private val drawingSaveEditGates = mutableMapOf<Long, DrawingSaveEditGate>()
     private val deviceId = preferences.getString("sync_device_id", null) ?: UUID.randomUUID().toString().also {
         preferences.edit().putString("sync_device_id", it).apply()
     }
@@ -224,6 +226,12 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun observeNote(noteId: Long) = repository.observeNote(noteId)
+
+    fun drawingSaveEditGate(noteId: Long): DrawingSaveEditGate {
+        return synchronized(drawingSaveEditGates) {
+            drawingSaveEditGates.getOrPut(noteId) { DrawingSaveEditGate() }
+        }
+    }
 
     suspend fun getActiveNote(noteId: Long): NoteEntity? {
         return withContext(Dispatchers.IO) {
@@ -589,8 +597,53 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    suspend fun saveDrawingNoteNow(noteId: Long, title: String, drawingData: String): Long? {
-        return repository.saveDrawingNote(noteId, title, drawingData).also { refreshWidgets() }
+    fun saveDrawingNoteIfCurrent(
+        noteId: Long,
+        title: String,
+        drawingData: String,
+        expectedUpdatedAt: Long,
+        expectedTitle: String,
+        expectedDrawingData: String,
+        saveEditGate: DrawingSaveEditGate,
+        isCurrentBeforeWrite: () -> Boolean,
+    ) {
+        viewModelScope.launch {
+            saveDrawingNoteNow(
+                noteId = noteId,
+                title = title,
+                drawingData = drawingData,
+                expectedUpdatedAt = expectedUpdatedAt,
+                expectedTitle = expectedTitle,
+                expectedDrawingData = expectedDrawingData,
+                saveEditGate = saveEditGate,
+                isCurrentBeforeWrite = isCurrentBeforeWrite,
+            )
+        }
+    }
+
+    suspend fun saveDrawingNoteNow(
+        noteId: Long,
+        title: String,
+        drawingData: String,
+        expectedUpdatedAt: Long,
+        expectedTitle: String,
+        expectedDrawingData: String,
+        saveEditGate: DrawingSaveEditGate,
+        isCurrentBeforeWrite: () -> Boolean,
+    ): Long? {
+        DebugSaveFailure.delayDrawingSaveIfRequested(noteId)
+        if (!isCurrentBeforeWrite()) return null
+        if (DebugSaveFailure.consumeDrawingSaveFailure(noteId)) return null
+        return repository.saveDrawingNoteIfCurrent(
+            noteId = noteId,
+            title = title,
+            drawingData = drawingData,
+            expectedUpdatedAt = expectedUpdatedAt,
+            expectedTitle = expectedTitle,
+            expectedDrawingData = expectedDrawingData,
+            saveEditGate = saveEditGate,
+            isCurrentBeforeWrite = isCurrentBeforeWrite,
+        ).also { refreshWidgets() }
     }
 
     fun saveChecklistNote(noteId: Long, title: String, checklistJson: String) {
@@ -658,6 +711,40 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         return discardNewTextDraftIfBlankAndRefresh(noteId, title, content, textFormattingJson)
     }
 
+    fun discardNewDrawingDraftIfBlank(
+        noteId: Long,
+        isNewDraft: Boolean,
+        hasUserIntent: Boolean,
+        title: String,
+        drawingData: String,
+    ) {
+        viewModelScope.launch {
+            discardNewDrawingDraftIfBlankAndRefresh(
+                noteId = noteId,
+                isNewDraft = isNewDraft,
+                hasUserIntent = hasUserIntent,
+                title = title,
+                drawingData = drawingData,
+            )
+        }
+    }
+
+    suspend fun discardNewDrawingDraftIfBlankNow(
+        noteId: Long,
+        isNewDraft: Boolean,
+        hasUserIntent: Boolean,
+        title: String,
+        drawingData: String,
+    ): Boolean {
+        return discardNewDrawingDraftIfBlankAndRefresh(
+            noteId = noteId,
+            isNewDraft = isNewDraft,
+            hasUserIntent = hasUserIntent,
+            title = title,
+            drawingData = drawingData,
+        )
+    }
+
     fun permanentlyDeleteBlankTextDraft(noteId: Long) {
         viewModelScope.launch {
             deleteBlankTextDraftAndRefresh(noteId)
@@ -685,6 +772,28 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun deleteBlankTextDraftAndRefresh(noteId: Long): Boolean {
         val deleted = repository.permanentlyDeleteBlankTextDraft(noteId)
+        if (deleted) {
+            ReminderScheduler.cancel(getApplication(), noteId)
+            ReminderScheduler.cancelNotification(getApplication(), noteId)
+            refreshWidgets()
+        }
+        return deleted
+    }
+
+    private suspend fun discardNewDrawingDraftIfBlankAndRefresh(
+        noteId: Long,
+        isNewDraft: Boolean,
+        hasUserIntent: Boolean,
+        title: String,
+        drawingData: String,
+    ): Boolean {
+        if (!isNewDraft || hasUserIntent) return false
+        val deleted = repository.discardNewDrawingDraftIfBlank(
+            noteId = noteId,
+            isNewDraft = isNewDraft,
+            title = title,
+            drawingData = drawingData,
+        )
         if (deleted) {
             ReminderScheduler.cancel(getApplication(), noteId)
             ReminderScheduler.cancelNotification(getApplication(), noteId)

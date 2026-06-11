@@ -116,6 +116,39 @@ abstract class NotepadDao {
         firedAt: Long?,
     ): Int
 
+    @Query("UPDATE notes SET title = :title, textContent = NULL, drawingData = :drawingData, updatedAt = max(:updatedAt, updatedAt + 1) WHERE id = :noteId AND type = :drawingType AND isDeleted = 0")
+    abstract suspend fun updateDrawingNoteContent(
+        noteId: Long,
+        title: String,
+        drawingData: String,
+        updatedAt: Long,
+        drawingType: String = NoteTypes.DRAWING,
+    ): Int
+
+    @Query("UPDATE notes SET title = :title, textContent = NULL, drawingData = :drawingData, updatedAt = max(:updatedAt, updatedAt + 1) WHERE id = :noteId AND type = :drawingType AND isDeleted = 0 AND (updatedAt = :expectedUpdatedAt OR (title = :expectedTitle AND drawingData = :expectedDrawingData))")
+    abstract suspend fun updateDrawingNoteContentIfUnchanged(
+        noteId: Long,
+        title: String,
+        drawingData: String,
+        updatedAt: Long,
+        expectedUpdatedAt: Long,
+        expectedTitle: String,
+        expectedDrawingData: String,
+        drawingType: String = NoteTypes.DRAWING,
+    ): Int
+
+    @Query("UPDATE notes SET title = :title, textContent = NULL, drawingData = :drawingData, updatedAt = max(:updatedAt, updatedAt + 1) WHERE id = :noteId AND type = :drawingType AND isDeleted = 0 AND (updatedAt = :expectedUpdatedAt OR (title = :expectedTitle AND drawingData = :expectedDrawingData))")
+    abstract fun updateDrawingNoteContentIfUnchangedBlocking(
+        noteId: Long,
+        title: String,
+        drawingData: String,
+        updatedAt: Long,
+        expectedUpdatedAt: Long,
+        expectedTitle: String,
+        expectedDrawingData: String,
+        drawingType: String = NoteTypes.DRAWING,
+    ): Int
+
     @Query("UPDATE notes SET activeReminderFiredAt = :firedAt WHERE id = :noteId AND reminderSnoozeUntil = :expectedSnoozeUntil AND isDeleted = 0")
     abstract suspend fun setActiveSnoozedReminderFiredAtIfCurrent(
         noteId: Long,
@@ -135,6 +168,19 @@ abstract class NotepadDao {
             current.textContent.orEmpty().isBlank() &&
             current.textFormattingJson.isNullOrBlank()
         if (!isBlankTextDraft) return 0
+        deleteNote(noteId)
+        return 1
+    }
+
+    @Transaction
+    open suspend fun deleteBlankLocalDrawingDraftNote(noteId: Long, isNewDraft: Boolean): Int {
+        if (!isNewDraft) return 0
+        val current = getNote(noteId) ?: return 0
+        val isBlankDrawingDraft = current.type == NoteTypes.DRAWING &&
+            !current.isDeleted &&
+            current.reminderAt == null &&
+            !current.isPinned
+        if (!isBlankDrawingDraft) return 0
         deleteNote(noteId)
         return 1
     }

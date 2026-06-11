@@ -10,9 +10,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.notepad.ocr.OcrNoteResult
 import com.example.notepad.ocr.OcrNoteUseCase
 import com.example.notepad.ocr.OcrTextRecognizer
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -21,6 +24,9 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class NotepadDatabaseTest {
@@ -163,6 +169,391 @@ class NotepadDatabaseTest {
         assertEquals(0x89.toByte(), styledPng.first())
         assertEquals(Color.WHITE, bitmap.getPixel(40, 40))
         assertEquals(Color.BLACK, bitmap.getPixel(20, 40))
+    }
+
+    @Test
+    fun discardNewDrawingDraftIfBlankDeletesEmptyDrawingWithoutTombstone() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+
+        assertTrue(
+            repository.discardNewDrawingDraftIfBlank(
+                noteId = noteId,
+                isNewDraft = true,
+                title = "   ",
+                drawingData = "[]",
+            ),
+        )
+
+        assertNull(dao.getNote(noteId))
+        assertTrue(dao.getNoteTombstones().isEmpty())
+    }
+
+    @Test
+    fun staleDrawingSaveDoesNotCommitAfterNewerEditArrives() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+        val initialUpdatedAt = dao.getNote(noteId)?.updatedAt ?: throw AssertionError("Drawing note was not created")
+        val saveEditGate = DrawingSaveEditGate(initialEditVersion = 1L)
+        val delayedEditVersion = saveEditGate.currentEditVersion()
+        val oldDrawingData = DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(1f, 1f), DrawingPoint(2f, 2f)),
+                    tool = DrawingTools.PEN,
+                ),
+            ),
+        )
+        val newDrawingData = DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(10f, 10f), DrawingPoint(20f, 20f)),
+                    tool = DrawingTools.PEN,
+                ),
+            ),
+        )
+        val delayedOldSave = async {
+            delay(100L)
+            repository.saveDrawingNoteIfCurrent(
+                noteId = noteId,
+                title = "A",
+                drawingData = oldDrawingData,
+                expectedUpdatedAt = initialUpdatedAt,
+                expectedTitle = "",
+                expectedDrawingData = "[]",
+                saveEditGate = saveEditGate,
+                isCurrentBeforeWrite = { saveEditGate.isCurrent(delayedEditVersion) },
+            )
+        }
+
+        saveEditGate.markEdited()
+        assertNull(delayedOldSave.await())
+        assertEquals("", dao.getNote(noteId)?.title)
+        assertEquals("[]", dao.getNote(noteId)?.drawingData)
+
+        val currentEditVersion = saveEditGate.currentEditVersion()
+        assertTrue(
+            repository.saveDrawingNoteIfCurrent(
+                noteId = noteId,
+                title = "B",
+                drawingData = newDrawingData,
+                expectedUpdatedAt = initialUpdatedAt,
+                expectedTitle = "",
+                expectedDrawingData = "[]",
+                saveEditGate = saveEditGate,
+                isCurrentBeforeWrite = { saveEditGate.isCurrent(currentEditVersion) },
+            ) != null,
+        )
+
+        val saved = dao.getNote(noteId)
+        assertEquals("B", saved?.title)
+        assertEquals(newDrawingData, saved?.drawingData)
+    }
+
+    @Test
+    fun drawingSaveGateBlocksEditMutationDuringFinalDaoHandoff() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+        val initialUpdatedAt = dao.getNote(noteId)?.updatedAt ?: throw AssertionError("Drawing note was not created")
+        val saveEditGate = DrawingSaveEditGate(initialEditVersion = 1L)
+        val expectedEditVersion = saveEditGate.currentEditVersion()
+        val gateChecks = AtomicInteger(0)
+        val editAttemptStarted = CountDownLatch(1)
+        val editFinished = CountDownLatch(1)
+        var editThread: Thread? = null
+        val drawingData = DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(3f, 3f), DrawingPoint(6f, 6f)),
+                    tool = DrawingTools.PEN,
+                ),
+            ),
+        )
+
+        val savedAt = repository.saveDrawingNoteIfCurrent(
+            noteId = noteId,
+            title = "Handoff",
+            drawingData = drawingData,
+            expectedUpdatedAt = initialUpdatedAt,
+            expectedTitle = "",
+            expectedDrawingData = "[]",
+            saveEditGate = saveEditGate,
+            isCurrentBeforeWrite = {
+                val isCurrent = saveEditGate.isCurrent(expectedEditVersion)
+                if (isCurrent && gateChecks.incrementAndGet() == 2) {
+                    editThread = Thread {
+                        editAttemptStarted.countDown()
+                        saveEditGate.markEdited()
+                        editFinished.countDown()
+                    }.also { it.start() }
+                    assertTrue(editAttemptStarted.await(5, TimeUnit.SECONDS))
+                    assertFalse(editFinished.await(100, TimeUnit.MILLISECONDS))
+                }
+                isCurrent
+            },
+        )
+
+        assertTrue(savedAt != null)
+        editThread?.join(5_000)
+        assertFalse(editThread?.isAlive ?: false)
+        assertEquals(expectedEditVersion + 1, saveEditGate.currentEditVersion())
+        val saved = dao.getNote(noteId)
+        assertEquals("Handoff", saved?.title)
+        assertEquals(drawingData, saved?.drawingData)
+    }
+
+    @Test
+    fun drawingNoOpSaveSucceedsAfterMetadataOnlyUpdate() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+        val initial = dao.getNote(noteId) ?: throw AssertionError("Drawing note was not created")
+        val reminderAt = System.currentTimeMillis() + 60_000L
+        val saveEditGate = DrawingSaveEditGate(initialEditVersion = 1L)
+        val expectedEditVersion = saveEditGate.currentEditVersion()
+
+        repository.setNoteReminder(noteId, reminderAt, ReminderRepeat.None.code)
+        val metadataUpdated = dao.getNote(noteId) ?: throw AssertionError("Drawing note was not updated")
+
+        val savedAt = repository.saveDrawingNoteIfCurrent(
+            noteId = noteId,
+            title = initial.title,
+            drawingData = initial.drawingData.orEmpty(),
+            expectedUpdatedAt = initial.updatedAt,
+            expectedTitle = initial.title,
+            expectedDrawingData = initial.drawingData.orEmpty(),
+            saveEditGate = saveEditGate,
+            isCurrentBeforeWrite = { saveEditGate.isCurrent(expectedEditVersion) },
+        )
+
+        assertEquals(metadataUpdated.updatedAt, savedAt)
+        val saved = dao.getNote(noteId)
+        assertEquals(initial.title, saved?.title)
+        assertEquals(initial.drawingData, saved?.drawingData)
+        assertEquals(reminderAt, saved?.reminderAt)
+    }
+
+    @Test
+    fun drawingContentSaveSucceedsAfterMetadataOnlyUpdateWhenBaselineContentUnchanged() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+        val initial = dao.getNote(noteId) ?: throw AssertionError("Drawing note was not created")
+        val reminderAt = System.currentTimeMillis() + 60_000L
+        val saveEditGate = DrawingSaveEditGate(initialEditVersion = 1L)
+        val expectedEditVersion = saveEditGate.currentEditVersion()
+        val localDrawingData = DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(6f, 8f), DrawingPoint(12f, 16f)),
+                    tool = DrawingTools.PEN,
+                ),
+            ),
+        )
+
+        repository.setNoteReminder(noteId, reminderAt, ReminderRepeat.None.code)
+
+        assertTrue(
+            repository.saveDrawingNoteIfCurrent(
+                noteId = noteId,
+                title = "Local content",
+                drawingData = localDrawingData,
+                expectedUpdatedAt = initial.updatedAt,
+                expectedTitle = initial.title,
+                expectedDrawingData = initial.drawingData.orEmpty(),
+                saveEditGate = saveEditGate,
+                isCurrentBeforeWrite = { saveEditGate.isCurrent(expectedEditVersion) },
+            ) != null,
+        )
+        val saved = dao.getNote(noteId)
+        assertEquals("Local content", saved?.title)
+        assertEquals(localDrawingData, saved?.drawingData)
+        assertEquals(reminderAt, saved?.reminderAt)
+    }
+
+    @Test
+    fun conditionalDrawingSaveKeepsUpdatedAtMonotonicAfterMetadataRace() = runTest {
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = dao.insertNote(
+            NoteEntity(
+                folderId = DEFAULT_FOLDER_ID,
+                type = NoteTypes.DRAWING,
+                title = "",
+                textContent = null,
+                drawingData = "[]",
+                createdAt = 2L,
+                updatedAt = 1_000L,
+            ),
+        )
+        val localDrawingData = DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(4f, 4f), DrawingPoint(8f, 8f)),
+                    tool = DrawingTools.PEN,
+                ),
+            ),
+        )
+
+        assertEquals(
+            1,
+            dao.updateDrawingNoteContentIfUnchanged(
+                noteId = noteId,
+                title = "Local content",
+                drawingData = localDrawingData,
+                updatedAt = 900L,
+                expectedUpdatedAt = 2L,
+                expectedTitle = "",
+                expectedDrawingData = "[]",
+            ),
+        )
+
+        val saved = dao.getNote(noteId)
+        assertEquals("Local content", saved?.title)
+        assertEquals(localDrawingData, saved?.drawingData)
+        assertEquals(1_001L, saved?.updatedAt)
+    }
+
+    @Test
+    fun discardDrawingDraftHelperRequiresNewDraftAuthorization() = runTest {
+        val repository = NotepadRepository(dao)
+        dao.ensureDefaultFolder(now = 1L)
+        val noteId = dao.insertNote(
+            NoteEntity(
+                folderId = DEFAULT_FOLDER_ID,
+                type = NoteTypes.DRAWING,
+                title = "",
+                textContent = null,
+                drawingData = "[]",
+                createdAt = 2L,
+                updatedAt = 2L,
+            ),
+        )
+
+        assertEquals(0, dao.deleteBlankLocalDrawingDraftNote(noteId, isNewDraft = false))
+        assertEquals(
+            false,
+            repository.discardNewDrawingDraftIfBlank(
+                noteId = noteId,
+                isNewDraft = false,
+                title = "",
+                drawingData = "[]",
+            ),
+        )
+
+        val existingBlankDrawing = dao.getNote(noteId)
+        assertEquals(NoteTypes.DRAWING, existingBlankDrawing?.type)
+        assertEquals("", existingBlankDrawing?.title)
+        assertEquals("[]", existingBlankDrawing?.drawingData)
+        assertTrue(dao.getNoteTombstones().isEmpty())
+    }
+
+    @Test
+    fun discardNewDrawingDraftIfBlankDeletesClearedPreviouslySavedDraft() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+        val savedDrawingData = DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(10f, 20f), DrawingPoint(30f, 40f)),
+                    tool = DrawingTools.PEN,
+                ),
+            ),
+        )
+        repository.saveDrawingNote(noteId, title = "Temporary sketch", drawingData = savedDrawingData)
+
+        assertTrue(
+            repository.discardNewDrawingDraftIfBlank(
+                noteId = noteId,
+                isNewDraft = true,
+                title = "",
+                drawingData = "[]",
+            ),
+        )
+
+        assertNull(dao.getNote(noteId))
+        assertTrue(dao.getNoteTombstones().isEmpty())
+    }
+
+    @Test
+    fun discardNewDrawingDraftIfBlankKeepsNonblankTitle() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+
+        assertEquals(
+            false,
+            repository.discardNewDrawingDraftIfBlank(
+                noteId = noteId,
+                isNewDraft = true,
+                title = "Sketch",
+                drawingData = "[]",
+            ),
+        )
+
+        assertTrue(dao.getNote(noteId) != null)
+        repository.saveDrawingNote(noteId, "Sketch", "[]")
+        assertEquals("Sketch", dao.getNote(noteId)?.title)
+    }
+
+    @Test
+    fun discardNewDrawingDraftIfBlankKeepsEraserOnlyStroke() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+        val eraserOnlyDrawing = DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(10f, 20f), DrawingPoint(30f, 40f)),
+                    widthPx = 18f,
+                    tool = DrawingTools.ERASER,
+                ),
+            ),
+        )
+
+        assertEquals(
+            false,
+            repository.discardNewDrawingDraftIfBlank(
+                noteId = noteId,
+                isNewDraft = true,
+                title = "",
+                drawingData = eraserOnlyDrawing,
+            ),
+        )
+
+        assertTrue(dao.getNote(noteId) != null)
+    }
+
+    @Test
+    fun blankDrawingDraftGuardKeepsReminderMetadata() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+        repository.setNoteReminder(noteId, reminderAt = 10_000L)
+
+        assertEquals(0, dao.deleteBlankLocalDrawingDraftNote(noteId, isNewDraft = true))
+
+        assertEquals(10_000L, dao.getNote(noteId)?.reminderAt)
+    }
+
+    @Test
+    fun saveDrawingNotePreservesFolderAndReminderMetadata() = runTest {
+        val repository = NotepadRepository(dao)
+        val folderId = repository.createFolder("Sketches")
+        val noteId = repository.createDrawingNote(folderId = null)
+        repository.moveNote(noteId, folderId)
+        repository.setNoteReminder(noteId, reminderAt = 20_000L, reminderRepeat = ReminderRepeat.Daily.code)
+        val drawingData = DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(1f, 2f), DrawingPoint(3f, 4f)),
+                    tool = DrawingTools.PEN,
+                ),
+            ),
+        )
+
+        repository.saveDrawingNote(noteId, title = "Updated", drawingData = drawingData)
+
+        val note = dao.getNote(noteId)
+        assertEquals(folderId, note?.folderId)
+        assertEquals(20_000L, note?.reminderAt)
+        assertEquals(ReminderRepeat.Daily.code, note?.reminderRepeat)
+        assertEquals("Updated", note?.title)
+        assertEquals(drawingData, note?.drawingData)
     }
 
     @Test

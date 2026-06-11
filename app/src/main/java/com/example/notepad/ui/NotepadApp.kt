@@ -49,18 +49,26 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FormatClear
 import androidx.compose.material.icons.filled.FormatColorFill
 import androidx.compose.material.icons.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardHide
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -132,6 +140,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -219,6 +228,8 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private sealed interface AppScreen {
@@ -226,7 +237,7 @@ private sealed interface AppScreen {
     data object Settings : AppScreen
     data class Premium(val returnTo: AppScreen = Main) : AppScreen
     data class TextEditor(val noteId: Long, val isNewDraft: Boolean = false) : AppScreen
-    data class DrawingEditor(val noteId: Long) : AppScreen
+    data class DrawingEditor(val noteId: Long, val isNewDraft: Boolean = false) : AppScreen
     data class ChecklistEditor(val noteId: Long) : AppScreen
 }
 
@@ -324,6 +335,8 @@ private fun doneLabel(language: AppLanguage): String = if (language == AppLangua
 private fun savedJustNowLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "剛剛已儲存" else "Saved just now"
 
 private fun saveFailedLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "儲存失敗" else "Save failed"
+
+private fun preparingPngLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "正在準備 PNG..." else "Preparing PNG..."
 
 private fun retryLabel(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "重試" else "Retry"
 
@@ -643,7 +656,7 @@ fun NotepadApp(
             },
             onCreateDrawingNote = {
                 viewModel.createDrawingNote { noteId ->
-                    screen = AppScreen.DrawingEditor(noteId)
+                    screen = AppScreen.DrawingEditor(noteId, isNewDraft = true)
                 }
             },
             onCreateChecklistNote = {
@@ -738,6 +751,7 @@ fun NotepadApp(
 
         is AppScreen.DrawingEditor -> DrawingEditorScreen(
             noteId = currentScreen.noteId,
+            isNewDraft = currentScreen.isNewDraft,
             folders = folders,
             text = text,
             appLanguage = appLanguage,
@@ -5756,6 +5770,7 @@ private fun ChecklistEditorScreen(
 @Composable
 private fun DrawingEditorScreen(
     noteId: Long,
+    isNewDraft: Boolean,
     folders: List<FolderEntity>,
     text: UiText,
     appLanguage: AppLanguage,
@@ -5776,10 +5791,29 @@ private fun DrawingEditorScreen(
     var canvasSize by remember(noteId) { mutableStateOf(IntSize.Zero) }
     var isFullscreenDrawing by remember(noteId) { mutableStateOf(false) }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
+    var loadedContentUpdatedAt by remember(noteId) { mutableStateOf<Long?>(null) }
+    var loadedContentTitle by remember(noteId) { mutableStateOf("") }
+    var loadedContentDrawingData by remember(noteId) { mutableStateOf("[]") }
+    var loadedContentEditVersion by remember(noteId) { mutableStateOf(0L) }
+    var lastLocalDrawingCommitUpdatedAt by remember(noteId) { mutableStateOf<Long?>(null) }
+    var lastLocalDrawingCommitTitle by remember(noteId) { mutableStateOf("") }
+    var lastLocalDrawingCommitData by remember(noteId) { mutableStateOf("[]") }
     var hasHandledInitialDrawingFocus by remember(noteId) { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
-    var pendingPngBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingPngBytes by remember(noteId) { mutableStateOf<ByteArray?>(null) }
+    var saveStatus by remember(noteId) { mutableStateOf(SaveStatus.Synced) }
+    var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
+    var isSavingAndLeaving by remember(noteId) { mutableStateOf(false) }
+    var activeDrawingSaveCount by remember(noteId) { mutableStateOf(0) }
+    var isPngRendering by remember(noteId) { mutableStateOf(false) }
+    var drawingIoMessage by remember(noteId) { mutableStateOf<String?>(null) }
+    var hasMetadataIntent by remember(noteId) { mutableStateOf(false) }
+    var hasFailedDrawingSave by remember(noteId) { mutableStateOf(false) }
+    val autoSaveVersion = remember(noteId) { AtomicLong(0L) }
+    val drawingSaveVersion = remember(noteId) { AtomicLong(0L) }
+    val drawingSaveEditGate = remember(noteId, viewModel) { viewModel.drawingSaveEditGate(noteId) }
+    val drawingSaveMutex = remember(noteId) { Mutex() }
 
     LaunchedEffect(isPrivacyLocked) {
         if (isPrivacyLocked) {
@@ -5790,32 +5824,112 @@ private fun DrawingEditorScreen(
     val context = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
     val titleFocusRequester = remember(noteId) { FocusRequester() }
+    val latestNote by rememberUpdatedState(note)
+    val latestLoadedNoteId by rememberUpdatedState(loadedNoteId)
+    val latestLoadedContentUpdatedAt by rememberUpdatedState(loadedContentUpdatedAt)
+    val latestLoadedContentTitle by rememberUpdatedState(loadedContentTitle)
+    val latestLoadedContentDrawingData by rememberUpdatedState(loadedContentDrawingData)
+    val latestLoadedContentEditVersion by rememberUpdatedState(loadedContentEditVersion)
+    val latestTitle by rememberUpdatedState(title)
+    val latestStrokes by rememberUpdatedState(strokes)
+    val latestSaveStatus by rememberUpdatedState(saveStatus)
+    val latestActiveDrawingSaveCount by rememberUpdatedState(activeDrawingSaveCount)
+    val latestHasMetadataIntent by rememberUpdatedState(hasMetadataIntent)
+    val latestHasFailedDrawingSave by rememberUpdatedState(hasFailedDrawingSave)
     val exportPngLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("image/png"),
     ) { uri ->
         val pngBytes = pendingPngBytes
         pendingPngBytes = null
-        if (uri == null || pngBytes == null) return@rememberLauncherForActivityResult
+        if (uri == null || pngBytes == null) {
+            isPngRendering = false
+            drawingIoMessage = null
+            return@rememberLauncherForActivityResult
+        }
 
         scope.launch {
             try {
                 withContext(Dispatchers.IO) {
                     writeBytesToUri(context, uri, pngBytes)
                 }
+                drawingIoMessage = null
                 Toast.makeText(context, text.pngExportComplete, Toast.LENGTH_SHORT).show()
             } catch (_: Exception) {
+                drawingIoMessage = text.pngExportFailed
                 Toast.makeText(context, text.pngExportFailed, Toast.LENGTH_SHORT).show()
+            } finally {
+                pendingPngBytes = null
+                isPngRendering = false
             }
         }
     }
 
-    LaunchedEffect(note?.id) {
-        val loaded = note ?: return@LaunchedEffect
+    fun drawingContentMatches(
+        currentNote: NoteEntity,
+        titleValue: String,
+        strokeValues: List<DrawingStroke>,
+    ): Boolean {
+        return titleValue == currentNote.title &&
+            DrawingJson.encode(strokeValues) == currentNote.drawingData.orEmpty()
+    }
+
+    fun updateLoadedContentBaseline(
+        loaded: NoteEntity,
+        editVersion: Long = drawingSaveEditGate.currentEditVersion(),
+    ) {
+        loadedContentUpdatedAt = loaded.updatedAt
+        loadedContentTitle = loaded.title
+        loadedContentDrawingData = loaded.drawingData.orEmpty()
+        loadedContentEditVersion = editVersion
+    }
+
+    fun updateLastLocalDrawingCommit(titleValue: String, drawingData: String, updatedAt: Long) {
+        lastLocalDrawingCommitTitle = titleValue
+        lastLocalDrawingCommitData = drawingData
+        lastLocalDrawingCommitUpdatedAt = updatedAt
+    }
+
+    fun loadedContentMatches(loaded: NoteEntity): Boolean {
+        return loaded.title == loadedContentTitle &&
+            loaded.drawingData.orEmpty() == loadedContentDrawingData
+    }
+
+    fun loadDrawingContent(loaded: NoteEntity) {
         title = loaded.title
         strokes = DrawingJson.decode(loaded.drawingData)
         redoStrokes = emptyList()
         loadedNoteId = loaded.id
+        updateLoadedContentBaseline(loaded)
+        updateLastLocalDrawingCommit(loaded.title, loaded.drawingData.orEmpty(), loaded.updatedAt)
+        lastSavedAt = loaded.updatedAt
+        saveStatus = SaveStatus.Synced
+        drawingIoMessage = null
+        hasFailedDrawingSave = false
+    }
+
+    LaunchedEffect(note?.id) {
+        val loaded = note ?: return@LaunchedEffect
+        loadDrawingContent(loaded)
+    }
+
+    LaunchedEffect(note?.updatedAt) {
+        val loaded = note ?: return@LaunchedEffect
+        if (loaded.id == noteId) {
+            lastSavedAt = loaded.updatedAt
+            when {
+                drawingContentMatches(loaded, title, strokes) -> {
+                    updateLoadedContentBaseline(loaded)
+                }
+                loadedContentMatches(loaded) -> {
+                    loadedContentUpdatedAt = loaded.updatedAt
+                }
+                drawingSaveEditGate.isCurrent(loadedContentEditVersion) -> {
+                    loadDrawingContent(loaded)
+                }
+            }
+        }
     }
 
     LaunchedEffect(loadedNoteId) {
@@ -5827,31 +5941,316 @@ private fun DrawingEditorScreen(
         }
     }
 
+    fun markDrawingEdited() {
+        drawingSaveEditGate.markEdited()
+        saveStatus = SaveStatus.Saving
+    }
+
+    fun replaceDrawingStrokes(updatedStrokes: List<DrawingStroke>) {
+        if (updatedStrokes != strokes) {
+            markDrawingEdited()
+        }
+        strokes = updatedStrokes
+    }
+
+    fun hasDrawingUserIntent(
+        titleValue: String,
+        strokeValues: List<DrawingStroke>,
+        metadataIntent: Boolean,
+        currentNote: NoteEntity?,
+    ): Boolean {
+        return titleValue.trim().isNotEmpty() ||
+            strokeValues.isNotEmpty() ||
+            metadataIntent ||
+            currentNote?.reminderAt != null ||
+            currentNote?.isPinned == true
+    }
+
+    fun hasUnsavedDrawingNote(
+        currentNote: NoteEntity? = latestNote,
+        titleValue: String = latestTitle,
+        strokeValues: List<DrawingStroke> = latestStrokes,
+        loadedId: Long? = latestLoadedNoteId,
+    ): Boolean {
+        val current = currentNote ?: return false
+        return loadedId == noteId &&
+            (
+                titleValue != current.title ||
+                    DrawingJson.encode(strokeValues) != current.drawingData.orEmpty()
+                )
+    }
+
+    fun canDiscardBlankDrawingDraft(
+        titleValue: String,
+        strokeValues: List<DrawingStroke>,
+        metadataIntent: Boolean = latestHasMetadataIntent,
+        currentNote: NoteEntity? = latestNote,
+    ): Boolean {
+        return isNewDraft &&
+            !hasDrawingUserIntent(titleValue, strokeValues, metadataIntent, currentNote) &&
+            latestSaveStatus != SaveStatus.Failed &&
+            !latestHasFailedDrawingSave
+    }
+
+    suspend fun saveDrawingSnapshot(
+        titleValue: String,
+        strokeValues: List<DrawingStroke>,
+        expectedEditVersion: Long = drawingSaveEditGate.currentEditVersion(),
+    ): Pair<NoteEntity, List<DrawingStroke>>? {
+        val drawingData = DrawingJson.encode(strokeValues)
+        val baselineTitle = latestLoadedContentTitle
+        val baselineDrawingData = latestLoadedContentDrawingData
+        val baselineUpdatedAt = latestLoadedContentUpdatedAt ?: return null
+        val requestVersion = drawingSaveVersion.incrementAndGet()
+        fun isCurrentSaveRequest(): Boolean {
+            return requestVersion == drawingSaveVersion.get() &&
+                drawingSaveEditGate.isCurrent(expectedEditVersion)
+        }
+        activeDrawingSaveCount += 1
+        if (drawingSaveEditGate.isCurrent(expectedEditVersion)) {
+            saveStatus = SaveStatus.Saving
+            drawingIoMessage = null
+        }
+        var skippedAsStale = false
+        var sourceNote: NoteEntity? = null
+        return try {
+            val savedAt = drawingSaveMutex.withLock {
+                if (!isCurrentSaveRequest()) {
+                    skippedAsStale = true
+                    null
+                } else {
+                    val currentNote = viewModel.getActiveNote(noteId) ?: latestNote ?: return@withLock null
+                    sourceNote = currentNote
+                    val currentDrawingData = currentNote.drawingData.orEmpty()
+                    val (expectedTitle, expectedDrawingData, expectedUpdatedAt) = when {
+                        drawingContentMatches(currentNote, titleValue, strokeValues) -> {
+                            Triple(currentNote.title, currentDrawingData, currentNote.updatedAt)
+                        }
+                        currentNote.title == lastLocalDrawingCommitTitle &&
+                            currentDrawingData == lastLocalDrawingCommitData &&
+                            currentNote.updatedAt == lastLocalDrawingCommitUpdatedAt -> {
+                            Triple(currentNote.title, currentDrawingData, currentNote.updatedAt)
+                        }
+                        else -> {
+                            Triple(
+                                baselineTitle,
+                                baselineDrawingData,
+                                baselineUpdatedAt,
+                            )
+                        }
+                    }
+                    try {
+                        viewModel.saveDrawingNoteNow(
+                            noteId = noteId,
+                            title = titleValue,
+                            drawingData = drawingData,
+                            expectedUpdatedAt = expectedUpdatedAt,
+                            expectedTitle = expectedTitle,
+                            expectedDrawingData = expectedDrawingData,
+                            saveEditGate = drawingSaveEditGate,
+                            isCurrentBeforeWrite = { isCurrentSaveRequest() },
+                        ).also {
+                            if (it == null && !isCurrentSaveRequest()) {
+                                skippedAsStale = true
+                            }
+                        }
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+            }
+            if (savedAt == null) {
+                if (!skippedAsStale) {
+                    hasFailedDrawingSave = true
+                }
+                if (
+                    !skippedAsStale &&
+                    requestVersion == drawingSaveVersion.get() &&
+                    drawingSaveEditGate.isCurrent(expectedEditVersion)
+                ) {
+                    saveStatus = SaveStatus.Failed
+                }
+                null
+            } else {
+                updateLastLocalDrawingCommit(titleValue, drawingData, savedAt)
+                if (!isCurrentSaveRequest()) {
+                    null
+                } else {
+                    lastSavedAt = savedAt
+                    loadedContentUpdatedAt = savedAt
+                    loadedContentTitle = titleValue
+                    loadedContentDrawingData = drawingData
+                    loadedContentEditVersion = expectedEditVersion
+                    saveStatus = SaveStatus.Saved
+                    hasFailedDrawingSave = false
+                    val persistedNote = viewModel.getActiveNote(noteId) ?: latestNote ?: sourceNote
+                    if (persistedNote == null || !isCurrentSaveRequest()) {
+                        null
+                    } else {
+                        persistedNote.copy(
+                            title = titleValue,
+                            textContent = null,
+                            drawingData = drawingData,
+                            updatedAt = savedAt,
+                        ) to strokeValues
+                    }
+                }
+            }
+        } finally {
+            activeDrawingSaveCount = (activeDrawingSaveCount - 1).coerceAtLeast(0)
+        }
+    }
+
+    fun requestDrawingSave(
+        titleValue: String = latestTitle,
+        strokeValues: List<DrawingStroke> = latestStrokes,
+    ) {
+        autoSaveVersion.incrementAndGet()
+        val expectedEditVersion = drawingSaveEditGate.currentEditVersion()
+        if (
+            !hasUnsavedDrawingNote(titleValue = titleValue, strokeValues = strokeValues) &&
+            expectedEditVersion == latestLoadedContentEditVersion &&
+            latestSaveStatus != SaveStatus.Failed
+        ) {
+            return
+        }
+        scope.launch {
+            saveDrawingSnapshot(titleValue, strokeValues, expectedEditVersion)
+        }
+    }
+
     LaunchedEffect(noteId, loadedNoteId, title) {
         if (loadedNoteId == noteId) {
+            val pendingVersion = autoSaveVersion.get()
             delay(500)
-            viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(strokes))
+            if (pendingVersion != autoSaveVersion.get()) return@LaunchedEffect
+            val titleToSave = latestTitle
+            val strokesToSave = latestStrokes
+            val expectedEditVersion = drawingSaveEditGate.currentEditVersion()
+            if (
+                !hasUnsavedDrawingNote(titleValue = titleToSave, strokeValues = strokesToSave) &&
+                expectedEditVersion == latestLoadedContentEditVersion &&
+                latestSaveStatus != SaveStatus.Failed
+            ) {
+                if (latestActiveDrawingSaveCount == 0 && latestSaveStatus != SaveStatus.Failed) {
+                    saveStatus = SaveStatus.Synced
+                }
+                return@LaunchedEffect
+            }
+            saveDrawingSnapshot(titleToSave, strokesToSave, expectedEditVersion)
+        }
+    }
+
+    fun savePendingDrawingNote() {
+        val titleToSave = latestTitle
+        val strokesToSave = latestStrokes
+        val drawingData = DrawingJson.encode(strokesToSave)
+        val hasUserIntent = hasDrawingUserIntent(
+            titleValue = titleToSave,
+            strokeValues = strokesToSave,
+            metadataIntent = latestHasMetadataIntent,
+            currentNote = latestNote,
+        )
+        if (canDiscardBlankDrawingDraft(titleToSave, strokesToSave)) {
+            autoSaveVersion.incrementAndGet()
+            viewModel.discardNewDrawingDraftIfBlank(
+                noteId = noteId,
+                isNewDraft = isNewDraft,
+                hasUserIntent = hasUserIntent,
+                title = titleToSave,
+                drawingData = drawingData,
+            )
+            return
+        }
+        if (hasUnsavedDrawingNote(titleValue = titleToSave, strokeValues = strokesToSave)) {
+            val currentNote = latestNote ?: return
+            val (expectedTitle, expectedDrawingData, expectedUpdatedAt) = if (
+                drawingContentMatches(currentNote, titleToSave, strokesToSave)
+            ) {
+                Triple(currentNote.title, currentNote.drawingData.orEmpty(), currentNote.updatedAt)
+            } else {
+                Triple(
+                    latestLoadedContentTitle,
+                    latestLoadedContentDrawingData,
+                    latestLoadedContentUpdatedAt ?: return,
+                )
+            }
+            val expectedEditVersion = drawingSaveEditGate.currentEditVersion()
+            autoSaveVersion.incrementAndGet()
+            viewModel.saveDrawingNoteIfCurrent(
+                noteId = noteId,
+                title = titleToSave,
+                drawingData = drawingData,
+                expectedUpdatedAt = expectedUpdatedAt,
+                expectedTitle = expectedTitle,
+                expectedDrawingData = expectedDrawingData,
+                saveEditGate = drawingSaveEditGate,
+                isCurrentBeforeWrite = { drawingSaveEditGate.isCurrent(expectedEditVersion) },
+            )
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, noteId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                savePendingDrawingNote()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            pendingPngBytes = null
+            isPngRendering = false
+            savePendingDrawingNote()
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
     fun saveAndBack() {
-        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(strokes))
-        onBack()
+        if (isSavingAndLeaving) return
+        if (latestNote == null) {
+            onBack()
+            return
+        }
+        isSavingAndLeaving = true
+        autoSaveVersion.incrementAndGet()
+        val titleToSave = latestTitle
+        val strokesToSave = latestStrokes
+        val drawingData = DrawingJson.encode(strokesToSave)
+        val hasUserIntent = hasDrawingUserIntent(
+            titleValue = titleToSave,
+            strokeValues = strokesToSave,
+            metadataIntent = latestHasMetadataIntent,
+            currentNote = latestNote,
+        )
+        val expectedEditVersion = drawingSaveEditGate.currentEditVersion()
+        scope.launch {
+            if (canDiscardBlankDrawingDraft(titleToSave, strokesToSave)) {
+                val deleted = viewModel.discardNewDrawingDraftIfBlankNow(
+                    noteId = noteId,
+                    isNewDraft = isNewDraft,
+                    hasUserIntent = hasUserIntent,
+                    title = titleToSave,
+                    drawingData = drawingData,
+                )
+                if (deleted) {
+                    onBack()
+                } else {
+                    saveStatus = SaveStatus.Failed
+                    isSavingAndLeaving = false
+                }
+                return@launch
+            }
+            val saved = saveDrawingSnapshot(titleToSave, strokesToSave, expectedEditVersion)
+            if (saved == null) {
+                isSavingAndLeaving = false
+            } else {
+                onBack()
+            }
+        }
     }
 
-    fun saveCurrentDrawingNoteThen(onSaved: (NoteEntity, List<DrawingStroke>) -> Unit) {
-        val currentNote = note ?: return
-        val drawingData = DrawingJson.encode(strokes)
-        scope.launch {
-            val savedAt = viewModel.saveDrawingNoteNow(noteId, title, drawingData) ?: currentNote.updatedAt
-            val savedNote = currentNote.copy(
-                title = title,
-                textContent = null,
-                drawingData = drawingData,
-                updatedAt = savedAt,
-            )
-            onSaved(savedNote, strokes)
-        }
+    fun retrySaveDrawingNote() {
+        requestDrawingSave()
     }
 
     fun openPremiumAfterSavingDrawingNote() {
@@ -5859,8 +6258,14 @@ private fun DrawingEditorScreen(
             onOpenPremium()
             return
         }
-        saveCurrentDrawingNoteThen { _, _ ->
-            onOpenPremium()
+        val titleToSave = latestTitle
+        val strokesToSave = latestStrokes
+        autoSaveVersion.incrementAndGet()
+        val expectedEditVersion = drawingSaveEditGate.currentEditVersion()
+        scope.launch {
+            if (saveDrawingSnapshot(titleToSave, strokesToSave, expectedEditVersion) != null) {
+                onOpenPremium()
+            }
         }
     }
 
@@ -5876,50 +6281,94 @@ private fun DrawingEditorScreen(
     }
 
     fun shareCurrentDrawingPng() {
-        saveCurrentDrawingNoteThen { savedNote, savedStrokes ->
-            scope.launch {
-                try {
-                    val pngBytes = withContext(Dispatchers.Default) {
-                        renderCurrentDrawingPng(savedStrokes)
-                    }
-                    val uri = withContext(Dispatchers.IO) {
-                        createCachedPngUri(
-                            context = context,
-                            fileName = defaultPngExportFileName(savedNote, text),
-                            pngBytes = pngBytes,
-                        )
-                    }
-                    sharePng(
-                        context = context,
-                        uri = uri,
-                        subject = noteTitle(savedNote, text),
-                        body = buildDrawingNoteShareText(
-                            savedNote,
-                            folderDisplayNameById(savedNote.folderId, folders, text),
-                            text,
-                            appLanguage,
-                        ),
-                        chooserTitle = text.shareChooserTitle,
-                    )
-                } catch (_: Exception) {
-                    Toast.makeText(context, text.pngShareFailed, Toast.LENGTH_SHORT).show()
+        if (isPngRendering) return
+        val titleToSave = latestTitle
+        val strokesToSave = latestStrokes
+        val expectedEditVersion = drawingSaveEditGate.currentEditVersion()
+        autoSaveVersion.incrementAndGet()
+        isPngRendering = true
+        drawingIoMessage = preparingPngLabel(appLanguage)
+        pendingPngBytes = null
+        scope.launch {
+            try {
+                val saved = saveDrawingSnapshot(titleToSave, strokesToSave, expectedEditVersion)
+                if (saved == null) {
+                    drawingIoMessage = if (saveStatus == SaveStatus.Failed) saveFailedLabel(appLanguage) else null
+                    return@launch
                 }
+                val savedNote = saved.first
+                val savedStrokes = saved.second
+                val pngBytes = withContext(Dispatchers.Default) {
+                    renderCurrentDrawingPng(savedStrokes)
+                }
+                if (!drawingSaveEditGate.isCurrent(expectedEditVersion)) {
+                    drawingIoMessage = null
+                    return@launch
+                }
+                val uri = withContext(Dispatchers.IO) {
+                    createCachedPngUri(
+                        context = context,
+                        fileName = defaultPngExportFileName(savedNote, text),
+                        pngBytes = pngBytes,
+                    )
+                }
+                sharePng(
+                    context = context,
+                    uri = uri,
+                    subject = noteTitle(savedNote, text),
+                    body = buildDrawingNoteShareText(
+                        savedNote,
+                        folderDisplayNameById(savedNote.folderId, folders, text),
+                        text,
+                        appLanguage,
+                    ),
+                    chooserTitle = text.shareChooserTitle,
+                )
+                drawingIoMessage = null
+            } catch (_: Exception) {
+                drawingIoMessage = text.pngShareFailed
+                Toast.makeText(context, text.pngShareFailed, Toast.LENGTH_SHORT).show()
+            } finally {
+                pendingPngBytes = null
+                isPngRendering = false
             }
         }
     }
 
     fun exportCurrentDrawingPng() {
-        saveCurrentDrawingNoteThen { savedNote, savedStrokes ->
-            scope.launch {
-                try {
-                    pendingPngBytes = withContext(Dispatchers.Default) {
-                        renderCurrentDrawingPng(savedStrokes)
-                    }
-                    exportPngLauncher.launch(defaultPngExportFileName(savedNote, text))
-                } catch (_: Exception) {
-                    pendingPngBytes = null
-                    Toast.makeText(context, text.pngExportFailed, Toast.LENGTH_SHORT).show()
+        if (isPngRendering) return
+        val titleToSave = latestTitle
+        val strokesToSave = latestStrokes
+        val expectedEditVersion = drawingSaveEditGate.currentEditVersion()
+        autoSaveVersion.incrementAndGet()
+        isPngRendering = true
+        drawingIoMessage = preparingPngLabel(appLanguage)
+        pendingPngBytes = null
+        scope.launch {
+            try {
+                val saved = saveDrawingSnapshot(titleToSave, strokesToSave, expectedEditVersion)
+                if (saved == null) {
+                    drawingIoMessage = if (saveStatus == SaveStatus.Failed) saveFailedLabel(appLanguage) else null
+                    isPngRendering = false
+                    return@launch
                 }
+                val savedNote = saved.first
+                val savedStrokes = saved.second
+                pendingPngBytes = withContext(Dispatchers.Default) {
+                    renderCurrentDrawingPng(savedStrokes)
+                }
+                if (!drawingSaveEditGate.isCurrent(expectedEditVersion)) {
+                    pendingPngBytes = null
+                    drawingIoMessage = null
+                    isPngRendering = false
+                    return@launch
+                }
+                exportPngLauncher.launch(defaultPngExportFileName(savedNote, text))
+            } catch (_: Exception) {
+                pendingPngBytes = null
+                isPngRendering = false
+                drawingIoMessage = text.pngExportFailed
+                Toast.makeText(context, text.pngExportFailed, Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -5927,29 +6376,35 @@ private fun DrawingEditorScreen(
     fun undoStroke() {
         val lastStroke = strokes.lastOrNull() ?: return
         val updatedStrokes = strokes.dropLast(1)
+        markDrawingEdited()
         strokes = updatedStrokes
         redoStrokes = redoStrokes + lastStroke
-        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(updatedStrokes))
+        requestDrawingSave(strokeValues = updatedStrokes)
     }
 
     fun redoStroke() {
         val stroke = redoStrokes.lastOrNull() ?: return
         val updatedStrokes = strokes + stroke
+        markDrawingEdited()
         strokes = updatedStrokes
         redoStrokes = redoStrokes.dropLast(1)
-        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(updatedStrokes))
+        requestDrawingSave(strokeValues = updatedStrokes)
     }
 
     fun clearDrawingNow() {
+        markDrawingEdited()
         strokes = emptyList()
         redoStrokes = emptyList()
-        viewModel.saveDrawingNote(noteId, title, "[]")
+        requestDrawingSave(strokeValues = emptyList())
     }
 
     fun finishStroke(updatedStrokes: List<DrawingStroke>) {
+        if (updatedStrokes != strokes) {
+            markDrawingEdited()
+        }
         strokes = updatedStrokes
         redoStrokes = emptyList()
-        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(updatedStrokes))
+        requestDrawingSave(strokeValues = updatedStrokes)
     }
 
     fun activeStrokeTool(): String {
@@ -5966,11 +6421,13 @@ private fun DrawingEditorScreen(
 
     fun exitFullscreenDrawing() {
         isFullscreenDrawing = false
-        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(strokes))
+        requestDrawingSave()
     }
 
     BackHandler {
-        if (isFullscreenDrawing) {
+        if (latestNote == null) {
+            onBack()
+        } else if (isFullscreenDrawing) {
             exitFullscreenDrawing()
         } else {
             saveAndBack()
@@ -6007,7 +6464,10 @@ private fun DrawingEditorScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(text.noteNotFound)
+                Text(
+                    text = text.noteNotFound,
+                    modifier = Modifier.testTag("drawing_note_not_found"),
+                )
             }
         } else if (isFullscreenDrawing) {
             Column(
@@ -6025,23 +6485,36 @@ private fun DrawingEditorScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(
+                    IconButton(
                         onClick = ::exitFullscreenDrawing,
-                        modifier = Modifier.testTag("exit_fullscreen_drawing_button"),
+                        modifier = Modifier
+                            .size(48.dp)
+                            .semantics { contentDescription = text.exitFocusWriting }
+                            .testTag("exit_fullscreen_drawing_button"),
                     ) {
-                        Text(text.exitFocusWriting)
+                        Icon(Icons.Filled.FullscreenExit, contentDescription = null)
                     }
-                    Text(
-                        text = title.ifBlank { text.untitledDrawing },
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = title.ifBlank { text.untitledDrawing },
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        DrawingStatusLine(
+                            saveStatus = saveStatus,
+                            lastSavedAt = lastSavedAt ?: currentNote.updatedAt,
+                            drawingIoMessage = drawingIoMessage,
+                            text = text,
+                            appLanguage = appLanguage,
+                            showUpdatedTime = false,
+                            onRetry = ::retrySaveDrawingNote,
+                        )
+                    }
                 }
                 DrawingCanvas(
                     strokes = strokes,
-                    onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
+                    onStrokesChange = ::replaceDrawingStrokes,
                     onStrokeFinished = ::finishStroke,
                     brushColorArgb = selectedColor.colorArgb,
                     brushWidthPx = activeStrokeWidth(),
@@ -6067,6 +6540,7 @@ private fun DrawingEditorScreen(
                     onToolChange = { selectedTool = it },
                     onBrushSizeChange = { selectedBrushSize = it },
                     onColorChange = { selectedColor = it },
+                    isPngRendering = isPngRendering,
                     showFileActions = false,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -6084,7 +6558,11 @@ private fun DrawingEditorScreen(
             ) {
                 OutlinedTextField(
                     value = title,
-                    onValueChange = { title = it },
+                    onValueChange = {
+                        autoSaveVersion.incrementAndGet()
+                        markDrawingEdited()
+                        title = it
+                    },
                     label = { Text(text.title) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
@@ -6093,14 +6571,30 @@ private fun DrawingEditorScreen(
                         .focusRequester(titleFocusRequester)
                         .testTag("drawing_note_title"),
                 )
+                DrawingStatusLine(
+                    saveStatus = saveStatus,
+                    lastSavedAt = lastSavedAt ?: currentNote.updatedAt,
+                    drawingIoMessage = drawingIoMessage,
+                    text = text,
+                    appLanguage = appLanguage,
+                    onRetry = ::retrySaveDrawingNote,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 NoteFolderSelector(
                     folders = folders,
                     text = text,
                     currentFolderId = currentNote.folderId,
                     isPrivacyLocked = isPrivacyLocked,
                     hasPremiumAccess = billingState.hasPremiumAccess,
-                    onOpenPremium = ::openPremiumAfterSavingDrawingNote,
-                    onMove = { folderId -> viewModel.moveNote(noteId, folderId) },
+                    onOpenPremium = {
+                        hasMetadataIntent = true
+                        openPremiumAfterSavingDrawingNote()
+                    },
+                    onInteract = { hasMetadataIntent = true },
+                    onMove = { folderId ->
+                        hasMetadataIntent = true
+                        viewModel.moveNote(noteId, folderId)
+                    },
                 )
                 ReminderControls(
                     note = currentNote,
@@ -6108,23 +6602,31 @@ private fun DrawingEditorScreen(
                     appLanguage = appLanguage,
                     isPrivacyLocked = isPrivacyLocked,
                     hasPremiumAccess = billingState.hasPremiumAccess,
-                    onOpenPremium = ::openPremiumAfterSavingDrawingNote,
+                    onOpenPremium = {
+                        hasMetadataIntent = true
+                        openPremiumAfterSavingDrawingNote()
+                    },
+                    onInteract = { hasMetadataIntent = true },
                     onSetReminder = { reminderAt, repeat ->
+                        hasMetadataIntent = true
                         viewModel.setNoteReminder(noteId, reminderAt, repeat)
                     },
-                    onClearReminder = { viewModel.setNoteReminder(noteId, null) },
+                    onClearReminder = {
+                        hasMetadataIntent = true
+                        viewModel.setNoteReminder(noteId, null)
+                    },
                 )
                 DrawingCanvasWithFullscreenEntry(
                     strokes = strokes,
                     text = text,
-                    onStrokesChange = { updatedStrokes -> strokes = updatedStrokes },
+                    onStrokesChange = ::replaceDrawingStrokes,
                     onStrokeFinished = ::finishStroke,
                     brushColorArgb = selectedColor.colorArgb,
                     brushWidthPx = activeStrokeWidth(),
                     strokeTool = activeStrokeTool(),
                     onCanvasSizeChange = { canvasSize = it },
                     onFullscreen = {
-                        viewModel.saveDrawingNote(noteId, title, DrawingJson.encode(strokes))
+                        requestDrawingSave()
                         isFullscreenDrawing = true
                     },
                     modifier = Modifier
@@ -6146,6 +6648,7 @@ private fun DrawingEditorScreen(
                     onToolChange = { selectedTool = it },
                     onBrushSizeChange = { selectedBrushSize = it },
                     onColorChange = { selectedColor = it },
+                    isPngRendering = isPngRendering,
                 )
             }
         }
@@ -6184,6 +6687,72 @@ private fun DrawingEditorScreen(
 }
 
 @Composable
+private fun DrawingStatusLine(
+    saveStatus: SaveStatus,
+    lastSavedAt: Long,
+    drawingIoMessage: String?,
+    text: UiText,
+    appLanguage: AppLanguage,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+    showUpdatedTime: Boolean = true,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = saveStatus.label(text, appLanguage),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (saveStatus == SaveStatus.Failed) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+                maxLines = 1,
+                modifier = Modifier.testTag("drawing_note_save_status"),
+            )
+            if (saveStatus == SaveStatus.Failed) {
+                TextButton(
+                    onClick = onRetry,
+                    modifier = Modifier.testTag("drawing_note_retry_save_button"),
+                ) {
+                    Text(retryLabel(appLanguage), maxLines = 1)
+                }
+            }
+        }
+        if (showUpdatedTime) {
+            Text(
+                text = "${text.lastUpdated}: ${formatTime(lastSavedAt, appLanguage)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("drawing_note_updated_time"),
+            )
+        }
+        if (drawingIoMessage != null) {
+            Text(
+                text = drawingIoMessage,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (saveStatus == SaveStatus.Failed) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("drawing_png_status"),
+            )
+        }
+    }
+}
+
+@Composable
 private fun DrawingToolBar(
     strokes: List<DrawingStroke>,
     redoStrokes: List<DrawingStroke>,
@@ -6199,6 +6768,7 @@ private fun DrawingToolBar(
     onToolChange: (DrawingTool) -> Unit,
     onBrushSizeChange: (DrawingBrushSize) -> Unit,
     onColorChange: (DrawingColorOption) -> Unit,
+    isPngRendering: Boolean,
     modifier: Modifier = Modifier,
     showFileActions: Boolean = true,
 ) {
@@ -6206,110 +6776,254 @@ private fun DrawingToolBar(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        LazyRow(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(horizontal = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            item {
-                Button(
-                    onClick = onUndo,
-                    enabled = strokes.isNotEmpty(),
-                    modifier = Modifier.testTag("drawing_undo_button"),
-                ) {
-                    Text(text.undo)
-                }
-            }
-            item {
-                Button(
-                    onClick = onRedo,
-                    enabled = redoStrokes.isNotEmpty(),
-                    modifier = Modifier.testTag("drawing_redo_button"),
-                ) {
-                    Text(text.redo)
-                }
-            }
-            item {
-                Button(
-                    onClick = onClear,
-                    enabled = strokes.isNotEmpty(),
-                    modifier = Modifier.testTag("drawing_clear_button"),
-                ) {
-                    Text(text.clear)
-                }
-            }
+            DrawingIconButton(
+                icon = Icons.AutoMirrored.Filled.Undo,
+                label = text.undo,
+                enabled = strokes.isNotEmpty(),
+                testTag = "drawing_undo_button",
+                onClick = onUndo,
+            )
+            DrawingIconButton(
+                icon = Icons.AutoMirrored.Filled.Redo,
+                label = text.redo,
+                enabled = redoStrokes.isNotEmpty(),
+                testTag = "drawing_redo_button",
+                onClick = onRedo,
+            )
+            DrawingIconButton(
+                icon = Icons.Filled.Delete,
+                label = text.clearDrawing,
+                enabled = strokes.isNotEmpty(),
+                destructive = true,
+                testTag = "drawing_clear_button",
+                onClick = onClear,
+            )
+            Spacer(modifier = Modifier.weight(1f))
             if (showFileActions) {
-                item {
-                    Button(
-                        onClick = onSharePng,
-                        modifier = Modifier.testTag("share_drawing_png_button"),
-                    ) {
-                        Text(text.share)
-                    }
-                }
-                item {
-                    Button(
-                        onClick = onExportPng,
-                        modifier = Modifier.testTag("export_drawing_png_button"),
-                    ) {
-                        Text(text.export)
-                    }
-                }
+                DrawingIconButton(
+                    icon = Icons.Filled.Share,
+                    label = text.sharePng,
+                    enabled = !isPngRendering,
+                    testTag = "share_drawing_png_button",
+                    onClick = onSharePng,
+                )
+                DrawingIconButton(
+                    icon = Icons.Filled.FileDownload,
+                    label = text.exportPng,
+                    enabled = !isPngRendering,
+                    testTag = "export_drawing_png_button",
+                    onClick = onExportPng,
+                )
             }
         }
 
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             DrawingTool.entries.forEach { tool ->
-                item {
-                    FilterChip(
-                        selected = selectedTool == tool,
-                        onClick = { onToolChange(tool) },
-                        label = { Text(tool.label(text)) },
-                        modifier = Modifier.testTag("drawing_tool_${tool.name}"),
-                    )
-                }
+                DrawingToolSegmentButton(
+                    tool = tool,
+                    label = tool.label(text),
+                    selected = selectedTool == tool,
+                    onClick = { onToolChange(tool) },
+                )
             }
             DrawingBrushSize.entries.forEach { size ->
-                item {
-                    FilterChip(
-                        selected = selectedBrushSize == size,
-                        onClick = { onBrushSizeChange(size) },
-                        label = { Text(size.label(text, selectedTool)) },
-                        modifier = Modifier.testTag("drawing_brush_${size.name}"),
+                DrawingBrushSizeButton(
+                    brushSize = size,
+                    label = size.label(text, selectedTool),
+                    selectedTool = selectedTool,
+                    selected = selectedBrushSize == size,
+                    onClick = { onBrushSizeChange(size) },
+                )
+            }
+            if (selectedTool == DrawingTool.Pen) {
+                DrawingColorOption.entries.forEach { color ->
+                    DrawingColorSwatch(
+                        color = color,
+                        label = color.label(text),
+                        selected = selectedColor == color,
+                        onClick = { onColorChange(color) },
                     )
                 }
+            } else {
+                Text(
+                    text = text.eraserSizeHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("drawing_eraser_hint"),
+                )
             }
         }
+    }
+}
 
-        if (selectedTool == DrawingTool.Pen) {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(horizontal = 2.dp),
-            ) {
-                DrawingColorOption.entries.forEach { color ->
-                    item {
-                        FilterChip(
-                            selected = selectedColor == color,
-                            onClick = { onColorChange(color) },
-                            label = { Text(color.label(text)) },
-                            modifier = Modifier.testTag("drawing_color_${color.name}"),
-                        )
-                    }
-                }
-            }
+@Composable
+private fun DrawingIconButton(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    testTag: String,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .size(48.dp)
+            .semantics { contentDescription = label }
+            .testTag(testTag),
+    ) {
+        if (destructive) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = if (enabled) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                },
+            )
         } else {
-            Text(
-                text = text.eraserSizeHint,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("drawing_eraser_hint"),
+            Icon(icon, contentDescription = null)
+        }
+    }
+}
+
+@Composable
+private fun DrawingToolSegmentButton(
+    tool: DrawingTool,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val background = if (selected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    val foreground = if (selected) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .background(background, RoundedCornerShape(8.dp))
+            .border(
+                width = 1.dp,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                shape = RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onClick)
+            .semantics {
+                contentDescription = label
+                this.selected = selected
+            }
+            .testTag("drawing_tool_${tool.name}"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (tool == DrawingTool.Pen) Icons.Filled.Edit else Icons.Filled.FormatClear,
+            contentDescription = null,
+            tint = foreground,
+        )
+    }
+}
+
+@Composable
+private fun DrawingBrushSizeButton(
+    brushSize: DrawingBrushSize,
+    label: String,
+    selectedTool: DrawingTool,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val background = if (selected) {
+        MaterialTheme.colorScheme.secondaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    val lineColor = if (selected) {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val strokeWidth = if (selectedTool == DrawingTool.Eraser) {
+        brushSize.eraserSizeDp.coerceAtMost(16f)
+    } else {
+        brushSize.penWidthPx.coerceAtMost(12f)
+    }
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .background(background, RoundedCornerShape(8.dp))
+            .border(
+                width = 1.dp,
+                color = if (selected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outlineVariant,
+                shape = RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onClick)
+            .semantics {
+                contentDescription = label
+                this.selected = selected
+            }
+            .testTag("drawing_brush_${brushSize.name}"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(28.dp)) {
+            drawLine(
+                color = lineColor,
+                start = Offset(3.dp.toPx(), center.y),
+                end = Offset(size.width - 3.dp.toPx(), center.y),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round,
             )
         }
+    }
+}
+
+@Composable
+private fun DrawingColorSwatch(
+    color: DrawingColorOption,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                shape = RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onClick)
+            .semantics {
+                contentDescription = label
+                this.selected = selected
+            }
+            .testTag("drawing_color_${color.name}"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .background(Color(color.colorArgb), RoundedCornerShape(13.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(13.dp)),
+        )
     }
 }
 
@@ -6337,14 +7051,17 @@ private fun DrawingCanvasWithFullscreenEntry(
             onCanvasSizeChange = onCanvasSizeChange,
             modifier = Modifier.fillMaxSize(),
         )
-        Button(
+        IconButton(
             onClick = onFullscreen,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(12.dp)
+                .size(48.dp)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), RoundedCornerShape(8.dp))
+                .semantics { contentDescription = text.fullscreenWriting }
                 .testTag("drawing_fullscreen_button"),
         ) {
-            Text(text.fullscreenWriting, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(Icons.Filled.Fullscreen, contentDescription = null)
         }
     }
 }
@@ -6626,6 +7343,7 @@ private fun ReminderControls(
     isPrivacyLocked: Boolean,
     hasPremiumAccess: Boolean,
     onOpenPremium: () -> Unit,
+    onInteract: () -> Unit = {},
     onSetReminder: (Long, String) -> Unit,
     onClearReminder: () -> Unit,
 ) {
@@ -6651,6 +7369,7 @@ private fun ReminderControls(
     }
 
     fun setRepeat(repeat: ReminderRepeat) {
+        onInteract()
         if (!hasPremiumAccess) {
             onOpenPremium()
             return
@@ -6663,6 +7382,7 @@ private fun ReminderControls(
     }
 
     fun openDateTimePicker() {
+        onInteract()
         if (!hasPremiumAccess) {
             onOpenPremium()
             return
@@ -6733,7 +7453,10 @@ private fun ReminderControls(
             }
             if (note.reminderAt != null) {
                 TextButton(
-                    onClick = onClearReminder,
+                    onClick = {
+                        onInteract()
+                        onClearReminder()
+                    },
                     modifier = Modifier.testTag("clear_reminder_button"),
                 ) {
                     Text(text.clearReminder)
@@ -6771,6 +7494,7 @@ private fun NoteFolderSelector(
     isPrivacyLocked: Boolean,
     hasPremiumAccess: Boolean,
     onOpenPremium: () -> Unit,
+    onInteract: () -> Unit = {},
     onMove: (Long) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -6797,6 +7521,7 @@ private fun NoteFolderSelector(
                 DropdownMenuItem(
                     text = { Text(folderDisplayName(folder, text)) },
                     onClick = {
+                        onInteract()
                         expanded = false
                         if (hasPremiumAccess || folder.id == DEFAULT_FOLDER_ID) {
                             onMove(folder.id)
