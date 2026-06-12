@@ -312,12 +312,60 @@ class NotepadRepository(
         isNewDraft: Boolean,
         title: String,
         drawingData: String,
+        saveEditGate: DrawingSaveEditGate? = null,
+        isCurrentBeforeDelete: () -> Boolean = { true },
+        expectedUpdatedAt: Long? = null,
+        expectedTitle: String? = null,
+        expectedDrawingData: String? = null,
     ): Boolean {
         if (!isNewDraft) return false
         if (title.isNotBlank() || DrawingJson.decode(drawingData).isNotEmpty()) return false
-        val current = dao.getNote(noteId) ?: return true
-        if (current.type != NoteTypes.DRAWING || current.isDeleted) return false
-        return dao.deleteBlankLocalDrawingDraftNote(noteId, isNewDraft = true) > 0
+        return if (saveEditGate != null) {
+            withContext(Dispatchers.IO) {
+                saveEditGate.withSaveCommitSection {
+                    if (!isCurrentBeforeDelete()) {
+                        false
+                    } else {
+                        val current = dao.getNoteBlocking(noteId) ?: return@withSaveCommitSection true
+                        if (current.type != NoteTypes.DRAWING || current.isDeleted) {
+                            false
+                        } else if (current.reminderAt != null || current.isPinned) {
+                            false
+                        } else {
+                            val currentDrawingData = current.drawingData.orEmpty()
+                            val isPersistedBlankDraft = current.title.isBlank() &&
+                                DrawingJson.decode(currentDrawingData).isEmpty()
+                            if (!isPersistedBlankDraft) {
+                                if (
+                                    expectedUpdatedAt == null ||
+                                    expectedTitle == null ||
+                                    expectedDrawingData == null
+                                ) {
+                                    return@withSaveCommitSection false
+                                }
+                                val deletedRows = dao.blankAndDeleteLocalDrawingDraftNoteIfUnchangedBlocking(
+                                    noteId = noteId,
+                                    isNewDraft = true,
+                                    title = title,
+                                    drawingData = drawingData,
+                                    updatedAt = maxOf(System.currentTimeMillis(), current.updatedAt + 1),
+                                    expectedUpdatedAt = expectedUpdatedAt,
+                                    expectedTitle = expectedTitle,
+                                    expectedDrawingData = expectedDrawingData,
+                                )
+                                return@withSaveCommitSection deletedRows > 0
+                            }
+                            dao.deleteBlankLocalDrawingDraftNoteBlocking(noteId, isNewDraft = true) > 0
+                        }
+                    }
+                }
+            }
+        } else {
+            if (!isCurrentBeforeDelete()) return false
+            val current = dao.getNote(noteId) ?: return true
+            if (current.type != NoteTypes.DRAWING || current.isDeleted) return false
+            dao.deleteBlankLocalDrawingDraftNote(noteId, isNewDraft = true) > 0
+        }
     }
 
     suspend fun setNotePinned(noteId: Long, isPinned: Boolean) {

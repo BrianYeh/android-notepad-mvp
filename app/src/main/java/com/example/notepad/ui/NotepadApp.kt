@@ -759,6 +759,7 @@ fun NotepadApp(
             isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
             onOpenPremium = { screen = AppScreen.Premium(returnTo = currentScreen) },
+            onOpenPremiumAfterDraftDiscard = { screen = AppScreen.Premium(returnTo = AppScreen.Main) },
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
         )
@@ -5778,6 +5779,7 @@ private fun DrawingEditorScreen(
     isPrivacyLocked: Boolean,
     viewModel: NotepadViewModel,
     onOpenPremium: () -> Unit,
+    onOpenPremiumAfterDraftDiscard: () -> Unit,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
 ) {
@@ -6013,6 +6015,9 @@ private fun DrawingEditorScreen(
         }
         var skippedAsStale = false
         var sourceNote: NoteEntity? = null
+        var attemptedExpectedUpdatedAt: Long? = null
+        var attemptedExpectedTitle: String? = null
+        var attemptedExpectedDrawingData: String? = null
         return try {
             val savedAt = drawingSaveMutex.withLock {
                 if (!isCurrentSaveRequest()) {
@@ -6039,6 +6044,9 @@ private fun DrawingEditorScreen(
                             )
                         }
                     }
+                    attemptedExpectedTitle = expectedTitle
+                    attemptedExpectedDrawingData = expectedDrawingData
+                    attemptedExpectedUpdatedAt = expectedUpdatedAt
                     try {
                         viewModel.saveDrawingNoteNow(
                             noteId = noteId,
@@ -6060,17 +6068,43 @@ private fun DrawingEditorScreen(
                 }
             }
             if (savedAt == null) {
-                if (!skippedAsStale) {
-                    hasFailedDrawingSave = true
+                val currentAfterFailure = if (!skippedAsStale) {
+                    runCatching { viewModel.getActiveNote(noteId) }.getOrNull()
+                } else {
+                    null
                 }
+                val expectedTitle = attemptedExpectedTitle
+                val expectedDrawingData = attemptedExpectedDrawingData
+                val expectedUpdatedAt = attemptedExpectedUpdatedAt
+                val isExternalContentConflict = currentAfterFailure != null &&
+                    expectedTitle != null &&
+                    expectedDrawingData != null &&
+                    expectedUpdatedAt != null &&
+                    !drawingContentMatches(currentAfterFailure, titleValue, strokeValues) &&
+                    (
+                        currentAfterFailure.title != expectedTitle ||
+                            currentAfterFailure.drawingData.orEmpty() != expectedDrawingData
+                        )
                 if (
-                    !skippedAsStale &&
+                    isExternalContentConflict &&
                     requestVersion == drawingSaveVersion.get() &&
                     drawingSaveEditGate.isCurrent(expectedEditVersion)
                 ) {
-                    saveStatus = SaveStatus.Failed
+                    loadDrawingContent(currentAfterFailure)
+                    currentAfterFailure to DrawingJson.decode(currentAfterFailure.drawingData)
+                } else {
+                    if (!skippedAsStale) {
+                        hasFailedDrawingSave = true
+                    }
+                    if (
+                        !skippedAsStale &&
+                        requestVersion == drawingSaveVersion.get() &&
+                        drawingSaveEditGate.isCurrent(expectedEditVersion)
+                    ) {
+                        saveStatus = SaveStatus.Failed
+                    }
+                    null
                 }
-                null
             } else {
                 updateLastLocalDrawingCommit(titleValue, drawingData, savedAt)
                 if (!isCurrentSaveRequest()) {
@@ -6152,6 +6186,7 @@ private fun DrawingEditorScreen(
             currentNote = latestNote,
         )
         if (canDiscardBlankDrawingDraft(titleToSave, strokesToSave)) {
+            val expectedEditVersion = drawingSaveEditGate.currentEditVersion()
             autoSaveVersion.incrementAndGet()
             viewModel.discardNewDrawingDraftIfBlank(
                 noteId = noteId,
@@ -6159,6 +6194,11 @@ private fun DrawingEditorScreen(
                 hasUserIntent = hasUserIntent,
                 title = titleToSave,
                 drawingData = drawingData,
+                saveEditGate = drawingSaveEditGate,
+                isCurrentBeforeDelete = { drawingSaveEditGate.isCurrent(expectedEditVersion) },
+                expectedUpdatedAt = latestLoadedContentUpdatedAt,
+                expectedTitle = latestLoadedContentTitle,
+                expectedDrawingData = latestLoadedContentDrawingData,
             )
             return
         }
@@ -6231,6 +6271,11 @@ private fun DrawingEditorScreen(
                     hasUserIntent = hasUserIntent,
                     title = titleToSave,
                     drawingData = drawingData,
+                    saveEditGate = drawingSaveEditGate,
+                    isCurrentBeforeDelete = { drawingSaveEditGate.isCurrent(expectedEditVersion) },
+                    expectedUpdatedAt = latestLoadedContentUpdatedAt,
+                    expectedTitle = latestLoadedContentTitle,
+                    expectedDrawingData = latestLoadedContentDrawingData,
                 )
                 if (deleted) {
                     onBack()
@@ -6263,6 +6308,26 @@ private fun DrawingEditorScreen(
         autoSaveVersion.incrementAndGet()
         val expectedEditVersion = drawingSaveEditGate.currentEditVersion()
         scope.launch {
+            if (canDiscardBlankDrawingDraft(titleToSave, strokesToSave)) {
+                val deleted = viewModel.discardNewDrawingDraftIfBlankNow(
+                    noteId = noteId,
+                    isNewDraft = isNewDraft,
+                    hasUserIntent = false,
+                    title = titleToSave,
+                    drawingData = DrawingJson.encode(strokesToSave),
+                    saveEditGate = drawingSaveEditGate,
+                    isCurrentBeforeDelete = { drawingSaveEditGate.isCurrent(expectedEditVersion) },
+                    expectedUpdatedAt = latestLoadedContentUpdatedAt,
+                    expectedTitle = latestLoadedContentTitle,
+                    expectedDrawingData = latestLoadedContentDrawingData,
+                )
+                if (deleted) {
+                    onOpenPremiumAfterDraftDiscard()
+                } else {
+                    saveStatus = SaveStatus.Failed
+                }
+                return@launch
+            }
             if (saveDrawingSnapshot(titleToSave, strokesToSave, expectedEditVersion) != null) {
                 onOpenPremium()
             }
@@ -6587,7 +6652,6 @@ private fun DrawingEditorScreen(
                     isPrivacyLocked = isPrivacyLocked,
                     hasPremiumAccess = billingState.hasPremiumAccess,
                     onOpenPremium = {
-                        hasMetadataIntent = true
                         openPremiumAfterSavingDrawingNote()
                     },
                     onInteract = { hasMetadataIntent = true },
@@ -6603,7 +6667,6 @@ private fun DrawingEditorScreen(
                     isPrivacyLocked = isPrivacyLocked,
                     hasPremiumAccess = billingState.hasPremiumAccess,
                     onOpenPremium = {
-                        hasMetadataIntent = true
                         openPremiumAfterSavingDrawingNote()
                     },
                     onInteract = { hasMetadataIntent = true },
@@ -7369,7 +7432,6 @@ private fun ReminderControls(
     }
 
     fun setRepeat(repeat: ReminderRepeat) {
-        onInteract()
         if (!hasPremiumAccess) {
             onOpenPremium()
             return
@@ -7382,11 +7444,11 @@ private fun ReminderControls(
     }
 
     fun openDateTimePicker() {
-        onInteract()
         if (!hasPremiumAccess) {
             onOpenPremium()
             return
         }
+        onInteract()
         val calendar = Calendar.getInstance()
         val initialReminderAt = note.reminderAt?.takeIf { it > System.currentTimeMillis() }
         if (initialReminderAt == null) {

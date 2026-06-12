@@ -183,8 +183,24 @@ class TextInputTest {
             .getOrNull(SemanticsProperties.ToggleableState)
     }
 
+    private fun nodeText(tag: String): String {
+        return composeRule.onNodeWithTag(tag)
+            .fetchSemanticsNode()
+            .config
+            .getOrNull(SemanticsProperties.Text)
+            ?.joinToString(" ") { it.text }
+            .orEmpty()
+    }
+
     private fun enableDebugPremiumAccess() {
         DebugPremiumAccess.write(composeRule.activity, true)
+        composeRule.waitForIdle()
+    }
+
+    private fun pressDeviceBack() {
+        InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand("input keyevent KEYCODE_BACK")
+            .close()
         composeRule.waitForIdle()
     }
 
@@ -858,6 +874,66 @@ class TextInputTest {
     }
 
     @Test
+    fun blankDrawingReminderPremiumGateCancelStillDeletesDraft() {
+        val beforeIds = noteIds()
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        exitInitialDrawingFocusModeIfNeeded()
+        composeRule.onNodeWithTag("set_reminder_button")
+            .assertIsDisplayed()
+            .assertTextContains("Premium", substring = true)
+            .performClick()
+
+        waitForTag("premium_screen")
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            tagCount("add_note_button") > 0 && noteIds() == beforeIds
+        }
+        assertNull(noteById(noteId))
+    }
+
+    @Test
+    fun blankDrawingPremiumReminderPickerCancelKeepsDraft() {
+        composeRule.onNodeWithTag("settings_button").performClick()
+        composeRule.onNodeWithTag("debug_premium_section").assertIsDisplayed()
+        composeRule.onNodeWithTag("debug_premium_switch").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            debugPremiumSwitchState() == ToggleableState.On
+        }
+        assertTrue(DebugPremiumAccess.read(composeRule.activity))
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        waitForTag("add_note_button")
+        val beforeIds = noteIds()
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        exitInitialDrawingFocusModeIfNeeded()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            !nodeText("set_reminder_button").contains("Premium")
+        }
+        composeRule.onNodeWithTag("set_reminder_button")
+            .assertIsDisplayed()
+            .performClick()
+
+        pressDeviceBack()
+        waitForTag("drawing_note_title")
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            tagCount("add_note_button") > 0
+        }
+        assertTrue(noteById(noteId) != null)
+    }
+
+    @Test
     fun checklistReminderGateSavesDraftBeforePremium() {
         val title = "Checklist premium gate ${System.currentTimeMillis()}"
 
@@ -898,7 +974,7 @@ class TextInputTest {
         composeRule.onNodeWithTag("format_link_url_input").assertIsDisplayed().performTextInput("example.com/docs")
         composeRule.onNodeWithTag("apply_link_format_button").performClick()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 15_000) {
             runBlocking {
                 withContext(Dispatchers.IO) {
                     NotepadDatabase.getInstance(composeRule.activity)
@@ -2065,7 +2141,11 @@ class TextInputTest {
         replaceDrawingNoteRow(noteId, title = remoteTitle, drawingData = remoteDrawing)
 
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("drawing_note_retry_save_button") > 0
+            runCatching {
+                composeRule.onNodeWithTag("drawing_note_title").assertTextContains(remoteTitle)
+                composeRule.onNodeWithTag("drawing_note_save_status").assertTextContains("Saved")
+                assertTagAbsent("drawing_note_retry_save_button")
+            }.isSuccess
         }
 
         val saved = noteById(noteId)

@@ -175,6 +175,7 @@ class NotepadDatabaseTest {
     fun discardNewDrawingDraftIfBlankDeletesEmptyDrawingWithoutTombstone() = runTest {
         val repository = NotepadRepository(dao)
         val noteId = repository.createDrawingNote(folderId = null)
+        repository.saveDrawingNote(noteId, title = "   ", drawingData = " [] ")
 
         assertTrue(
             repository.discardNewDrawingDraftIfBlank(
@@ -446,7 +447,7 @@ class NotepadDatabaseTest {
     }
 
     @Test
-    fun discardNewDrawingDraftIfBlankDeletesClearedPreviouslySavedDraft() = runTest {
+    fun discardNewDrawingDraftIfBlankDeletesClearedPersistedDraftOnly() = runTest {
         val repository = NotepadRepository(dao)
         val noteId = repository.createDrawingNote(folderId = null)
         val savedDrawingData = DrawingJson.encode(
@@ -458,8 +459,10 @@ class NotepadDatabaseTest {
             ),
         )
         repository.saveDrawingNote(noteId, title = "Temporary sketch", drawingData = savedDrawingData)
+        val persistedDraft = dao.getNote(noteId) ?: throw AssertionError("Drawing note was not saved")
 
-        assertTrue(
+        assertEquals(
+            false,
             repository.discardNewDrawingDraftIfBlank(
                 noteId = noteId,
                 isNewDraft = true,
@@ -467,9 +470,93 @@ class NotepadDatabaseTest {
                 drawingData = "[]",
             ),
         )
+        assertEquals("Temporary sketch", dao.getNote(noteId)?.title)
+
+        assertTrue(
+            repository.discardNewDrawingDraftIfBlank(
+                noteId = noteId,
+                isNewDraft = true,
+                title = "",
+                drawingData = "[]",
+                saveEditGate = DrawingSaveEditGate(),
+                expectedUpdatedAt = persistedDraft.updatedAt,
+                expectedTitle = persistedDraft.title,
+                expectedDrawingData = persistedDraft.drawingData.orEmpty(),
+            ),
+        )
 
         assertNull(dao.getNote(noteId))
         assertTrue(dao.getNoteTombstones().isEmpty())
+    }
+
+    @Test
+    fun discardNewDrawingDraftIfBlankKeepsUnseenNonblankPersistedContent() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+        val editorBaseline = dao.getNote(noteId) ?: throw AssertionError("Drawing note was not created")
+        val remoteDrawingData = DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(10f, 20f), DrawingPoint(30f, 40f)),
+                    tool = DrawingTools.PEN,
+                ),
+            ),
+        )
+        repository.saveDrawingNote(noteId, title = "Remote sketch", drawingData = remoteDrawingData)
+
+        assertEquals(
+            false,
+            repository.discardNewDrawingDraftIfBlank(
+                noteId = noteId,
+                isNewDraft = true,
+                title = "",
+                drawingData = "[]",
+                saveEditGate = DrawingSaveEditGate(),
+                expectedUpdatedAt = editorBaseline.updatedAt,
+                expectedTitle = editorBaseline.title,
+                expectedDrawingData = editorBaseline.drawingData.orEmpty(),
+            ),
+        )
+
+        val kept = dao.getNote(noteId)
+        assertEquals("Remote sketch", kept?.title)
+        assertEquals(remoteDrawingData, kept?.drawingData)
+    }
+
+    @Test
+    fun discardNewDrawingDraftIfBlankKeepsContentWhenMetadataBlocksBlanking() = runTest {
+        val repository = NotepadRepository(dao)
+        val noteId = repository.createDrawingNote(folderId = null)
+        val savedDrawingData = DrawingJson.encode(
+            listOf(
+                DrawingStroke(
+                    points = listOf(DrawingPoint(10f, 20f), DrawingPoint(30f, 40f)),
+                    tool = DrawingTools.PEN,
+                ),
+            ),
+        )
+        repository.saveDrawingNote(noteId, title = "Temporary sketch", drawingData = savedDrawingData)
+        val persistedDraft = dao.getNote(noteId) ?: throw AssertionError("Drawing note was not saved")
+        repository.setNoteReminder(noteId, reminderAt = 10_000L)
+
+        assertEquals(
+            false,
+            repository.discardNewDrawingDraftIfBlank(
+                noteId = noteId,
+                isNewDraft = true,
+                title = "",
+                drawingData = "[]",
+                saveEditGate = DrawingSaveEditGate(),
+                expectedUpdatedAt = persistedDraft.updatedAt,
+                expectedTitle = persistedDraft.title,
+                expectedDrawingData = persistedDraft.drawingData.orEmpty(),
+            ),
+        )
+
+        val kept = dao.getNote(noteId)
+        assertEquals("Temporary sketch", kept?.title)
+        assertEquals(savedDrawingData, kept?.drawingData)
+        assertEquals(10_000L, kept?.reminderAt)
     }
 
     @Test

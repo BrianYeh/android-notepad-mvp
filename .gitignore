@@ -7,3 +7,4 @@ local.properties
 *.iml
 app/build/
 artifacts/
+Doc/jobs_view/**/connected_shards_*/

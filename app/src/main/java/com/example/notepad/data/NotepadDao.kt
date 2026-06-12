@@ -25,6 +25,9 @@ abstract class NotepadDao {
     @Query("SELECT * FROM notes WHERE id = :noteId")
     abstract suspend fun getNote(noteId: Long): NoteEntity?
 
+    @Query("SELECT * FROM notes WHERE id = :noteId")
+    abstract fun getNoteBlocking(noteId: Long): NoteEntity?
+
     @Query("SELECT * FROM folders ORDER BY id ASC")
     abstract suspend fun getAllFolders(): List<FolderEntity>
 
@@ -149,6 +152,35 @@ abstract class NotepadDao {
         drawingType: String = NoteTypes.DRAWING,
     ): Int
 
+    @Query(
+        """
+        UPDATE notes
+        SET title = :title,
+            textContent = NULL,
+            drawingData = :drawingData,
+            updatedAt = :updatedAt
+        WHERE id = :noteId
+            AND type = :drawingType
+            AND isDeleted = 0
+            AND reminderAt IS NULL
+            AND isPinned = 0
+            AND (
+                updatedAt = :expectedUpdatedAt
+                OR (title = :expectedTitle AND drawingData = :expectedDrawingData)
+            )
+        """,
+    )
+    abstract fun updateDrawingNoteContentIfUnchangedAndNoMetadataBlocking(
+        noteId: Long,
+        title: String,
+        drawingData: String,
+        updatedAt: Long,
+        expectedUpdatedAt: Long,
+        expectedTitle: String,
+        expectedDrawingData: String,
+        drawingType: String = NoteTypes.DRAWING,
+    ): Int
+
     @Query("UPDATE notes SET activeReminderFiredAt = :firedAt WHERE id = :noteId AND reminderSnoozeUntil = :expectedSnoozeUntil AND isDeleted = 0")
     abstract suspend fun setActiveSnoozedReminderFiredAtIfCurrent(
         noteId: Long,
@@ -158,6 +190,26 @@ abstract class NotepadDao {
 
     @Query("DELETE FROM notes WHERE id = :noteId")
     abstract suspend fun deleteNote(noteId: Long)
+
+    @Query("DELETE FROM notes WHERE id = :noteId")
+    abstract fun deleteNoteBlocking(noteId: Long): Int
+
+    @Query(
+        """
+        DELETE FROM notes
+        WHERE id = :noteId
+            AND type = :drawingType
+            AND isDeleted = 0
+            AND trim(title) = ''
+            AND (drawingData IS NULL OR trim(drawingData) = '' OR trim(drawingData) = '[]')
+            AND reminderAt IS NULL
+            AND isPinned = 0
+        """,
+    )
+    abstract fun deleteBlankLocalDrawingDraftNoteIfStillBlankBlocking(
+        noteId: Long,
+        drawingType: String = NoteTypes.DRAWING,
+    ): Int
 
     @Transaction
     open suspend fun deleteBlankLocalTextDraftNote(noteId: Long): Int {
@@ -178,11 +230,43 @@ abstract class NotepadDao {
         val current = getNote(noteId) ?: return 0
         val isBlankDrawingDraft = current.type == NoteTypes.DRAWING &&
             !current.isDeleted &&
+            current.title.isBlank() &&
+            DrawingJson.decode(current.drawingData).isEmpty() &&
             current.reminderAt == null &&
             !current.isPinned
         if (!isBlankDrawingDraft) return 0
         deleteNote(noteId)
         return 1
+    }
+
+    fun deleteBlankLocalDrawingDraftNoteBlocking(noteId: Long, isNewDraft: Boolean): Int {
+        if (!isNewDraft) return 0
+        return deleteBlankLocalDrawingDraftNoteIfStillBlankBlocking(noteId)
+    }
+
+    @Transaction
+    open fun blankAndDeleteLocalDrawingDraftNoteIfUnchangedBlocking(
+        noteId: Long,
+        isNewDraft: Boolean,
+        title: String,
+        drawingData: String,
+        updatedAt: Long,
+        expectedUpdatedAt: Long,
+        expectedTitle: String,
+        expectedDrawingData: String,
+    ): Int {
+        if (!isNewDraft) return 0
+        val updatedRows = updateDrawingNoteContentIfUnchangedAndNoMetadataBlocking(
+            noteId = noteId,
+            title = title,
+            drawingData = drawingData,
+            updatedAt = updatedAt,
+            expectedUpdatedAt = expectedUpdatedAt,
+            expectedTitle = expectedTitle,
+            expectedDrawingData = expectedDrawingData,
+        )
+        if (updatedRows == 0) return 0
+        return deleteBlankLocalDrawingDraftNoteIfStillBlankBlocking(noteId)
     }
 
     @Query("DELETE FROM notes")

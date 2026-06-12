@@ -717,6 +717,11 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         hasUserIntent: Boolean,
         title: String,
         drawingData: String,
+        saveEditGate: DrawingSaveEditGate? = null,
+        isCurrentBeforeDelete: () -> Boolean = { true },
+        expectedUpdatedAt: Long? = null,
+        expectedTitle: String? = null,
+        expectedDrawingData: String? = null,
     ) {
         viewModelScope.launch {
             discardNewDrawingDraftIfBlankAndRefresh(
@@ -725,6 +730,11 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
                 hasUserIntent = hasUserIntent,
                 title = title,
                 drawingData = drawingData,
+                saveEditGate = saveEditGate,
+                isCurrentBeforeDelete = isCurrentBeforeDelete,
+                expectedUpdatedAt = expectedUpdatedAt,
+                expectedTitle = expectedTitle,
+                expectedDrawingData = expectedDrawingData,
             )
         }
     }
@@ -735,6 +745,11 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         hasUserIntent: Boolean,
         title: String,
         drawingData: String,
+        saveEditGate: DrawingSaveEditGate? = null,
+        isCurrentBeforeDelete: () -> Boolean = { true },
+        expectedUpdatedAt: Long? = null,
+        expectedTitle: String? = null,
+        expectedDrawingData: String? = null,
     ): Boolean {
         return discardNewDrawingDraftIfBlankAndRefresh(
             noteId = noteId,
@@ -742,6 +757,11 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             hasUserIntent = hasUserIntent,
             title = title,
             drawingData = drawingData,
+            saveEditGate = saveEditGate,
+            isCurrentBeforeDelete = isCurrentBeforeDelete,
+            expectedUpdatedAt = expectedUpdatedAt,
+            expectedTitle = expectedTitle,
+            expectedDrawingData = expectedDrawingData,
         )
     }
 
@@ -786,6 +806,11 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         hasUserIntent: Boolean,
         title: String,
         drawingData: String,
+        saveEditGate: DrawingSaveEditGate? = null,
+        isCurrentBeforeDelete: () -> Boolean = { true },
+        expectedUpdatedAt: Long? = null,
+        expectedTitle: String? = null,
+        expectedDrawingData: String? = null,
     ): Boolean {
         if (!isNewDraft || hasUserIntent) return false
         val deleted = repository.discardNewDrawingDraftIfBlank(
@@ -793,6 +818,11 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             isNewDraft = isNewDraft,
             title = title,
             drawingData = drawingData,
+            saveEditGate = saveEditGate,
+            isCurrentBeforeDelete = isCurrentBeforeDelete,
+            expectedUpdatedAt = expectedUpdatedAt,
+            expectedTitle = expectedTitle,
+            expectedDrawingData = expectedDrawingData,
         )
         if (deleted) {
             ReminderScheduler.cancel(getApplication(), noteId)
