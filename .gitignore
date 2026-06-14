@@ -6,5 +6,6 @@ captures/
 local.properties
 *.iml
 app/build/
+app/release/
 artifacts/
 Doc/jobs_view/**/connected_shards_*/
