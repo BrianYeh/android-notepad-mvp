@@ -1,0 +1,201 @@
+package com.example.notepad.billing
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PremiumBackendEntitlementMapperTest {
+    @Test
+    fun backendVerifiedAcknowledgedActiveSubscriptionGrantsPremium() {
+        val result = PremiumBackendEntitlementMapper.fromVerification(
+            expectedPackageName = PACKAGE_NAME,
+            verification = activeVerification(),
+            now = NOW,
+        )
+
+        assertTrue(result.accepted)
+        assertEquals(PremiumSubscriptionStatus.Active, result.snapshot.status)
+        assertEquals(PremiumEntitlementSource.BackendVerified, result.snapshot.source)
+        assertEquals(PremiumAcknowledgementStatus.Acknowledged, result.snapshot.acknowledgementStatus)
+        assertTrue(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+    }
+
+    @Test
+    fun activeSubscriptionWithoutBackendAcknowledgementStaysVerificationPending() {
+        val result = PremiumBackendEntitlementMapper.fromVerification(
+            expectedPackageName = PACKAGE_NAME,
+            verification = activeVerification(
+                acknowledgementState = PremiumBackendAcknowledgementState.Pending,
+            ),
+            now = NOW,
+        )
+
+        assertTrue(result.accepted)
+        assertEquals(PremiumSubscriptionStatus.VerificationPending, result.snapshot.status)
+        assertEquals(PremiumAcknowledgementStatus.BackendRequired, result.snapshot.acknowledgementStatus)
+        assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+    }
+
+    @Test
+    fun acknowledgementFailureSchedulesRetryAndDoesNotGrantPremium() {
+        val result = PremiumBackendEntitlementMapper.fromVerification(
+            expectedPackageName = PACKAGE_NAME,
+            verification = activeVerification(
+                acknowledgementState = PremiumBackendAcknowledgementState.Failed,
+                acknowledgementAttemptCount = 2,
+                nextAcknowledgementAttemptAt = NOW + 30_000L,
+                lastAcknowledgementError = "Google Play acknowledgement timed out.",
+            ),
+            now = NOW,
+        )
+
+        assertTrue(result.accepted)
+        assertEquals(PremiumSubscriptionStatus.VerificationPending, result.snapshot.status)
+        assertEquals(PremiumAcknowledgementStatus.RetryScheduled, result.snapshot.acknowledgementStatus)
+        assertEquals(2, result.snapshot.acknowledgementAttemptCount)
+        assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+    }
+
+    @Test
+    fun backendRejectsWrongPackageProductAndBasePlan() {
+        val wrongPackage = PremiumBackendEntitlementMapper.fromVerification(
+            expectedPackageName = PACKAGE_NAME,
+            verification = activeVerification(packageName = "com.attacker.notes"),
+            now = NOW,
+        )
+        val wrongProduct = PremiumBackendEntitlementMapper.fromVerification(
+            expectedPackageName = PACKAGE_NAME,
+            verification = activeVerification(productId = "other_subscription"),
+            now = NOW,
+        )
+        val wrongBasePlan = PremiumBackendEntitlementMapper.fromVerification(
+            expectedPackageName = PACKAGE_NAME,
+            verification = activeVerification(basePlanId = "weekly"),
+            now = NOW,
+        )
+
+        listOf(wrongPackage, wrongProduct, wrongBasePlan).forEach { result ->
+            assertFalse(result.accepted)
+            assertEquals(PremiumSubscriptionStatus.Error, result.snapshot.status)
+            assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+        }
+    }
+
+    @Test
+    fun rtdnDuplicateMessageIsIgnoredAfterRequeryRevokesAccess() {
+        val initial = PremiumRtdnSimulationState(
+            snapshot = PremiumBackendEntitlementMapper.fromVerification(
+                expectedPackageName = PACKAGE_NAME,
+                verification = activeVerification(),
+                now = NOW,
+            ).snapshot,
+        )
+        val event = PremiumRtdnEvent(
+            messageId = "message-1",
+            purchaseToken = PURCHASE_TOKEN,
+            eventTime = NOW + 1L,
+            notificationType = PremiumRtdnNotificationType.Revoked,
+        )
+
+        val revoked = PremiumBackendEntitlementMapper.applyRtdnRequery(
+            state = initial,
+            event = event,
+            requeryResult = activeVerification(
+                subscriptionState = PremiumBackendSubscriptionState.Revoked,
+            ),
+            expectedPackageName = PACKAGE_NAME,
+            now = NOW + 2L,
+        )
+        val duplicateWithDifferentPayload = PremiumBackendEntitlementMapper.applyRtdnRequery(
+            state = revoked,
+            event = event.copy(notificationType = PremiumRtdnNotificationType.Renewed),
+            requeryResult = activeVerification(),
+            expectedPackageName = PACKAGE_NAME,
+            now = NOW + 3L,
+        )
+
+        assertEquals(PremiumSubscriptionStatus.Revoked, revoked.snapshot.status)
+        assertFalse(revoked.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+        assertEquals(revoked, duplicateWithDifferentPayload)
+    }
+
+    @Test
+    fun rtdnUsesRequeriedGooglePlayStateInsteadOfNotificationType() {
+        val event = PremiumRtdnEvent(
+            messageId = "message-2",
+            purchaseToken = PURCHASE_TOKEN,
+            eventTime = NOW + 1L,
+            notificationType = PremiumRtdnNotificationType.Expired,
+        )
+
+        val state = PremiumBackendEntitlementMapper.applyRtdnRequery(
+            state = PremiumRtdnSimulationState(),
+            event = event,
+            requeryResult = activeVerification(
+                subscriptionState = PremiumBackendSubscriptionState.GracePeriod,
+            ),
+            expectedPackageName = PACKAGE_NAME,
+            now = NOW + 2L,
+        )
+
+        assertEquals(PremiumSubscriptionStatus.GracePeriod, state.snapshot.status)
+        assertTrue(state.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+    }
+
+    @Test
+    fun replacementPurchaseMovesEntitlementToNewToken() {
+        val oldTokenHash = PremiumEntitlementStore.hashPurchaseToken(PURCHASE_TOKEN)
+        val newToken = "new-token"
+
+        val result = PremiumBackendEntitlementMapper.fromVerification(
+            expectedPackageName = PACKAGE_NAME,
+            verification = activeVerification(
+                purchaseToken = newToken,
+                linkedPurchaseToken = PURCHASE_TOKEN,
+                basePlanId = "annual",
+            ),
+            now = NOW,
+        )
+
+        assertTrue(result.accepted)
+        assertEquals(PremiumSubscriptionStatus.Active, result.snapshot.status)
+        assertEquals(PremiumEntitlementStore.hashPurchaseToken(newToken), result.snapshot.purchaseTokenHash)
+        assertFalse(result.snapshot.purchaseTokenHash == oldTokenHash)
+        assertTrue(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+    }
+
+    private fun activeVerification(
+        packageName: String = PACKAGE_NAME,
+        productId: String = PremiumCatalog.PREFERRED_PRODUCT_ID,
+        basePlanId: String = "monthly",
+        purchaseToken: String = PURCHASE_TOKEN,
+        linkedPurchaseToken: String? = null,
+        subscriptionState: PremiumBackendSubscriptionState = PremiumBackendSubscriptionState.Active,
+        acknowledgementState: PremiumBackendAcknowledgementState = PremiumBackendAcknowledgementState.Acknowledged,
+        acknowledgementAttemptCount: Int = 0,
+        nextAcknowledgementAttemptAt: Long? = null,
+        lastAcknowledgementError: String? = null,
+    ): PremiumBackendPurchaseVerification {
+        return PremiumBackendPurchaseVerification(
+            packageName = packageName,
+            productId = productId,
+            basePlanId = basePlanId,
+            purchaseToken = purchaseToken,
+            linkedPurchaseToken = linkedPurchaseToken,
+            purchaseTime = NOW - 1_000L,
+            expiryTime = NOW + 30L * 24L * 60L * 60L * 1_000L,
+            subscriptionState = subscriptionState,
+            acknowledgementState = acknowledgementState,
+            acknowledgementAttemptCount = acknowledgementAttemptCount,
+            nextAcknowledgementAttemptAt = nextAcknowledgementAttemptAt,
+            lastAcknowledgementError = lastAcknowledgementError,
+        )
+    }
+
+    private companion object {
+        const val PACKAGE_NAME = "com.example.notepad"
+        const val PURCHASE_TOKEN = "purchase-token"
+        const val NOW = 1_762_000_000_000L
+    }
+}

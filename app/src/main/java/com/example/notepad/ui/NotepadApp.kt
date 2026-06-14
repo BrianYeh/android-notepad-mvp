@@ -170,6 +170,7 @@ import com.example.notepad.PendingWidgetAction
 import com.example.notepad.WidgetAction
 import com.example.notepad.billing.PremiumBillingState
 import com.example.notepad.billing.PremiumPlan
+import com.example.notepad.billing.PremiumSubscriptionStatus
 import com.example.notepad.data.ALL_NOTES_FILTER_NAME
 import com.example.notepad.data.AppLanguage
 import com.example.notepad.data.BackupData
@@ -949,12 +950,12 @@ private fun PremiumScreen(
                             Toast.makeText(context, text.premiumBillingUnavailable, Toast.LENGTH_SHORT).show()
                         }
                     },
-                    enabled = selectedPriceAvailable && !billingState.isPremium,
+                    enabled = selectedPriceAvailable && !billingState.hasPremiumAccess && billingState.canLaunchPurchase,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("premium_subscribe_button"),
                 ) {
-                    Text(if (billingState.isPremium) text.premiumActive else text.premiumSubscribe)
+                    Text(if (billingState.hasPremiumAccess) text.premiumActive else text.premiumSubscribe)
                 }
             }
             TextButton(
@@ -964,12 +965,12 @@ private fun PremiumScreen(
                 Text(text.premiumRestore)
             }
             Text(
-                text = if (billingState.isPremium) text.premiumActive else text.premiumTrial,
+                text = premiumStatusText(text, billingState),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
             Text(
-                text = billingState.lastError ?: text.premiumRenewal,
+                text = billingState.lastError ?: premiumDetailText(text),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1010,6 +1011,20 @@ private fun PremiumScreen(
             )
         }
     }
+}
+
+private fun premiumStatusText(text: UiText, billingState: PremiumBillingState): String {
+    if (billingState.hasPremiumAccess) return text.premiumActive
+    return when (billingState.subscription.status) {
+        PremiumSubscriptionStatus.PendingPurchase,
+        PremiumSubscriptionStatus.VerificationPending,
+        -> text.premiumSubscribePending
+        else -> text.premiumTrial
+    }
+}
+
+private fun premiumDetailText(text: UiText): String {
+    return text.premiumRenewal
 }
 
 @Composable

@@ -11,8 +11,77 @@ class PremiumBillingStateTest {
     }
 
     @Test
-    fun hasPremiumAccessUsesRealSubscription() {
-        assertTrue(PremiumBillingState(isPremium = true).hasPremiumAccess)
+    fun hasPremiumAccessUsesBackendVerifiedActiveSubscription() {
+        val state = PremiumBillingState(
+            subscription = PremiumSubscriptionSnapshot(
+                status = PremiumSubscriptionStatus.Active,
+                source = PremiumEntitlementSource.BackendVerified,
+            ),
+        )
+
+        assertTrue(state.hasPremiumAccess)
+    }
+
+    @Test
+    fun hasPremiumAccessUsesBackendVerifiedGracePeriodSubscription() {
+        val state = PremiumBillingState(
+            subscription = PremiumSubscriptionSnapshot(
+                status = PremiumSubscriptionStatus.GracePeriod,
+                source = PremiumEntitlementSource.BackendVerified,
+            ),
+        )
+
+        assertTrue(state.hasPremiumAccess)
+    }
+
+    @Test
+    fun hasPremiumAccessRejectsClientObservedPurchaseBeforeAcknowledgement() {
+        val state = PremiumBillingState(
+            subscription = PremiumSubscriptionSnapshot(
+                status = PremiumSubscriptionStatus.VerificationPending,
+                source = PremiumEntitlementSource.ClientObserved,
+                acknowledgementStatus = PremiumAcknowledgementStatus.Pending,
+            ),
+        )
+
+        assertFalse(state.hasPremiumAccess)
+    }
+
+    @Test
+    fun hasPremiumAccessRejectsClientObservedPurchaseWithoutExplicitBuildGate() {
+        val subscription = PremiumSubscriptionSnapshot(
+            status = PremiumSubscriptionStatus.Active,
+            source = PremiumEntitlementSource.ClientObserved,
+            acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
+        )
+
+        assertFalse(subscription.hasPremiumAccess(allowClientObservedAccess = false))
+    }
+
+    @Test
+    fun hasPremiumAccessRejectsPendingPurchase() {
+        val state = PremiumBillingState(
+            subscription = PremiumSubscriptionSnapshot(
+                status = PremiumSubscriptionStatus.PendingPurchase,
+                source = PremiumEntitlementSource.ClientObserved,
+            ),
+        )
+
+        assertFalse(state.hasPremiumAccess)
+    }
+
+    @Test
+    fun canLaunchPurchaseRejectsInFlightStates() {
+        assertFalse(
+            PremiumSubscriptionSnapshot(
+                status = PremiumSubscriptionStatus.PendingPurchase,
+            ).canLaunchPurchase(allowClientOnlyBilling = true),
+        )
+        assertFalse(
+            PremiumSubscriptionSnapshot(
+                status = PremiumSubscriptionStatus.VerificationPending,
+            ).canLaunchPurchase(allowClientOnlyBilling = true),
+        )
     }
 
     @Test
@@ -21,5 +90,87 @@ class PremiumBillingStateTest {
 
         assertFalse(state.isPremium)
         assertTrue(state.hasPremiumAccess)
+    }
+
+    @Test
+    fun catalogSelectsPreferredNoOfferBasePlan() {
+        val selected = PremiumCatalog.selectBasePlanOffer(
+            plan = PremiumPlan.Monthly,
+            candidates = listOf(
+                PremiumOfferCandidate(
+                    productId = "just_notes_premium",
+                    basePlanId = "monthly",
+                    offerId = "intro",
+                    offerToken = "intro-token",
+                    formattedPrice = "\$0.99",
+                ),
+                PremiumOfferCandidate(
+                    productId = "just_notes_premium",
+                    basePlanId = "monthly",
+                    offerId = null,
+                    offerToken = "base-token",
+                    formattedPrice = "\$1.99",
+                ),
+            ),
+        )
+
+        assertTrue(selected?.offerToken == "base-token")
+    }
+
+    @Test
+    fun catalogDoesNotSelectAmbiguousDuplicateBasePlans() {
+        val selected = PremiumCatalog.selectBasePlanOffer(
+            plan = PremiumPlan.Annual,
+            candidates = listOf(
+                PremiumOfferCandidate(
+                    productId = "just_notes_premium",
+                    basePlanId = "annual",
+                    offerId = null,
+                    offerToken = "annual-one",
+                    formattedPrice = "\$19.99",
+                ),
+                PremiumOfferCandidate(
+                    productId = "just_notes_premium",
+                    basePlanId = "annual",
+                    offerId = null,
+                    offerToken = "annual-two",
+                    formattedPrice = "\$20.99",
+                ),
+            ),
+        )
+
+        assertFalse(selected != null)
+    }
+
+    @Test
+    fun catalogDoesNotFallBackWhenPreferredProductBasePlanIsAmbiguous() {
+        val selected = PremiumCatalog.selectBasePlanOffer(
+            plan = PremiumPlan.Monthly,
+            candidates = listOf(
+                PremiumOfferCandidate(
+                    productId = "just_notes_premium",
+                    basePlanId = "monthly",
+                    offerId = null,
+                    offerToken = "preferred-one",
+                    formattedPrice = "\$1.99",
+                ),
+                PremiumOfferCandidate(
+                    productId = "just_notes_premium",
+                    basePlanId = "monthly",
+                    offerId = null,
+                    offerToken = "preferred-two",
+                    formattedPrice = "\$2.99",
+                ),
+                PremiumOfferCandidate(
+                    productId = "just_notes_premium_monthly",
+                    basePlanId = "monthly",
+                    offerId = null,
+                    offerToken = "fallback",
+                    formattedPrice = "\$1.99",
+                ),
+            ),
+        )
+
+        assertFalse(selected != null)
     }
 }
