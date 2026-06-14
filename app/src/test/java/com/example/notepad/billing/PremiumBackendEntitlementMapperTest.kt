@@ -194,7 +194,7 @@ class PremiumBackendEntitlementMapperTest {
     }
 
     private companion object {
-        const val PACKAGE_NAME = "com.example.notepad"
+        const val PACKAGE_NAME = "com.brianyeh.justnotes"
         const val PURCHASE_TOKEN = "purchase-token"
         const val NOW = 1_762_000_000_000L
     }

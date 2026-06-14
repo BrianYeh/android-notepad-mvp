@@ -20,7 +20,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.notepad"
+        applicationId = "com.brianyeh.justnotes"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

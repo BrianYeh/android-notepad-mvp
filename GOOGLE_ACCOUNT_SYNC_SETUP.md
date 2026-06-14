@@ -4,7 +4,7 @@ Google account sync now has Android-side implementation, but release readiness s
 
 ## Current Phase 0 Findings
 
-- Package/application id: `com.example.notepad`
+- Package/application id: `com.brianyeh.justnotes`
 - Namespace: `com.example.notepad`
 - Debug signing report from `./gradlew.bat signingReport --no-daemon`:
   - Store: `C:\Users\sbyai\.android\debug.keystore`
@@ -25,7 +25,7 @@ Google account sync now has Android-side implementation, but release readiness s
    - Add scopes only after deciding the storage model below
 3. Enable the Google Drive API.
 4. Create an Android OAuth client:
-   - Package name: `com.example.notepad`
+   - Package name: `com.brianyeh.justnotes`
    - Debug SHA-1: `0D:7D:F6:AB:E9:79:27:82:91:F8:E0:E5:1B:95:62:DF:71:63:8C:81`
    - Add the release SHA-1 before shipping release builds
 5. Choose the Drive storage scope:

@@ -53,8 +53,8 @@ class ReminderNotificationOpenNoteInstrumentedTest {
 
     @Test
     fun reminderOpenIntentContractUsesExpectedActionAndExtraNames() {
-        assertEquals("com.example.notepad.reminder.OPEN_NOTE", ACTION_REMINDER_OPEN_NOTE)
-        assertEquals("com.example.notepad.reminder.NOTE_ID", EXTRA_REMINDER_NOTE_ID)
+        assertEquals("com.brianyeh.justnotes.reminder.OPEN_NOTE", ACTION_REMINDER_OPEN_NOTE)
+        assertEquals("com.brianyeh.justnotes.reminder.NOTE_ID", EXTRA_REMINDER_NOTE_ID)
     }
 
     @Test

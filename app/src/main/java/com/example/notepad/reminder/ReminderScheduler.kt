@@ -20,9 +20,9 @@ object ReminderScheduler {
     const val CHANNEL_ID = "note_reminders"
     const val EXTRA_NOTE_ID = "note_id"
     const val EXTRA_FIRED_REMINDER_AT = "fired_reminder_at"
-    const val ACTION_SHOW_SNOOZED = "com.example.notepad.reminder.SHOW_SNOOZED"
-    const val ACTION_SNOOZE = "com.example.notepad.reminder.SNOOZE"
-    const val ACTION_CLEAR = "com.example.notepad.reminder.CLEAR"
+    const val ACTION_SHOW_SNOOZED = "com.brianyeh.justnotes.reminder.SHOW_SNOOZED"
+    const val ACTION_SNOOZE = "com.brianyeh.justnotes.reminder.SNOOZE"
+    const val ACTION_CLEAR = "com.brianyeh.justnotes.reminder.CLEAR"
     const val SNOOZE_MILLIS = 10 * 60 * 1000L
 
     enum class NotificationDeliveryStatus {
