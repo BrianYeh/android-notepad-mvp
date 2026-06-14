@@ -61,7 +61,7 @@ ADB input smoke test when an emulator or device is connected:
 ```powershell
 adb devices
 adb install -r app\build\outputs\apk\debug\app-debug.apk
-adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.SUBJECT "ADB UI Test" --es android.intent.extra.TEXT "ADB keyboard input smoke test" -n com.example.notepad/.MainActivity
+adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.SUBJECT "ADB UI Test" --es android.intent.extra.TEXT "ADB keyboard input smoke test" -n com.brianyeh.justnotes/com.example.notepad.MainActivity
 adb shell input text "adb_extra_text"
 ```
 
