@@ -90,6 +90,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -1464,60 +1465,71 @@ private fun MainScreen(
             )
         },
         floatingActionButton = {
-            if (!isTrash && !isSelectionMode) {
-                Box {
-                    FloatingActionButton(
-                        onClick = { addMenuExpanded = true },
-                        modifier = Modifier.testTag("add_note_button"),
-                    ) {
-                        Text("+", style = MaterialTheme.typography.headlineSmall)
-                    }
-                    DropdownMenu(
-                        expanded = addMenuExpanded && !isPrivacyLocked,
-                        onDismissRequest = { addMenuExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(text.newTextNote) },
-                            modifier = Modifier.testTag("new_text_note_menu_item"),
+            if (!isTrash && !isSelectionMode && contentView != MainContentView.Calendar) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    Box {
+                        SmallFloatingActionButton(
                             onClick = {
-                                addMenuExpanded = false
-                                createNoteWithAllowedFolder(onCreateTextNote)
+                                if (!isPrivacyLocked) addMenuExpanded = true
                             },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(text.newChecklistNote) },
-                            modifier = Modifier.testTag("new_checklist_note_menu_item"),
-                            onClick = {
-                                addMenuExpanded = false
-                                createNoteWithAllowedFolder(onCreateChecklistNote)
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(text.newDrawingNote) },
-                            modifier = Modifier.testTag("new_drawing_note_menu_item"),
-                            onClick = {
-                                addMenuExpanded = false
-                                createNoteWithAllowedFolder(onCreateDrawingNote)
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(text.ocrFromImage) },
-                            modifier = Modifier.testTag("ocr_from_image_menu_item"),
-                            onClick = {
-                                addMenuExpanded = false
-                                onCreateOcrNote()
-                            },
-                        )
-                        if (hasPremiumAccess) {
+                            modifier = Modifier
+                                .semantics { contentDescription = text.noteOptions }
+                                .testTag("add_note_options_button"),
+                        ) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = null)
+                        }
+                        DropdownMenu(
+                            expanded = addMenuExpanded && !isPrivacyLocked,
+                            onDismissRequest = { addMenuExpanded = false },
+                        ) {
                             DropdownMenuItem(
-                                text = { Text(text.newFolder) },
-                                modifier = Modifier.testTag("new_folder_menu_item"),
+                                text = { Text(text.newChecklistNote) },
+                                modifier = Modifier.testTag("new_checklist_note_menu_item"),
                                 onClick = {
                                     addMenuExpanded = false
-                                    showCreateFolderDialog = true
+                                    createNoteWithAllowedFolder(onCreateChecklistNote)
                                 },
                             )
+                            DropdownMenuItem(
+                                text = { Text(text.newDrawingNote) },
+                                modifier = Modifier.testTag("new_drawing_note_menu_item"),
+                                onClick = {
+                                    addMenuExpanded = false
+                                    createNoteWithAllowedFolder(onCreateDrawingNote)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(text.ocrFromImage) },
+                                modifier = Modifier.testTag("ocr_from_image_menu_item"),
+                                onClick = {
+                                    addMenuExpanded = false
+                                    onCreateOcrNote()
+                                },
+                            )
+                            if (hasPremiumAccess) {
+                                DropdownMenuItem(
+                                    text = { Text(text.newFolder) },
+                                    modifier = Modifier.testTag("new_folder_menu_item"),
+                                    onClick = {
+                                        addMenuExpanded = false
+                                        showCreateFolderDialog = true
+                                    },
+                                )
+                            }
                         }
+                    }
+                    FloatingActionButton(
+                        onClick = {
+                            if (!isPrivacyLocked) createNoteWithAllowedFolder(onCreateTextNote)
+                        },
+                        modifier = Modifier
+                            .semantics { contentDescription = text.newTextNote }
+                            .testTag("add_note_button"),
+                    ) {
+                        Text("+", style = MaterialTheme.typography.headlineSmall)
                     }
                 }
             }
@@ -1628,6 +1640,7 @@ private fun MainScreen(
                     text = text,
                     searchQuery = searchQuery,
                     appLanguage = appLanguage,
+                    isPrivacyLocked = isPrivacyLocked,
                     selectedNoteIds = selectedNoteIds,
                     onOpenNote = onOpenNote,
                     onToggleNoteSelection = toggleNoteSelection,
@@ -1655,6 +1668,9 @@ private fun MainScreen(
                     hasActiveFilters = quickFilter != NoteQuickFilter.All || reminderFilter != ReminderFilter.All,
                     listMode = listMode,
                     appLanguage = appLanguage,
+                    showReminderSummary = reminderFilter != ReminderFilter.All ||
+                        quickFilter == NoteQuickFilter.HasReminder,
+                    isPrivacyLocked = isPrivacyLocked,
                     selectedNoteIds = selectedNoteIds,
                     onOpenNote = onOpenNote,
                     onToggleNoteSelection = toggleNoteSelection,
@@ -3016,6 +3032,8 @@ private fun NoteList(
     hasActiveFilters: Boolean,
     listMode: NoteListMode,
     appLanguage: AppLanguage,
+    showReminderSummary: Boolean,
+    isPrivacyLocked: Boolean,
     selectedNoteIds: Set<Long>,
     onOpenNote: (NoteEntity) -> Unit,
     onToggleNoteSelection: (NoteEntity) -> Unit,
@@ -3029,6 +3047,13 @@ private fun NoteList(
     modifier: Modifier = Modifier,
 ) {
     val isSelectionMode = selectedNoteIds.isNotEmpty()
+    var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
 
     if (notes.isEmpty()) {
         Box(
@@ -3068,8 +3093,11 @@ private fun NoteList(
                 text = text,
                 searchQuery = searchQuery,
                 appLanguage = appLanguage,
+                nowMillis = nowMillis,
                 isSelectionMode = isSelectionMode,
                 isSelected = note.id in selectedNoteIds,
+                showReminderSummary = showReminderSummary,
+                isPrivacyLocked = isPrivacyLocked,
                 onOpen = { onOpenNote(note) },
                 onToggleSelection = { onToggleNoteSelection(note) },
                 onStartSelection = { onStartNoteSelection(note) },
@@ -3092,6 +3120,7 @@ private fun ReminderCalendarView(
     text: UiText,
     searchQuery: String,
     appLanguage: AppLanguage,
+    isPrivacyLocked: Boolean,
     selectedNoteIds: Set<Long>,
     onOpenNote: (NoteEntity) -> Unit,
     onToggleNoteSelection: (NoteEntity) -> Unit,
@@ -3328,8 +3357,11 @@ private fun ReminderCalendarView(
                         text = text,
                         searchQuery = searchQuery,
                         appLanguage = appLanguage,
+                        nowMillis = nowMillis,
                         isSelectionMode = isSelectionMode,
                         isSelected = note.id in selectedNoteIds,
+                        showReminderSummary = true,
+                        isPrivacyLocked = isPrivacyLocked,
                         onOpen = { onOpenNote(note) },
                         onToggleSelection = { onToggleNoteSelection(note) },
                         onStartSelection = { onStartNoteSelection(note) },
@@ -3511,8 +3543,11 @@ private fun NoteRow(
     text: UiText,
     searchQuery: String,
     appLanguage: AppLanguage,
+    nowMillis: Long,
     isSelectionMode: Boolean,
     isSelected: Boolean,
+    showReminderSummary: Boolean,
+    isPrivacyLocked: Boolean,
     onOpen: () -> Unit,
     onToggleSelection: () -> Unit,
     onStartSelection: () -> Unit,
@@ -3523,6 +3558,11 @@ private fun NoteRow(
     onPermanentlyDelete: () -> Unit,
     onTogglePinned: () -> Unit,
 ) {
+    var rowMenuExpanded by remember(note.id) { mutableStateOf(false) }
+    LaunchedEffect(isPrivacyLocked) {
+        if (isPrivacyLocked) rowMenuExpanded = false
+    }
+
     fun handleClick() {
         if (isSelectionMode) {
             onToggleSelection()
@@ -3558,13 +3598,6 @@ private fun NoteRow(
                     )
                     Spacer(Modifier.width(8.dp))
                 }
-                if (note.isPinned && !note.isDeleted) {
-                    Text(
-                        text = "★ ",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
                 Text(
                     text = highlightedText(
                         value = noteTitle(note, text),
@@ -3582,41 +3615,71 @@ private fun NoteRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = noteTypeLabel(note.type, text),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier
-                        .background(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(50),
-                        )
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                        .testTag("note_type_chip"),
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = noteMetadata(note, folderName, text, appLanguage),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            reminderRowSummary(note, text, appLanguage)?.let { summary ->
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = summary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (note.reminderAt != null && note.reminderAt <= System.currentTimeMillis()) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("note_reminder_summary_${note.id}"),
-                )
+                if (!isSelectionMode) {
+                    Box {
+                        IconButton(
+                            onClick = {
+                                if (!isPrivacyLocked) rowMenuExpanded = true
+                            },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .semantics { contentDescription = text.noteOptions }
+                                .testTag("note_more_${note.id}"),
+                        ) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = null)
+                        }
+                        DropdownMenu(
+                            expanded = rowMenuExpanded && !isPrivacyLocked,
+                            onDismissRequest = { rowMenuExpanded = false },
+                        ) {
+                            if (note.isDeleted) {
+                                DropdownMenuItem(
+                                    text = { Text(text.restore) },
+                                    modifier = Modifier.testTag("note_restore_${note.id}"),
+                                    onClick = {
+                                        rowMenuExpanded = false
+                                        onRestore()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(text.permanentlyDelete) },
+                                    modifier = Modifier.testTag("note_permanent_delete_${note.id}"),
+                                    onClick = {
+                                        rowMenuExpanded = false
+                                        onPermanentlyDelete()
+                                    },
+                                )
+                            } else {
+                                DropdownMenuItem(
+                                    text = { Text(if (note.isPinned) text.unpin else text.pin) },
+                                    modifier = Modifier.testTag("pin_note_${note.id}"),
+                                    onClick = {
+                                        rowMenuExpanded = false
+                                        onTogglePinned()
+                                    },
+                                )
+                                if (canMove) {
+                                    DropdownMenuItem(
+                                        text = { Text(text.move) },
+                                        modifier = Modifier.testTag("move_note_${note.id}"),
+                                        onClick = {
+                                            rowMenuExpanded = false
+                                            onMove()
+                                        },
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text(text.moveToTrash) },
+                                    modifier = Modifier.testTag("delete_note_${note.id}"),
+                                    onClick = {
+                                        rowMenuExpanded = false
+                                        onDelete()
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
             }
             notePreview(note, searchQuery)?.let { preview ->
                 Spacer(Modifier.height(4.dp))
@@ -3632,39 +3695,32 @@ private fun NoteRow(
                     modifier = Modifier.testTag("note_preview_${note.id}"),
                 )
             }
-            if (!isSelectionMode) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    if (note.isDeleted) {
-                        TextButton(onClick = onRestore) {
-                            Text(text.restore)
-                        }
-                        TextButton(onClick = onPermanentlyDelete) {
-                            Text(text.permanentlyDelete)
-                        }
-                    } else {
-                        TextButton(
-                            onClick = onTogglePinned,
-                            modifier = Modifier.testTag("pin_note_${note.id}"),
-                        ) {
-                            Text(if (note.isPinned) text.unpin else text.pin)
-                        }
-                        if (canMove) {
-                            TextButton(
-                                onClick = onMove,
-                                modifier = Modifier.testTag("move_note_${note.id}"),
-                            ) {
-                                Text(text.move)
-                            }
-                        }
-                        TextButton(onClick = onDelete) {
-                            Text(text.moveToTrash)
-                        }
-                    }
+            if (showReminderSummary) {
+                reminderRowSummary(note, text, appLanguage)?.let { summary ->
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (note.reminderAt != null && note.reminderAt <= nowMillis) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("note_reminder_summary_${note.id}"),
+                    )
                 }
             }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = relativeUpdatedTime(note.updatedAt, nowMillis, appLanguage),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("note_relative_updated_${note.id}"),
+            )
         }
     }
 }
@@ -3702,6 +3758,7 @@ private fun TextEditorScreen(
     var isMetadataExpanded by remember(noteId) { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isMoreMenuExpanded by remember { mutableStateOf(false) }
+    var showReadDetailsDialog by remember { mutableStateOf(false) }
     var isFindVisible by remember(noteId) { mutableStateOf(false) }
     var findQuery by remember(noteId) { mutableStateOf("") }
     var activeFindIndex by remember(noteId) { mutableStateOf(0) }
@@ -3759,6 +3816,7 @@ private fun TextEditorScreen(
     LaunchedEffect(isPrivacyLocked) {
         if (isPrivacyLocked) {
             isMoreMenuExpanded = false
+            showReadDetailsDialog = false
             showDeleteDialog = false
             showLinkDialog = false
             pendingLinkRange = null
@@ -4493,6 +4551,16 @@ private fun TextEditorScreen(
                             modifier = Modifier.testTag("text_note_overflow_menu"),
                         ) {
                             currentNote?.let { loaded ->
+                                if (!isEditing) {
+                                    DropdownMenuItem(
+                                        text = { Text(text.details) },
+                                        modifier = Modifier.testTag("text_note_details_menu_item"),
+                                        onClick = {
+                                            isMoreMenuExpanded = false
+                                            showReadDetailsDialog = true
+                                        },
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text(text.findInNote) },
                                     modifier = Modifier.testTag("find_in_note_menu_item"),
@@ -4943,17 +5011,13 @@ private fun TextEditorScreen(
                         .testTag("text_note_read_scroll"),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(NOTE_PAPER_SURFACE, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 20.dp, vertical = 18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(NOTE_PAPER_SURFACE)
-                                .padding(horizontal = 20.dp, vertical = 18.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
                             Text(
                                 text = currentDisplayTitle,
                                 style = MaterialTheme.typography.headlineSmall,
@@ -4962,55 +5026,22 @@ private fun TextEditorScreen(
                                 modifier = Modifier
                                     .testTag("text_note_read_title"),
                             )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = folderDisplayNameById(currentNote.folderId, folders, text),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (currentNote.isPinned) {
+                            if (saveStatus == SaveStatus.Failed) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
                                     Text(
-                                        text = "★ ${text.pinned}",
+                                        text = saveStatus.label(text, appLanguage),
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.tertiary,
-                                        modifier = Modifier.testTag("text_note_pinned_indicator"),
+                                        color = MaterialTheme.colorScheme.error,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("text_note_read_save_status"),
                                     )
-                                }
-                            }
-                            Text(
-                                text = "${text.lastUpdated}: ${formatTime(lastSavedAt ?: currentNote.updatedAt, appLanguage)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = saveStatus.label(text, appLanguage),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (saveStatus == SaveStatus.Failed) {
-                                        MaterialTheme.colorScheme.error
-                                    } else {
-                                        MaterialTheme.colorScheme.primary
-                                    },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("text_note_read_save_status"),
-                                )
-                                if (saveStatus == SaveStatus.Failed) {
                                     TextButton(
                                         onClick = ::retrySaveTextNote,
                                         modifier = Modifier.testTag("text_note_read_retry_save_button"),
@@ -5019,17 +5050,22 @@ private fun TextEditorScreen(
                                     }
                                 }
                             }
-                            Text(
-                                text = reminderStatus(currentNote.reminderAt, text, appLanguage),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (currentNote.reminderAt != null && currentNote.reminderAt <= System.currentTimeMillis()) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                modifier = Modifier.testTag("note_reminder_status"),
-                            )
-                            HorizontalDivider()
+                            val readReminderAt = currentNote.reminderAt
+                            if (readReminderAt != null) {
+                                Text(
+                                    text = reminderStatus(readReminderAt, text, appLanguage),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (readReminderAt <= System.currentTimeMillis()) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.testTag("note_reminder_status"),
+                                )
+                            }
+                            if (saveStatus == SaveStatus.Failed || readReminderAt != null) {
+                                HorizontalDivider()
+                            }
                             val readContentText = findHighlightedLinkedText(
                                 value = content.ifBlank { text.content },
                                 query = findQuery,
@@ -5137,7 +5173,6 @@ private fun TextEditorScreen(
                 }
             }
         }
-    }
 
     if (showDeleteDialog && !isPrivacyLocked) {
         ConfirmDialog(
@@ -5152,6 +5187,18 @@ private fun TextEditorScreen(
                 showDeleteDialog = false
                 onDeleted()
             },
+        )
+    }
+
+    if (showReadDetailsDialog && currentNote != null && !isPrivacyLocked) {
+        ReadNoteDetailsDialog(
+            note = currentNote,
+            folderName = folderDisplayNameById(currentNote.folderId, folders, text),
+            saveStatus = saveStatus,
+            lastSavedAt = lastSavedAt ?: currentNote.updatedAt,
+            text = text,
+            appLanguage = appLanguage,
+            onDismiss = { showReadDetailsDialog = false },
         )
     }
 
@@ -5193,6 +5240,61 @@ private fun TextEditorScreen(
             },
         )
     }
+}
+
+@Composable
+private fun ReadNoteDetailsDialog(
+    note: NoteEntity,
+    folderName: String,
+    saveStatus: SaveStatus,
+    lastSavedAt: Long,
+    text: UiText,
+    appLanguage: AppLanguage,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text.details) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "${text.folder}: $folderName",
+                    modifier = Modifier.testTag("text_note_details_folder"),
+                )
+                Text(
+                    text = "${text.lastUpdated}: ${formatTime(lastSavedAt, appLanguage)}",
+                    modifier = Modifier.testTag("text_note_details_updated"),
+                )
+                Text(
+                    text = "${text.created}: ${formatTime(note.createdAt, appLanguage)}",
+                    modifier = Modifier.testTag("text_note_details_created"),
+                )
+                Text(
+                    text = saveStatus.label(text, appLanguage),
+                    modifier = Modifier.testTag("text_note_details_save_status"),
+                )
+                Text(
+                    text = reminderStatus(note.reminderAt, text, appLanguage),
+                    modifier = Modifier.testTag("text_note_details_reminder"),
+                )
+                if (note.isPinned && !note.isDeleted) {
+                    Text(
+                        text = "★ ${text.pinned}",
+                        modifier = Modifier.testTag("text_note_details_pinned"),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("text_note_details_done_button"),
+            ) {
+                Text(text.back)
+            }
+        },
+        modifier = Modifier.testTag("text_note_details_dialog"),
+    )
 }
 
 @Composable
@@ -8331,6 +8433,37 @@ private fun noteMetadata(
         "${text.created} ${formatTime(note.createdAt, appLanguage)}"
     val pinned = if (note.isPinned && !note.isDeleted) " • ${text.pinned}" else ""
     return "$folderName • $timestamps$pinned"
+}
+
+private fun relativeUpdatedTime(
+    updatedAt: Long,
+    nowMillis: Long,
+    language: AppLanguage,
+): String {
+    val elapsedSeconds = ((nowMillis - updatedAt).coerceAtLeast(0L)) / 1_000L
+    return when {
+        elapsedSeconds < 60L -> {
+            if (language == AppLanguage.TraditionalChinese) "剛剛" else "Just now"
+        }
+        elapsedSeconds < 3_600L -> {
+            val minutes = (elapsedSeconds / 60L).coerceAtLeast(1L)
+            if (language == AppLanguage.TraditionalChinese) "${minutes} 分鐘前" else "${minutes} min ago"
+        }
+        elapsedSeconds < 86_400L -> {
+            val hours = (elapsedSeconds / 3_600L).coerceAtLeast(1L)
+            if (language == AppLanguage.TraditionalChinese) "${hours} 小時前" else "${hours} hr ago"
+        }
+        elapsedSeconds < 172_800L -> {
+            if (language == AppLanguage.TraditionalChinese) "昨天" else "Yesterday"
+        }
+        else -> {
+            val locale = when (language) {
+                AppLanguage.English -> Locale.ENGLISH
+                AppLanguage.TraditionalChinese -> Locale.TRADITIONAL_CHINESE
+            }
+            DateFormat.getDateInstance(DateFormat.SHORT, locale).format(Date(updatedAt))
+        }
+    }
 }
 
 private fun reminderRowSummary(
