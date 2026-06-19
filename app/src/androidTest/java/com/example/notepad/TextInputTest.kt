@@ -95,8 +95,14 @@ class TextInputTest {
 
     private fun showTextNoteMetadata() {
         if (composeRule.onAllNodesWithTag("text_note_title").fetchSemanticsNodes().isEmpty()) {
-            waitForTag("toggle_metadata_button")
-            composeRule.onNodeWithTag("toggle_metadata_button").performClick()
+            if (composeRule.onAllNodesWithTag("toggle_metadata_button").fetchSemanticsNodes().isNotEmpty()) {
+                composeRule.onNodeWithTag("toggle_metadata_button").performClick()
+            } else {
+                waitForTag("more_note_button")
+                composeRule.onNodeWithTag("more_note_button").performClick()
+                waitForTag("text_note_edit_details_menu_item")
+                composeRule.onNodeWithTag("text_note_edit_details_menu_item").performClick()
+            }
         }
         waitForTag("text_note_title")
     }
@@ -1437,7 +1443,13 @@ class TextInputTest {
         openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_content")
         composeRule.onNodeWithTag("text_note_content").assertIsFocused()
-        showTextNoteMetadata()
+        assertTagAbsent("text_note_title")
+        assertTagAbsent("text_note_focus_mode")
+        assertTagAbsent("text_note_compact_metadata")
+        assertTagAbsent("text_note_edit_metadata")
+        composeRule.onNodeWithTag("more_note_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("text_note_edit_details_menu_item").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().assertIsFocused()
         composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().performTextInput(body)
         composeRule.onNodeWithTag("back_button").performClick()
@@ -1479,9 +1491,11 @@ class TextInputTest {
         val suffix = System.currentTimeMillis()
         val firstLine = "Body first title $suffix"
         val body = "$firstLine\nSecond line"
+        val beforeIds = noteIds()
 
         openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_content")
+        val noteId = waitForSingleNewNoteId(beforeIds)
         composeRule.onNodeWithTag("text_note_content")
             .assertIsDisplayed()
             .assertIsFocused()
@@ -1494,6 +1508,7 @@ class TextInputTest {
         composeRule.onNodeWithText(firstLine).performClick()
         composeRule.onNodeWithTag("text_note_read_title").assertTextContains(firstLine)
         composeRule.onNodeWithTag("text_note_read_content").assertTextContains("Second line", substring = true)
+        assertEquals("", noteById(noteId)?.title)
     }
 
     @Test
@@ -1598,32 +1613,35 @@ class TextInputTest {
     }
 
     @Test
-    fun existingTextNoteStaysReadOnlyUntilEditButton() {
+    fun existingTextNoteSupportsReadModeTapToEdit() {
         val suffix = System.currentTimeMillis()
         val title = "Tap edit title $suffix"
         val body = "Tap edit body $suffix"
+        val noteId = createTextNote(title = title, body = body)
 
-        openAddMenuItem("new_text_note_menu_item")
-        showTextNoteMetadata()
-        composeRule.onNodeWithTag("text_note_title").performTextInput(title)
-        composeRule.onNodeWithTag("text_note_content").performTextInput(body)
-        composeRule.onNodeWithTag("back_button").performClick()
-
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithTag("text_note_title").fetchSemanticsNodes().isEmpty() &&
-                composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
-        }
-
-        composeRule.onNodeWithText(title).performClick()
+        waitForTag("note_card_$noteId")
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
         composeRule.onNodeWithTag("text_note_read_mode").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_read_title").performClick()
-        assertTagAbsent("text_note_content")
-        assertTagAbsent("text_note_title")
+        composeRule.onNodeWithTag("text_note_title")
+            .assertIsDisplayed()
+            .assertTextContains(title)
+            .assertIsFocused()
+        composeRule.onNodeWithTag("back_button").performClick()
 
+        waitForTag("note_card_$noteId")
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
         composeRule.onNodeWithTag("text_note_read_mode").assertIsDisplayed()
         composeRule.onNodeWithTag("text_note_read_content").performClick()
-        assertTagAbsent("text_note_content")
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .assertTextContains(body)
+            .assertIsFocused()
+        composeRule.onNodeWithTag("back_button").performClick()
 
+        waitForTag("note_card_$noteId")
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        composeRule.onNodeWithTag("text_note_read_mode").assertIsDisplayed()
         composeRule.onNodeWithTag("edit_note_button").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("text_note_content")
             .assertIsDisplayed()

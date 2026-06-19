@@ -4510,11 +4510,7 @@ private fun TextEditorScreen(
                 actions = {
                     if (currentNote != null && !isEditing) {
                         TextButton(
-                            onClick = {
-                                isFocusWriting = true
-                                isMetadataExpanded = false
-                                isEditing = true
-                            },
+                            onClick = { editContentFromReadMode() },
                             modifier = Modifier.testTag("edit_note_button"),
                         ) {
                             Text(text.edit)
@@ -4551,7 +4547,16 @@ private fun TextEditorScreen(
                             modifier = Modifier.testTag("text_note_overflow_menu"),
                         ) {
                             currentNote?.let { loaded ->
-                                if (!isEditing) {
+                                if (isEditing) {
+                                    DropdownMenuItem(
+                                        text = { Text(text.details) },
+                                        modifier = Modifier.testTag("text_note_edit_details_menu_item"),
+                                        onClick = {
+                                            isMoreMenuExpanded = false
+                                            focusTitleFromEditor()
+                                        },
+                                    )
+                                } else {
                                     DropdownMenuItem(
                                         text = { Text(text.details) },
                                         modifier = Modifier.testTag("text_note_details_menu_item"),
@@ -4692,7 +4697,12 @@ private fun TextEditorScreen(
                         },
                     )
                 }
-                if (isCompactEditor && !isMetadataExpanded) {
+                val hideBlankDraftMetadataSurface = isNewDraft &&
+                    currentNote.reminderAt == null &&
+                    title.isBlank() &&
+                    content.isBlank() &&
+                    textFormattingJson.isBlank()
+                if (isCompactEditor && !isMetadataExpanded && !hideBlankDraftMetadataSurface) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -5024,6 +5034,7 @@ private fun TextEditorScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier
+                                    .clickable { editTitleFromReadMode() }
                                     .testTag("text_note_read_title"),
                             )
                             if (saveStatus == SaveStatus.Failed) {
@@ -5156,6 +5167,8 @@ private fun TextEditorScreen(
                                                 }
                                                 if (tappedUrl != null && !openWebUrl(context, tappedUrl)) {
                                                     Toast.makeText(context, openLinkFailedLabel(appLanguage), Toast.LENGTH_SHORT).show()
+                                                } else if (tappedUrl == null) {
+                                                    editContentFromReadMode(tapOffset)
                                                 }
                                             }
                                         }
