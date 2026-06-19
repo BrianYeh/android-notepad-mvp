@@ -101,6 +101,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -131,6 +132,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
@@ -3812,6 +3814,55 @@ private fun TextEditorScreen(
     val latestTextFormattingJson by rememberUpdatedState(textFormattingJson)
     val findMatches = remember(content, findQuery) { findInNoteMatches(content, findQuery) }
     val currentFindIndex = activeFindIndex.coerceIn(0, (findMatches.size - 1).coerceAtLeast(0))
+    val parsedReadContentLines = remember(content) { readContentLines(content) }
+    val renderCheckboxRows = content.isNotBlank() && parsedReadContentLines.any { it.checkbox != null }
+    val readLineTextLayouts = remember(noteId, content, isEditing, renderCheckboxRows) {
+        mutableStateMapOf<Int, TextLayoutResult>()
+    }
+    val readLineTextTops = remember(noteId, content, isEditing, renderCheckboxRows) {
+        mutableStateMapOf<Int, Float>()
+    }
+    val readLineTextBottoms = remember(noteId, content, isEditing, renderCheckboxRows) {
+        mutableStateMapOf<Int, Float>()
+    }
+    val readLineRowTops = remember(noteId, content, isEditing, renderCheckboxRows) {
+        mutableStateMapOf<Int, Float>()
+    }
+    val readLineRowBottoms = remember(noteId, content, isEditing, renderCheckboxRows) {
+        mutableStateMapOf<Int, Float>()
+    }
+    var readRowLayoutVersion by remember(noteId, content, isEditing, renderCheckboxRows) { mutableStateOf(0) }
+
+    fun recordReadLineTextLayout(lineIndex: Int, layout: TextLayoutResult) {
+        val previous = readLineTextLayouts[lineIndex]
+        readLineTextLayouts[lineIndex] = layout
+        if (
+            previous == null ||
+                previous.layoutInput.text != layout.layoutInput.text ||
+                previous.size != layout.size
+        ) {
+            readRowLayoutVersion += 1
+        }
+    }
+
+    fun recordReadLineBounds(
+        lineIndex: Int,
+        coordinates: LayoutCoordinates,
+        tops: MutableMap<Int, Float>,
+        bottoms: MutableMap<Int, Float>,
+    ) {
+        val top = (
+            coordinates.positionInRoot().y -
+                readViewportTopInRoot +
+                readScrollState.value
+            ).roundToInt().toFloat()
+        val bottom = top + coordinates.size.height
+        if (tops[lineIndex] != top || bottoms[lineIndex] != bottom) {
+            tops[lineIndex] = top
+            bottoms[lineIndex] = bottom
+            readRowLayoutVersion += 1
+        }
+    }
 
     LaunchedEffect(isPrivacyLocked) {
         if (isPrivacyLocked) {
@@ -4053,6 +4104,44 @@ private fun TextEditorScreen(
         }
     }
 
+    LaunchedEffect(noteId, content, isEditing, renderCheckboxRows) {
+        if (renderCheckboxRows || isEditing) {
+            readContentLayout = null
+        }
+        readRowLayoutVersion += 1
+    }
+
+    suspend fun scrollReadRowMatchIntoView(matchRange: IntRange?) {
+        val target = readContentMatchTargetForRange(parsedReadContentLines, matchRange) ?: return
+        val rowTop = readLineRowTops[target.lineIndex] ?: readLineTextTops[target.lineIndex] ?: return
+        val rowBottom = readLineRowBottoms[target.lineIndex] ?: readLineTextBottoms[target.lineIndex] ?: rowTop
+        val matchTop: Float
+        val matchBottom: Float
+        if (target.hasVisibleText) {
+            val layout = readLineTextLayouts[target.lineIndex] ?: return
+            val textTop = readLineTextTops[target.lineIndex] ?: return
+            val textLength = layout.layoutInput.text.text.length
+            if (textLength <= 0) return
+            val startOffset = target.localStart.coerceIn(0, textLength - 1)
+            val endOffset = (target.localEndExclusive - 1).coerceIn(startOffset, textLength - 1)
+            val startBox = layout.getBoundingBox(startOffset)
+            val endBox = layout.getBoundingBox(endOffset)
+            matchTop = textTop + startBox.top
+            matchBottom = textTop + endBox.bottom
+        } else {
+            matchTop = rowTop
+            matchBottom = rowBottom
+        }
+        val scrollTarget = findMatchScrollTarget(
+            currentScroll = readScrollState.value,
+            viewportHeight = readViewportHeight,
+            matchTop = matchTop,
+            matchBottom = matchBottom,
+            maxScroll = readScrollState.maxValue,
+        ) ?: return
+        readScrollState.scrollTo(scrollTarget)
+    }
+
     fun selectFindMatch(index: Int) {
         val nextIndex = index.normalizeFindMatchIndex(findMatches.size)
         if (nextIndex < 0) return
@@ -4073,12 +4162,16 @@ private fun TextEditorScreen(
                     contentTopPx = editContentPaddingPx,
                 )
             } else {
-                readScrollState.scrollMatchIntoView(
-                    textLayoutResult = readContentLayout,
-                    matchRange = range,
-                    viewportHeight = readViewportHeight,
-                    contentTopPx = readContentTopInScroll,
-                )
+                if (renderCheckboxRows) {
+                    scrollReadRowMatchIntoView(range)
+                } else {
+                    readScrollState.scrollMatchIntoView(
+                        textLayoutResult = readContentLayout,
+                        matchRange = range,
+                        viewportHeight = readViewportHeight,
+                        contentTopPx = readContentTopInScroll,
+                    )
+                }
             }
         }
     }
@@ -4127,17 +4220,23 @@ private fun TextEditorScreen(
         currentFindIndex,
         findMatches,
         readContentLayout,
+        readRowLayoutVersion,
+        renderCheckboxRows,
         readViewportHeight,
         readContentTopInScroll,
         readScrollState.maxValue,
     ) {
         if (isEditing || !isFindVisible) return@LaunchedEffect
-        readScrollState.scrollMatchIntoView(
-            textLayoutResult = readContentLayout,
-            matchRange = findMatches.getOrNull(currentFindIndex),
-            viewportHeight = readViewportHeight,
-            contentTopPx = readContentTopInScroll,
-        )
+        if (renderCheckboxRows) {
+            scrollReadRowMatchIntoView(findMatches.getOrNull(currentFindIndex))
+        } else {
+            readScrollState.scrollMatchIntoView(
+                textLayoutResult = readContentLayout,
+                matchRange = findMatches.getOrNull(currentFindIndex),
+                viewportHeight = readViewportHeight,
+                contentTopPx = readContentTopInScroll,
+            )
+        }
     }
 
     fun saveCurrentTextNoteThen(onSaved: (NoteEntity) -> Unit) {
@@ -4427,16 +4526,19 @@ private fun TextEditorScreen(
         titleFocusRequest += 1
     }
 
-    fun editContentFromReadMode(tapOffset: Offset? = null) {
-        val tappedTextOffset = tapOffset?.let { readContentLayout?.getOffsetForPosition(it) }
-        if (tappedTextOffset != null) {
+    fun editContentFromReadModeAtOffset(offset: Int?) {
+        if (offset != null) {
             contentField = contentField.copy(
-                selection = TextRange(tappedTextOffset.coerceIn(0, contentField.text.length)),
+                selection = TextRange(offset.coerceIn(0, contentField.text.length)),
             )
         }
         isFocusWriting = true
         isMetadataExpanded = false
         isEditing = true
+    }
+
+    fun editContentFromReadMode(tapOffset: Offset? = null) {
+        editContentFromReadModeAtOffset(tapOffset?.let { readContentLayout?.getOffsetForPosition(it) })
     }
 
     LaunchedEffect(isEditing, isFocusWriting, titleFocusRequest) {
@@ -5077,23 +5179,46 @@ private fun TextEditorScreen(
                             if (saveStatus == SaveStatus.Failed || readReminderAt != null) {
                                 HorizontalDivider()
                             }
-                            val readContentText = findHighlightedLinkedText(
-                                value = content.ifBlank { text.content },
-                                query = findQuery,
-                                activeMatchIndex = currentFindIndex,
-                                formattingRanges = if (content.isBlank()) emptyList() else formatRanges,
-                                matchColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                activeMatchColor = MaterialTheme.colorScheme.primaryContainer,
-                                formatHighlightColor = Color(0xFFFFF59D),
-                                linkColor = MaterialTheme.colorScheme.primary,
-                                linkifyUrls = content.isNotBlank(),
+                            val readBodyStyle = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = editorFontSize.fontSizeSp.sp,
+                                lineHeight = (editorFontSize.fontSizeSp + 10).sp,
                             )
-                            val readLines = content.lines()
-                            val renderCheckboxRows = content.isNotBlank() &&
-                                findQuery.isBlank() &&
-                                formatRanges.isEmpty() &&
-                                content.webUrlRanges().isEmpty() &&
-                                readLines.any { parseMarkdownCheckboxLine(it) != null }
+                            val readMatchColor = MaterialTheme.colorScheme.tertiaryContainer
+                            val readActiveMatchColor = MaterialTheme.colorScheme.primaryContainer
+                            val readLinkColor = MaterialTheme.colorScheme.primary
+                            val readFormatHighlightColor = Color(0xFFFFF59D)
+
+                            fun handleReadSegmentTap(
+                                line: ReadContentLine,
+                                annotatedText: AnnotatedString,
+                                tapOffset: Offset,
+                            ) {
+                                val localOffset = readLineTextLayouts[line.lineIndex]?.getOffsetForPosition(tapOffset)
+                                val tappedUrl = localOffset?.let(annotatedText::webUrlAt)
+                                if (tappedUrl != null && !openWebUrl(context, tappedUrl)) {
+                                    Toast.makeText(context, openLinkFailedLabel(appLanguage), Toast.LENGTH_SHORT).show()
+                                } else if (tappedUrl == null) {
+                                    editContentFromReadModeAtOffset(line.rawOffsetForLocalOffset(localOffset ?: 0))
+                                }
+                            }
+
+                            fun readSegmentText(line: ReadContentLine): AnnotatedString {
+                                return findHighlightedLinkedTextSegment(
+                                    value = line.displayText,
+                                    absoluteStart = line.displayStart,
+                                    absoluteEndExclusive = line.endExclusive,
+                                    contentLength = content.length,
+                                    globalMatches = findMatches,
+                                    activeMatchIndex = currentFindIndex,
+                                    formattingRanges = formatRanges,
+                                    matchColor = readMatchColor,
+                                    activeMatchColor = readActiveMatchColor,
+                                    formatHighlightColor = readFormatHighlightColor,
+                                    linkColor = readLinkColor,
+                                    linkifyUrls = true,
+                                )
+                            }
+
                             if (renderCheckboxRows) {
                                 Column(
                                     modifier = Modifier
@@ -5107,48 +5232,104 @@ private fun TextEditorScreen(
                                         .testTag("text_note_read_content"),
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    readLines.forEachIndexed { lineIndex, line ->
-                                        val checkbox = parseMarkdownCheckboxLine(line)
+                                    parsedReadContentLines.forEach { line ->
+                                        val checkbox = line.checkbox
+                                        val annotatedLineText = readSegmentText(line)
+                                        val layoutText = if (annotatedLineText.length == 0) {
+                                            AnnotatedString(" ")
+                                        } else {
+                                            annotatedLineText
+                                        }
                                         if (checkbox == null) {
                                             Text(
-                                                text = line,
-                                                style = MaterialTheme.typography.bodyLarge.copy(
-                                                    fontSize = editorFontSize.fontSizeSp.sp,
-                                                    lineHeight = (editorFontSize.fontSizeSp + 10).sp,
-                                                ),
+                                                text = layoutText,
+                                                style = readBodyStyle,
                                                 color = MaterialTheme.colorScheme.onSurface,
+                                                onTextLayout = { recordReadLineTextLayout(line.lineIndex, it) },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 2.dp)
+                                                    .pointerInput(line.lineIndex, annotatedLineText, contentField.text) {
+                                                        detectTapGestures { tapOffset ->
+                                                            handleReadSegmentTap(line, annotatedLineText, tapOffset)
+                                                        }
+                                                    }
+                                                    .onGloballyPositioned { coordinates ->
+                                                        recordReadLineBounds(
+                                                            line.lineIndex,
+                                                            coordinates,
+                                                            readLineTextTops,
+                                                            readLineTextBottoms,
+                                                        )
+                                                        recordReadLineBounds(
+                                                            line.lineIndex,
+                                                            coordinates,
+                                                            readLineRowTops,
+                                                            readLineRowBottoms,
+                                                        )
+                                                    },
                                             )
                                         } else {
                                             Row(
-                                                modifier = Modifier.fillMaxWidth(),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .onGloballyPositioned { coordinates ->
+                                                        recordReadLineBounds(
+                                                            line.lineIndex,
+                                                            coordinates,
+                                                            readLineRowTops,
+                                                            readLineRowBottoms,
+                                                        )
+                                                    },
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                             ) {
                                                 Checkbox(
                                                     checked = checkbox.checked,
-                                                    onCheckedChange = { toggleReadModeCheckbox(lineIndex) },
-                                                    modifier = Modifier.testTag("text_note_read_checkbox_$lineIndex"),
+                                                    onCheckedChange = { toggleReadModeCheckbox(line.lineIndex) },
+                                                    modifier = Modifier.testTag("text_note_read_checkbox_${line.lineIndex}"),
                                                 )
                                                 Text(
-                                                    text = checkbox.label,
-                                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                                        fontSize = editorFontSize.fontSizeSp.sp,
-                                                        lineHeight = (editorFontSize.fontSizeSp + 10).sp,
-                                                    ),
+                                                    text = layoutText,
+                                                    style = readBodyStyle,
                                                     color = MaterialTheme.colorScheme.onSurface,
-                                                    modifier = Modifier.weight(1f),
+                                                    onTextLayout = { recordReadLineTextLayout(line.lineIndex, it) },
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .padding(vertical = 2.dp)
+                                                        .pointerInput(line.lineIndex, annotatedLineText, contentField.text) {
+                                                            detectTapGestures { tapOffset ->
+                                                                handleReadSegmentTap(line, annotatedLineText, tapOffset)
+                                                            }
+                                                        }
+                                                        .onGloballyPositioned { coordinates ->
+                                                            recordReadLineBounds(
+                                                                line.lineIndex,
+                                                                coordinates,
+                                                                readLineTextTops,
+                                                                readLineTextBottoms,
+                                                            )
+                                                        },
                                                 )
                                             }
                                         }
                                     }
                                 }
                             } else {
+                                val readContentText = findHighlightedLinkedText(
+                                    value = content.ifBlank { text.content },
+                                    query = findQuery,
+                                    activeMatchIndex = currentFindIndex,
+                                    formattingRanges = if (content.isBlank()) emptyList() else formatRanges,
+                                    matchColor = readMatchColor,
+                                    activeMatchColor = readActiveMatchColor,
+                                    formatHighlightColor = readFormatHighlightColor,
+                                    linkColor = readLinkColor,
+                                    linkifyUrls = content.isNotBlank(),
+                                )
                                 Text(
                                     text = readContentText,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = editorFontSize.fontSizeSp.sp,
-                                        lineHeight = (editorFontSize.fontSizeSp + 10).sp,
-                                    ),
+                                    style = readBodyStyle,
                                     color = if (content.isBlank()) {
                                         MaterialTheme.colorScheme.onSurfaceVariant
                                     } else {
@@ -7942,9 +8123,42 @@ private fun isBlankDraftValues(
     return title.isBlank() && content.isBlank() && formatting.isBlank()
 }
 
-private data class MarkdownCheckboxLine(
+const val MARKDOWN_CHECKBOX_MARKER_LENGTH = 6
+
+data class MarkdownCheckboxLine(
     val checked: Boolean,
     val label: String,
+)
+
+data class ReadContentLine(
+    val lineIndex: Int,
+    val start: Int,
+    val endExclusive: Int,
+    val text: String,
+    val checkbox: MarkdownCheckboxLine?,
+) {
+    val labelStart: Int
+        get() = if (checkbox == null) start else (start + MARKDOWN_CHECKBOX_MARKER_LENGTH).coerceAtMost(endExclusive)
+    val displayStart: Int
+        get() = if (checkbox == null) start else labelStart
+    val displayEndExclusive: Int
+        get() = endExclusive
+    val displayText: String
+        get() = checkbox?.label ?: text
+    val hasVisibleText: Boolean
+        get() = displayStart < displayEndExclusive
+
+    fun rawOffsetForLocalOffset(localOffset: Int): Int {
+        val safeLocalOffset = localOffset.coerceIn(0, displayText.length)
+        return (displayStart + safeLocalOffset).coerceIn(start, endExclusive)
+    }
+}
+
+data class ReadContentMatchTarget(
+    val lineIndex: Int,
+    val localStart: Int,
+    val localEndExclusive: Int,
+    val hasVisibleText: Boolean,
 )
 
 private fun parseMarkdownCheckboxLine(line: String): MarkdownCheckboxLine? {
@@ -7956,16 +8170,111 @@ private fun parseMarkdownCheckboxLine(line: String): MarkdownCheckboxLine? {
     }
 }
 
-private fun toggleMarkdownCheckboxLine(content: String, lineIndex: Int): String? {
-    val lines = content.lines().toMutableList()
-    val line = lines.getOrNull(lineIndex) ?: return null
-    val checkbox = parseMarkdownCheckboxLine(line) ?: return null
-    lines[lineIndex] = if (checkbox.checked) {
-        "- [ ] ${checkbox.label}"
-    } else {
-        "- [x] ${checkbox.label}"
+fun readContentLines(content: String): List<ReadContentLine> {
+    val lines = mutableListOf<ReadContentLine>()
+    var lineStart = 0
+    var lineIndex = 0
+    var index = 0
+    fun appendLine(endExclusive: Int) {
+        val lineText = content.substring(lineStart, endExclusive)
+        lines += ReadContentLine(
+            lineIndex = lineIndex,
+            start = lineStart,
+            endExclusive = endExclusive,
+            text = lineText,
+            checkbox = parseMarkdownCheckboxLine(lineText),
+        )
+        lineIndex += 1
     }
-    return lines.joinToString("\n")
+
+    while (index < content.length) {
+        when (content[index]) {
+            '\r' -> {
+                appendLine(index)
+                index += if (content.getOrNull(index + 1) == '\n') 2 else 1
+                lineStart = index
+            }
+            '\n' -> {
+                appendLine(index)
+                index += 1
+                lineStart = index
+            }
+            else -> index += 1
+        }
+    }
+    appendLine(content.length)
+    return lines
+}
+
+fun cropTextFormatRangesForSegment(
+    ranges: List<TextFormatRange>,
+    contentLength: Int,
+    segmentStart: Int,
+    segmentEndExclusive: Int,
+    displayedStart: Int = segmentStart,
+): List<TextFormatRange> {
+    val safeContentLength = contentLength.coerceAtLeast(0)
+    val safeSegmentStart = segmentStart.coerceIn(0, safeContentLength)
+    val safeSegmentEnd = segmentEndExclusive.coerceIn(safeSegmentStart, safeContentLength)
+    val localBase = displayedStart.coerceIn(0, safeContentLength)
+    if (safeSegmentStart >= safeSegmentEnd) return emptyList()
+
+    val croppedRanges = TextFormattingJson.sanitize(ranges, safeContentLength).mapNotNull { range ->
+        if (!range.overlaps(safeSegmentStart, safeSegmentEnd)) return@mapNotNull null
+        val croppedStart = max(range.start, safeSegmentStart)
+        val croppedEnd = min(range.end, safeSegmentEnd)
+        if (croppedStart >= croppedEnd) {
+            null
+        } else {
+            range.copy(
+                start = croppedStart - localBase,
+                end = croppedEnd - localBase,
+            )
+        }
+    }
+    return TextFormattingJson.sanitize(croppedRanges, (safeSegmentEnd - localBase).coerceAtLeast(0))
+}
+
+fun readContentMatchTargetForRange(
+    lines: List<ReadContentLine>,
+    matchRange: IntRange?,
+): ReadContentMatchTarget? {
+    val range = matchRange ?: return null
+    if (lines.isEmpty()) return null
+    val matchStart = range.first
+    val matchEndExclusive = range.last + 1
+    val line = lines.firstOrNull { matchStart >= it.start && matchStart <= it.endExclusive }
+        ?: lines.lastOrNull { matchStart >= it.start }
+        ?: lines.first()
+    val visibleStart = max(matchStart, line.displayStart)
+    val visibleEndExclusive = min(matchEndExclusive, line.displayEndExclusive)
+    return if (visibleStart < visibleEndExclusive) {
+        ReadContentMatchTarget(
+            lineIndex = line.lineIndex,
+            localStart = visibleStart - line.displayStart,
+            localEndExclusive = visibleEndExclusive - line.displayStart,
+            hasVisibleText = true,
+        )
+    } else {
+        ReadContentMatchTarget(
+            lineIndex = line.lineIndex,
+            localStart = 0,
+            localEndExclusive = 0,
+            hasVisibleText = false,
+        )
+    }
+}
+
+private fun toggleMarkdownCheckboxLine(content: String, lineIndex: Int): String? {
+    val line = readContentLines(content).getOrNull(lineIndex) ?: return null
+    val checkbox = line.checkbox ?: return null
+    val replacementMarker = if (checkbox.checked) "- [ ] " else "- [x] "
+    val markerEnd = line.start + MARKDOWN_CHECKBOX_MARKER_LENGTH
+    return buildString(content.length) {
+        append(content, 0, line.start)
+        append(replacementMarker)
+        append(content, markerEnd, content.length)
+    }
 }
 
 private fun continuedListValue(oldValue: TextFieldValue, newValue: TextFieldValue): TextFieldValue {
@@ -8152,6 +8461,93 @@ fun findHighlightedLinkedText(
                 start = range.first,
                 end = range.last + 1,
             )
+        }
+        urls.forEach { urlRange ->
+            addStyle(
+                SpanStyle(
+                    color = linkColor,
+                    textDecoration = TextDecoration.Underline,
+                ),
+                start = urlRange.range.first,
+                end = urlRange.range.last + 1,
+            )
+            addStringAnnotation(
+                tag = WEB_URL_STRING_ANNOTATION_TAG,
+                annotation = urlRange.normalizedUrl,
+                start = urlRange.range.first,
+                end = urlRange.range.last + 1,
+            )
+        }
+    }
+}
+
+fun findHighlightedLinkedTextSegment(
+    value: String,
+    absoluteStart: Int,
+    absoluteEndExclusive: Int,
+    contentLength: Int,
+    globalMatches: List<IntRange>,
+    activeMatchIndex: Int,
+    formattingRanges: List<TextFormatRange> = emptyList(),
+    matchColor: Color,
+    activeMatchColor: Color,
+    formatHighlightColor: Color = Color.Yellow,
+    linkColor: Color,
+    linkifyUrls: Boolean = true,
+): AnnotatedString {
+    val urls = if (linkifyUrls) value.webUrlRanges() else emptyList()
+    val croppedFormats = TextFormattingJson.sanitize(
+        cropTextFormatRangesForSegment(
+            ranges = formattingRanges,
+            contentLength = contentLength,
+            segmentStart = absoluteStart,
+            segmentEndExclusive = absoluteEndExclusive,
+            displayedStart = absoluteStart,
+        ),
+        value.length,
+    )
+    val activeIndex = activeMatchIndex.normalizeFindMatchIndex(globalMatches.size)
+    val hasVisibleMatches = globalMatches.any { range ->
+        val localStart = max(range.first, absoluteStart) - absoluteStart
+        val localEndExclusive = min(range.last + 1, absoluteEndExclusive) - absoluteStart
+        localStart.coerceIn(0, value.length) < localEndExclusive.coerceIn(0, value.length)
+    }
+    if (urls.isEmpty() && croppedFormats.isEmpty() && !hasVisibleMatches) return AnnotatedString(value)
+
+    return buildAnnotatedString {
+        append(value)
+        croppedFormats.forEach { formatRange ->
+            addStyle(
+                style = formatRange.spanStyle(
+                    linkColor = linkColor,
+                    highlightColor = formatHighlightColor,
+                ),
+                start = formatRange.start,
+                end = formatRange.end,
+            )
+            if (formatRange.type == TextFormatType.Link && !formatRange.url.isNullOrBlank()) {
+                addStringAnnotation(
+                    tag = WEB_URL_STRING_ANNOTATION_TAG,
+                    annotation = formatRange.url,
+                    start = formatRange.start,
+                    end = formatRange.end,
+                )
+            }
+        }
+        globalMatches.forEachIndexed { index, range ->
+            val localStart = (max(range.first, absoluteStart) - absoluteStart).coerceIn(0, value.length)
+            val localEndExclusive = (min(range.last + 1, absoluteEndExclusive) - absoluteStart)
+                .coerceIn(localStart, value.length)
+            if (localStart < localEndExclusive) {
+                addStyle(
+                    SpanStyle(
+                        background = if (index == activeIndex) activeMatchColor else matchColor,
+                        fontWeight = if (index == activeIndex) FontWeight.Bold else null,
+                    ),
+                    start = localStart,
+                    end = localEndExclusive,
+                )
+            }
         }
         urls.forEach { urlRange ->
             addStyle(

@@ -20,6 +20,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
@@ -44,16 +45,20 @@ import com.example.notepad.data.TextFormatType
 import com.example.notepad.data.TextFormattingJson
 import com.example.notepad.debug.DebugPremiumAccess
 import com.example.notepad.ui.cursorScrollTarget
+import com.example.notepad.ui.cropTextFormatRangesForSegment
 import com.example.notepad.ui.drawingExportCanvasSizePx
 import com.example.notepad.ui.drawingRequiredCanvasHeightPx
 import com.example.notepad.ui.drawingViewportScale
 import com.example.notepad.ui.findHighlightedLinkedText
+import com.example.notepad.ui.findHighlightedLinkedTextSegment
 import com.example.notepad.ui.findMatchScrollTarget
 import com.example.notepad.ui.findInNoteMatches
 import com.example.notepad.ui.formatFindMatchStatus
 import com.example.notepad.ui.highlightRanges
 import com.example.notepad.ui.nextFindMatchIndex
 import com.example.notepad.ui.previousFindMatchIndex
+import com.example.notepad.ui.readContentLines
+import com.example.notepad.ui.readContentMatchTargetForRange
 import com.example.notepad.ui.webUrlAt
 import com.example.notepad.ui.webUrlRanges
 import com.example.notepad.debug.DebugSaveFailure
@@ -148,6 +153,11 @@ class TextInputTest {
             composeRule.onNodeWithTag("filter_panel_toggle").performClick()
             waitForTag("recently_updated_chip")
         }
+    }
+
+    private fun submitSearchImeAction() {
+        composeRule.onNodeWithTag("note_search_input").performImeAction()
+        composeRule.waitForIdle()
     }
 
     private fun selectReminderFilter(filterName: String) {
@@ -354,13 +364,14 @@ class TextInputTest {
         reminderAt: Long? = null,
         reminderRepeat: String = ReminderRepeat.None.code,
         isPinned: Boolean = false,
+        textFormattingJson: String? = null,
     ): Long {
         return runBlocking {
             withContext(Dispatchers.IO) {
                 val repository = NotepadRepository(NotepadDatabase.getInstance(composeRule.activity).notepadDao())
                 repository.ensureDefaultFolder()
                 val noteId = repository.createTextNote(folderId)
-                repository.saveTextNote(noteId, title, body)
+                repository.saveTextNote(noteId, title, body, textFormattingJson)
                 if (isPinned) {
                     repository.setNotePinned(noteId, true)
                 }
@@ -1011,6 +1022,10 @@ class TextInputTest {
         composeRule.onNodeWithTag("checklist_note_title")
             .assertIsDisplayed()
             .assertTextContains(title)
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            tagCount("add_note_button") > 0 && tagCount("checklist_editor") == 0
+        }
     }
 
     @Test
@@ -1208,6 +1223,10 @@ class TextInputTest {
             composeRule.onAllNodesWithTag("checklist_item_text").fetchSemanticsNodes().size == 2
         }
         assertEquals(2, composeRule.onAllNodesWithTag("checklist_item_text").fetchSemanticsNodes().size)
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            tagCount("add_note_button") > 0 && tagCount("checklist_editor") == 0
+        }
     }
 
     @Test
@@ -1364,6 +1383,7 @@ class TextInputTest {
 
         openSearchPanel()
         composeRule.onNodeWithTag("note_search_input").performTextInput(suffix.toString())
+        submitSearchImeAction()
         openFilterPanel()
 
         selectReminderFilter("WithReminder")
@@ -1410,6 +1430,7 @@ class TextInputTest {
 
         openSearchPanel()
         composeRule.onNodeWithTag("note_search_input").performTextReplacement(title)
+        submitSearchImeAction()
         openFilterPanel()
         selectReminderFilter("All")
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -1484,6 +1505,10 @@ class TextInputTest {
             .assertIsDisplayed()
             .assertTextContains(body)
             .assertIsFocused()
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            tagCount("add_note_button") > 0 && tagCount("text_note_content") == 0
+        }
     }
 
     @Test
@@ -1715,6 +1740,160 @@ class TextInputTest {
     }
 
     @Test
+    fun readContentLinesPreserveOffsetsAndTrailingBlankLines() {
+        val content = "intro\n- [ ] task\n\n- [X] done\n"
+
+        val lines = readContentLines(content)
+
+        assertEquals(5, lines.size)
+        assertEquals(0, lines[0].lineIndex)
+        assertEquals(0, lines[0].start)
+        assertEquals("intro".length, lines[0].endExclusive)
+        assertNull(lines[0].checkbox)
+
+        assertEquals(1, lines[1].lineIndex)
+        assertEquals(content.indexOf("- [ ] task"), lines[1].start)
+        assertEquals(lines[1].start + "- [ ] task".length, lines[1].endExclusive)
+        assertEquals(false, lines[1].checkbox?.checked)
+        assertEquals("task", lines[1].checkbox?.label)
+        assertEquals(lines[1].start + 6, lines[1].labelStart)
+        assertEquals("task", lines[1].displayText)
+
+        assertEquals(2, lines[2].lineIndex)
+        assertEquals(lines[2].start, lines[2].endExclusive)
+        assertNull(lines[2].checkbox)
+
+        assertEquals(true, lines[3].checkbox?.checked)
+        assertEquals("done", lines[3].displayText)
+        assertEquals(content.length, lines[4].start)
+        assertEquals(content.length, lines[4].endExclusive)
+    }
+
+    @Test
+    fun readContentLinesTreatCrLfAndCrAsLineDelimiters() {
+        val content = "intro\r\n- [ ] task\rplain\r"
+
+        val lines = readContentLines(content)
+
+        assertEquals(4, lines.size)
+        assertEquals("intro", lines[0].text)
+        assertEquals(0, lines[0].start)
+        assertEquals(5, lines[0].endExclusive)
+        assertEquals("- [ ] task", lines[1].text)
+        assertEquals(content.indexOf("- [ ] task"), lines[1].start)
+        assertEquals(lines[1].start + "- [ ] task".length, lines[1].endExclusive)
+        assertEquals("task", lines[1].displayText)
+        assertEquals("plain", lines[2].text)
+        assertEquals(content.indexOf("plain"), lines[2].start)
+        assertEquals(content.indexOf("plain") + "plain".length, lines[2].endExclusive)
+        assertEquals(content.length, lines[3].start)
+        assertEquals(content.length, lines[3].endExclusive)
+    }
+
+    @Test
+    fun cropTextFormatRangesForSegmentKeepsVisibleOverlap() {
+        val content = "- [ ] formatted label"
+        val line = readContentLines(content).single()
+        val cropped = cropTextFormatRangesForSegment(
+            ranges = listOf(
+                TextFormatRange(1, line.labelStart + 4, TextFormatType.Highlight),
+                TextFormatRange(0, line.labelStart - 1, TextFormatType.Bold),
+                TextFormatRange(line.labelStart + 10, line.endExclusive, TextFormatType.Link, " https://example.com "),
+            ),
+            contentLength = content.length,
+            segmentStart = line.labelStart,
+            segmentEndExclusive = line.endExclusive,
+            displayedStart = line.labelStart,
+        )
+
+        assertEquals(2, cropped.size)
+        assertEquals(TextFormatType.Highlight, cropped[0].type)
+        assertEquals(0, cropped[0].start)
+        assertEquals(4, cropped[0].end)
+        assertEquals(TextFormatType.Link, cropped[1].type)
+        assertEquals(10, cropped[1].start)
+        assertEquals(line.endExclusive - line.labelStart, cropped[1].end)
+        assertEquals("https://example.com", cropped[1].url)
+    }
+
+    @Test
+    fun findHighlightedLinkedTextSegmentUsesGlobalActiveMatch() {
+        val content = "hit before\n- [ ] hit label"
+        val line = readContentLines(content)[1]
+        val matches = findInNoteMatches(content, "hit")
+        val annotated = findHighlightedLinkedTextSegment(
+            value = line.displayText,
+            absoluteStart = line.displayStart,
+            absoluteEndExclusive = line.endExclusive,
+            contentLength = content.length,
+            globalMatches = matches,
+            activeMatchIndex = 1,
+            formattingRanges = emptyList(),
+            matchColor = Color.Yellow,
+            activeMatchColor = Color.Green,
+            linkColor = Color.Blue,
+            linkifyUrls = false,
+        )
+
+        val activeStyle = annotated.spanStyles.first { it.start == 0 && it.end == 3 }.item
+        assertEquals(Color.Green, activeStyle.background)
+        assertEquals(androidx.compose.ui.text.font.FontWeight.Bold, activeStyle.fontWeight)
+    }
+
+    @Test
+    fun segmentAnnotatedTextKeepsExplicitAndAutoUrlAnnotations() {
+        val content = "- [ ] linked docs and example.com"
+        val line = readContentLines(content).single()
+        val explicitStart = content.indexOf("linked")
+        val autoLocalStart = line.displayText.indexOf("example.com")
+        val annotated = findHighlightedLinkedTextSegment(
+            value = line.displayText,
+            absoluteStart = line.displayStart,
+            absoluteEndExclusive = line.endExclusive,
+            contentLength = content.length,
+            globalMatches = emptyList(),
+            activeMatchIndex = 0,
+            formattingRanges = listOf(
+                TextFormatRange(explicitStart, explicitStart + "linked".length, TextFormatType.Link, "https://example.com/docs"),
+            ),
+            matchColor = Color.Yellow,
+            activeMatchColor = Color.Green,
+            linkColor = Color.Blue,
+        )
+
+        assertEquals("https://example.com/docs", annotated.webUrlAt(0))
+        assertEquals("https://example.com", annotated.webUrlAt(autoLocalStart))
+        assertNull(annotated.webUrlAt(line.displayText.indexOf("and")))
+    }
+
+    @Test
+    fun markerOnlyFindMatchTargetsRowWithoutVisibleFragment() {
+        val content = "- [ ] task"
+        val lines = readContentLines(content)
+        val matches = findInNoteMatches(content, "[ ]")
+        val target = readContentMatchTargetForRange(lines, matches.single())
+        val annotated = findHighlightedLinkedTextSegment(
+            value = lines.single().displayText,
+            absoluteStart = lines.single().displayStart,
+            absoluteEndExclusive = lines.single().endExclusive,
+            contentLength = content.length,
+            globalMatches = matches,
+            activeMatchIndex = 0,
+            formattingRanges = emptyList(),
+            matchColor = Color.Yellow,
+            activeMatchColor = Color.Green,
+            linkColor = Color.Blue,
+            linkifyUrls = false,
+        )
+
+        assertEquals(0, target?.lineIndex)
+        assertEquals(false, target?.hasVisibleText)
+        assertEquals(0, target?.localStart)
+        assertEquals(0, target?.localEndExclusive)
+        assertTrue(annotated.spanStyles.isEmpty())
+    }
+
+    @Test
     fun headingFormattingUsesRelativeFontScale() {
         val heading1Content = "Heading body"
         val heading1 = findHighlightedLinkedText(
@@ -1750,36 +1929,36 @@ class TextInputTest {
         val firstTitle = "Multi select first $suffix"
         val secondTitle = "Multi select second $suffix"
 
+        val beforeFirstIds = noteIds()
         openAddMenuItem("new_text_note_menu_item")
+        val firstNoteId = waitForSingleNewNoteId(beforeFirstIds)
         showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(firstTitle)
         composeRule.onNodeWithTag("back_button").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithText(firstTitle).fetchSemanticsNodes().isNotEmpty()
+            tagCount("note_card_$firstNoteId") > 0
         }
 
+        val beforeSecondIds = noteIds()
         openAddMenuItem("new_text_note_menu_item")
+        val secondNoteId = waitForSingleNewNoteId(beforeSecondIds)
         showTextNoteMetadata()
         composeRule.onNodeWithTag("text_note_title").performTextInput(secondTitle)
         composeRule.onNodeWithTag("back_button").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithText(secondTitle).fetchSemanticsNodes().isNotEmpty()
+            tagCount("note_card_$secondNoteId") > 0
         }
 
-        composeRule.onNodeWithText(firstTitle).performTouchInput {
-            down(center)
-            advanceEventTime(1_200)
-            up()
-        }
+        composeRule.onNodeWithTag("note_card_$firstNoteId").assertIsDisplayed().performTouchInput { longClick() }
         composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("1 selected")
-        composeRule.onNodeWithText(secondTitle).performClick()
+        composeRule.onNodeWithTag("note_card_$secondNoteId").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("2 selected")
         composeRule.onNodeWithTag("delete_selected_notes_button").performClick()
         composeRule.onNodeWithTag("confirm_dialog_confirm_button").performClick()
 
         composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithText(firstTitle).fetchSemanticsNodes().isEmpty() &&
-                composeRule.onAllNodesWithText(secondTitle).fetchSemanticsNodes().isEmpty()
+            tagCount("note_card_$firstNoteId") == 0 &&
+                tagCount("note_card_$secondNoteId") == 0
         }
     }
 
@@ -1905,6 +2084,167 @@ class TextInputTest {
             .performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             noteTextContent(noteId).orEmpty().contains("- [x] Retry task")
+        }
+    }
+
+    @Test
+    fun mixedTextNoteCheckboxRowsRenderWithPlainBlankUrlAndTrailingText() {
+        val suffix = System.currentTimeMillis()
+        val title = "Mixed markdown checkbox $suffix"
+        val body = listOf(
+            "Plain intro $suffix",
+            "",
+            "- [ ] Task $suffix",
+            "Visit https://example.com/$suffix",
+            "- [x] Done $suffix",
+            "Trailing text $suffix",
+            "",
+        ).joinToString("\n")
+        val noteId = createTextNote(title = title, body = body)
+
+        waitForTag("note_card_$noteId")
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        waitForTag("text_note_read_content")
+
+        composeRule.onNodeWithTag("text_note_read_content")
+            .assertTextContains("Plain intro $suffix", substring = true)
+            .assertTextContains("Task $suffix", substring = true)
+            .assertTextContains("Visit https://example.com/$suffix", substring = true)
+            .assertTextContains("Trailing text $suffix", substring = true)
+        composeRule.onNodeWithTag("text_note_read_checkbox_2").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("text_note_read_checkbox_4").assertIsDisplayed()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteTextContent(noteId).orEmpty().contains("- [x] Task $suffix")
+        }
+        val updatedContent = noteTextContent(noteId).orEmpty()
+        assertTrue(updatedContent.contains("Plain intro $suffix"))
+        assertTrue(updatedContent.contains("Visit https://example.com/$suffix"))
+        assertTrue(updatedContent.endsWith("\n"))
+    }
+
+    @Test
+    fun findInNoteScrollsWhileMixedCheckboxRowsAreRendered() {
+        val suffix = System.currentTimeMillis()
+        val title = "Row find markdown $suffix"
+        val filler = (1..80).joinToString(separator = "\n") { index ->
+            "filler row $index keeps row mode scrolling"
+        }
+        val body = "- [ ] visible checkbox $suffix\nneedle top\n$filler\nneedle bottom"
+        val noteId = createTextNote(title = title, body = body)
+
+        waitForTag("note_card_$noteId")
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        composeRule.onNodeWithTag("find_in_note_button").performClick()
+        composeRule.onNodeWithTag("find_in_note_input").performTextInput("needle")
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/2")
+        composeRule.onNodeWithTag("text_note_read_checkbox_0").assertIsDisplayed()
+        val initialReadScroll = verticalScrollValue("text_note_read_scroll", useUnmergedTree = true)
+
+        composeRule.onNodeWithTag("next_find_match_button").performClick()
+        composeRule.onNodeWithTag("find_match_status").assertTextEquals("2/2")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            verticalScrollValue("text_note_read_scroll", useUnmergedTree = true) > initialReadScroll + 20f
+        }
+    }
+
+    @Test
+    fun mixedCheckboxRowsStillRenderWhenFormattingExists() {
+        val suffix = System.currentTimeMillis()
+        val title = "Mixed formatting checkbox $suffix"
+        val body = "- [ ] Bold task $suffix\nPlain $suffix"
+        val boldStart = body.indexOf("Bold")
+        val formattingJson = TextFormattingJson.encode(
+            listOf(TextFormatRange(boldStart, boldStart + "Bold".length, TextFormatType.Bold)),
+        )
+        val noteId = createTextNote(
+            title = title,
+            body = body,
+            textFormattingJson = formattingJson,
+        )
+
+        waitForTag("note_card_$noteId")
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        composeRule.onNodeWithTag("text_note_read_checkbox_0").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_note_read_content")
+            .assertTextContains("Bold task $suffix", substring = true)
+    }
+
+    @Test
+    fun readModeCheckboxTogglePreservesCrLfCrContentAndFormattingOffsets() {
+        val suffix = System.currentTimeMillis()
+        val title = "CR checkbox formatting $suffix"
+        val formattedText = "Formatted tail $suffix"
+        val body = "Intro $suffix\r\n- [ ] Task $suffix\r$formattedText"
+        val formattedStart = body.indexOf(formattedText)
+        val expectedRange = TextFormatRange(
+            formattedStart,
+            formattedStart + "Formatted".length,
+            TextFormatType.Bold,
+        )
+        val noteId = createTextNote(
+            title = title,
+            body = body,
+            textFormattingJson = TextFormattingJson.encode(listOf(expectedRange)),
+        )
+        val expectedContent = body.replace("- [ ] Task $suffix", "- [x] Task $suffix")
+
+        waitForTag("note_card_$noteId")
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        composeRule.onNodeWithTag("text_note_read_checkbox_1").assertIsDisplayed().performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteById(noteId)?.textContent == expectedContent
+        }
+        val savedNote = noteById(noteId)
+        val savedRanges = TextFormattingJson.decode(
+            savedNote?.textFormattingJson,
+            savedNote?.textContent.orEmpty().length,
+        )
+        assertEquals(expectedContent, savedNote?.textContent)
+        assertEquals(listOf(expectedRange), savedRanges)
+        assertEquals("Formatted", savedNote?.textContent?.substring(savedRanges.single().start, savedRanges.single().end))
+    }
+
+    @Test
+    fun checkboxLabelTapEntersEditModeAtBodyText() {
+        val suffix = System.currentTimeMillis()
+        val label = "Tap label $suffix"
+        val noteId = createTextNote(title = "Label tap $suffix", body = "- [ ] $label")
+
+        waitForTag("note_card_$noteId")
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        composeRule.onNodeWithTag("text_note_read_checkbox_0").assertIsDisplayed()
+        composeRule.onNodeWithText(label, useUnmergedTree = true)
+            .performTouchInput {
+                down(center)
+                up()
+            }
+
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .assertTextContains("- [ ] $label", substring = true)
+            .assertIsFocused()
+    }
+
+    @Test
+    fun uppercaseMarkdownCheckboxRendersCheckedAndTogglesUnchecked() {
+        val suffix = System.currentTimeMillis()
+        val title = "Upper checkbox $suffix"
+        val noteId = createTextNote(title = title, body = "- [X] Upper task $suffix")
+
+        waitForTag("note_card_$noteId")
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        val checkboxNode = composeRule.onNodeWithTag("text_note_read_checkbox_0")
+        checkboxNode.assertIsDisplayed()
+        assertEquals(
+            ToggleableState.On,
+            checkboxNode.fetchSemanticsNode().config.getOrNull(SemanticsProperties.ToggleableState),
+        )
+        checkboxNode.performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteTextContent(noteId).orEmpty().contains("- [ ] Upper task $suffix")
         }
     }
 
@@ -2558,7 +2898,9 @@ class TextInputTest {
         }
         composeRule.onNodeWithTag("note_preview_$noteId", useUnmergedTree = true)
             .assertTextContains("Two line preview first", substring = true)
-        composeRule.onNodeWithTag("note_relative_updated_$noteId", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("note_relative_updated_$noteId", useUnmergedTree = true)
+            .performScrollTo()
+            .assertIsDisplayed()
         assertTagAbsent("note_type_chip")
         assertTagAbsent("pin_note_$noteId")
         assertTagAbsent("move_note_$noteId")
