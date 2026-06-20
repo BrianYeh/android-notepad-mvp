@@ -1,6 +1,7 @@
 package com.example.notepad
 
 import android.Manifest
+import android.content.Context
 import android.os.Build
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -77,18 +78,28 @@ class TextInputTest {
     fun resetDebugPremiumOverride() {
         DebugPremiumAccess.write(composeRule.activity, false)
         DebugSaveFailure.clear()
+        resetDrawingToolPreferences()
     }
 
     @After
     fun clearDebugPremiumOverride() {
         DebugPremiumAccess.write(composeRule.activity, false)
         DebugSaveFailure.clear()
+        resetDrawingToolPreferences()
     }
 
     private fun waitForTag(tag: String) {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    private fun resetDrawingToolPreferences() {
+        composeRule.activity.getSharedPreferences("ui_settings", Context.MODE_PRIVATE)
+            .edit()
+            .remove("last_drawing_pen_brush_size")
+            .remove("last_drawing_pen_color")
+            .apply()
     }
 
     private fun showTextNoteMetadata() {
@@ -2884,6 +2895,49 @@ class TextInputTest {
         composeRule.onNodeWithTag("drawing_tool_Eraser").performScrollTo().performClick()
         assertTaggedSelected("drawing_tool_Eraser", true)
         composeRule.onNodeWithTag("drawing_eraser_hint").assertIsDisplayed()
+    }
+
+    @Test
+    fun drawingEditorRemembersLastPenColorAndSizeButStartsWithPen() {
+        val beforeIds = noteIds()
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val firstDraftId = waitForSingleNewNoteId(beforeIds)
+        waitForTag("fullscreen_drawing_mode")
+
+        composeRule.onNodeWithTag("drawing_brush_Thin").performScrollTo().performClick()
+        assertTaggedSelected("drawing_brush_Thin", true)
+        composeRule.onNodeWithTag("drawing_color_Red").performScrollTo().performClick()
+        assertTaggedSelected("drawing_color_Red", true)
+        composeRule.onNodeWithTag("drawing_tool_Eraser").performScrollTo().performClick()
+        assertTaggedSelected("drawing_tool_Eraser", true)
+        composeRule.onNodeWithTag("drawing_brush_Thick").performScrollTo().performClick()
+        assertTaggedSelected("drawing_brush_Thick", true)
+        composeRule.onNodeWithTag("drawing_tool_Pen").performScrollTo().performClick()
+        assertTaggedSelected("drawing_tool_Pen", true)
+        assertTaggedSelected("drawing_brush_Thin", true)
+        composeRule.onNodeWithTag("drawing_tool_Eraser").performScrollTo().performClick()
+        assertTaggedSelected("drawing_tool_Eraser", true)
+
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        waitForTag("drawing_note_title")
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("add_note_button") > 0 && noteIds() == beforeIds
+        }
+        assertNull(noteById(firstDraftId))
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        waitForTag("fullscreen_drawing_mode")
+
+        assertTaggedSelected("drawing_tool_Pen", true)
+        assertTaggedSelected("drawing_tool_Eraser", false)
+        composeRule.onNodeWithTag("drawing_brush_Thin").performScrollTo().assertIsDisplayed()
+        assertTaggedSelected("drawing_brush_Thin", true)
+        composeRule.onNodeWithTag("drawing_color_Red").performScrollTo().assertIsDisplayed()
+        assertTaggedSelected("drawing_color_Red", true)
     }
 
     @Test

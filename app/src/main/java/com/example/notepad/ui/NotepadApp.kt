@@ -198,6 +198,7 @@ import com.example.notepad.data.NoteListMode
 import com.example.notepad.data.NoteSortOption
 import com.example.notepad.data.NoteTypeFilter
 import com.example.notepad.data.NoteTypes
+import com.example.notepad.data.PrivacyPreferences
 import com.example.notepad.data.ReminderFilter
 import com.example.notepad.data.ReminderRepeat
 import com.example.notepad.data.SyncMetadata
@@ -302,6 +303,29 @@ private enum class DrawingColorOption(val colorArgb: Int) {
     Red(0xFFE53935.toInt()),
     Blue(0xFF1E88E5.toInt()),
     Green(0xFF43A047.toInt()),
+}
+
+private const val LAST_DRAWING_PEN_BRUSH_SIZE_KEY = "last_drawing_pen_brush_size"
+private const val LAST_DRAWING_PEN_COLOR_KEY = "last_drawing_pen_color"
+
+private fun Context.lastDrawingPreferences() = getSharedPreferences(PrivacyPreferences.PREFERENCES_NAME, Context.MODE_PRIVATE)
+
+private fun Context.readLastDrawingPenBrushSize(): DrawingBrushSize {
+    val savedName = lastDrawingPreferences().getString(LAST_DRAWING_PEN_BRUSH_SIZE_KEY, null)
+    return DrawingBrushSize.entries.firstOrNull { it.name == savedName } ?: DrawingBrushSize.Medium
+}
+
+private fun Context.writeLastDrawingPenBrushSize(brushSize: DrawingBrushSize) {
+    lastDrawingPreferences().edit().putString(LAST_DRAWING_PEN_BRUSH_SIZE_KEY, brushSize.name).apply()
+}
+
+private fun Context.readLastDrawingPenColor(): DrawingColorOption {
+    val savedName = lastDrawingPreferences().getString(LAST_DRAWING_PEN_COLOR_KEY, null)
+    return DrawingColorOption.entries.firstOrNull { it.name == savedName } ?: DrawingColorOption.Black
+}
+
+private fun Context.writeLastDrawingPenColor(color: DrawingColorOption) {
+    lastDrawingPreferences().edit().putString(LAST_DRAWING_PEN_COLOR_KEY, color.name).apply()
 }
 
 private fun formatHeading1Label(language: AppLanguage): String = if (language == AppLanguage.TraditionalChinese) "標題 1" else "H1"
@@ -6138,13 +6162,15 @@ private fun DrawingEditorScreen(
     onBack: () -> Unit,
     onDeleted: () -> Unit,
 ) {
+    val context = LocalContext.current
     val note by viewModel.observeNote(noteId).collectAsStateWithLifecycle(initialValue = null)
     var title by remember(noteId) { mutableStateOf("") }
     var strokes by remember(noteId) { mutableStateOf<List<DrawingStroke>>(emptyList()) }
     var redoStrokes by remember(noteId) { mutableStateOf<List<DrawingStroke>>(emptyList()) }
     var selectedTool by remember(noteId) { mutableStateOf(DrawingTool.Pen) }
-    var selectedBrushSize by remember(noteId) { mutableStateOf(DrawingBrushSize.Medium) }
-    var selectedColor by remember(noteId) { mutableStateOf(DrawingColorOption.Black) }
+    var selectedPenBrushSize by remember(noteId, context) { mutableStateOf(context.readLastDrawingPenBrushSize()) }
+    var selectedEraserBrushSize by remember(noteId) { mutableStateOf(DrawingBrushSize.Medium) }
+    var selectedColor by remember(noteId, context) { mutableStateOf(context.readLastDrawingPenColor()) }
     var canvasSize by remember(noteId) { mutableStateOf(IntSize.Zero) }
     var isFullscreenDrawing by remember(noteId) { mutableStateOf(false) }
     var loadedNoteId by remember(noteId) { mutableStateOf<Long?>(null) }
@@ -6178,7 +6204,6 @@ private fun DrawingEditorScreen(
             showClearDialog = false
         }
     }
-    val context = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -6195,6 +6220,11 @@ private fun DrawingEditorScreen(
     val latestActiveDrawingSaveCount by rememberUpdatedState(activeDrawingSaveCount)
     val latestHasMetadataIntent by rememberUpdatedState(hasMetadataIntent)
     val latestHasFailedDrawingSave by rememberUpdatedState(hasFailedDrawingSave)
+    val selectedBrushSize = if (selectedTool == DrawingTool.Eraser) {
+        selectedEraserBrushSize
+    } else {
+        selectedPenBrushSize
+    }
     val exportPngLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("image/png"),
     ) { uri ->
@@ -6839,6 +6869,24 @@ private fun DrawingEditorScreen(
         }
     }
 
+    fun selectDrawingTool(tool: DrawingTool) {
+        selectedTool = tool
+    }
+
+    fun selectDrawingBrushSize(brushSize: DrawingBrushSize) {
+        if (selectedTool == DrawingTool.Pen) {
+            selectedPenBrushSize = brushSize
+            context.writeLastDrawingPenBrushSize(brushSize)
+        } else {
+            selectedEraserBrushSize = brushSize
+        }
+    }
+
+    fun selectDrawingColor(color: DrawingColorOption) {
+        selectedColor = color
+        context.writeLastDrawingPenColor(color)
+    }
+
     fun exitFullscreenDrawing() {
         isFullscreenDrawing = false
         requestDrawingSave()
@@ -6980,9 +7028,9 @@ private fun DrawingEditorScreen(
                     onClear = { showClearDialog = true },
                     onSharePng = ::shareCurrentDrawingPng,
                     onExportPng = ::exportCurrentDrawingPng,
-                    onToolChange = { selectedTool = it },
-                    onBrushSizeChange = { selectedBrushSize = it },
-                    onColorChange = { selectedColor = it },
+                    onToolChange = ::selectDrawingTool,
+                    onBrushSizeChange = ::selectDrawingBrushSize,
+                    onColorChange = ::selectDrawingColor,
                     isPngRendering = isPngRendering,
                     showFileActions = false,
                     modifier = Modifier
@@ -7086,9 +7134,9 @@ private fun DrawingEditorScreen(
                     onClear = { showClearDialog = true },
                     onSharePng = ::shareCurrentDrawingPng,
                     onExportPng = ::exportCurrentDrawingPng,
-                    onToolChange = { selectedTool = it },
-                    onBrushSizeChange = { selectedBrushSize = it },
-                    onColorChange = { selectedColor = it },
+                    onToolChange = ::selectDrawingTool,
+                    onBrushSizeChange = ::selectDrawingBrushSize,
+                    onColorChange = ::selectDrawingColor,
                     isPngRendering = isPngRendering,
                 )
             }
