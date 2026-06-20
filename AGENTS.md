@@ -47,6 +47,7 @@ Set-Location "D:\AndroidStudioProjects"
 - The APK source should be the freshly built debug artifact:
   `D:\AndroidStudioProjects\app\build\outputs\apk\debug\app-debug.apk`
 - Overwrite the existing Drive copy so Brian always has a stable file path for manual testing.
+- Treat this as a required final handoff step for completed Android feature work. Do not report the work as fully complete while the Drive APK copy is still pending; if the copy cannot be performed, report that as a handoff blocker with the reason.
 
 ## GitHub Delivery
 
