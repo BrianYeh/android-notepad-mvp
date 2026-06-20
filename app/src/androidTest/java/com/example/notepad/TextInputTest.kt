@@ -986,9 +986,7 @@ class TextInputTest {
 
         pressDeviceBack()
         waitForTag("drawing_note_title")
-        composeRule.activityRule.scenario.onActivity { activity ->
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
+        composeRule.onNodeWithTag("back_button").performClick()
 
         composeRule.waitUntil(timeoutMillis = 10_000) {
             tagCount("add_note_button") > 0
@@ -2521,6 +2519,9 @@ class TextInputTest {
         openAddMenuItem("new_drawing_note_menu_item")
         val draftId = waitForSingleNewNoteId(beforeIds)
         waitForTag("fullscreen_drawing_mode")
+        waitForTag("drawing_fullscreen_details_button")
+        assertTagAbsent("drawing_note_save_status")
+        assertEquals(0, composeRule.onAllNodesWithText("Untitled drawing").fetchSemanticsNodes().size)
 
         composeRule.activityRule.scenario.onActivity { activity ->
             activity.onBackPressedDispatcher.onBackPressed()
@@ -2759,6 +2760,48 @@ class TextInputTest {
     }
 
     @Test
+    fun drawingNoteThumbnailAppearsForSavedStrokeAndOpensNote() {
+        val noteId = createDrawingNote(drawingData = encodedTestStroke(16f, 24f))
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("note_card_$noteId") > 0
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("drawing_note_thumbnail_$noteId", useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+        composeRule.onNodeWithTag("drawing_note_thumbnail_$noteId", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        waitForTag("drawing_note_title")
+        assertTrue(drawingStrokes(noteId).isNotEmpty())
+    }
+
+    @Test
+    fun blankDrawingInitialFullscreenIsCleanAndDetailsOpensNormalMode() {
+        val beforeIds = noteIds()
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        waitForTag("fullscreen_drawing_mode")
+
+        assertTagAbsent("drawing_note_save_status")
+        assertEquals(0, composeRule.onAllNodesWithText("Untitled drawing").fetchSemanticsNodes().size)
+        assertIconControl("drawing_fullscreen_details_button", "Details")
+
+        composeRule.onNodeWithTag("drawing_fullscreen_details_button").performClick()
+        waitForTag("drawing_note_title")
+        composeRule.onNodeWithTag("share_drawing_png_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("export_drawing_png_button").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("add_note_button") > 0 && noteIds() == beforeIds
+        }
+        assertNull(noteById(noteId))
+    }
+
+    @Test
     fun drawingShareExportControlsDisableWhileRenderingAndFailedSaveStopsShare() {
         val beforeIds = noteIds()
         val title = "Drawing share busy ${System.currentTimeMillis()}"
@@ -2826,6 +2869,7 @@ class TextInputTest {
 
         composeRule.onNodeWithTag("fullscreen_drawing_canvas").assertIsDisplayed()
         composeRule.onNodeWithTag("exit_fullscreen_drawing_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_fullscreen_details_button").assertIsDisplayed()
         composeRule.onNodeWithTag("drawing_tool_Pen").assertIsDisplayed()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag("drawing_note_title").fetchSemanticsNodes().isEmpty()
@@ -2842,6 +2886,7 @@ class TextInputTest {
 
         composeRule.onNodeWithTag("fullscreen_drawing_canvas").assertIsDisplayed()
         composeRule.onNodeWithTag("exit_fullscreen_drawing_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_fullscreen_details_button").assertIsDisplayed()
     }
 
     @Test

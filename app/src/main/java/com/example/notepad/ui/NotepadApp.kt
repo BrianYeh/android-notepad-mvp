@@ -3697,6 +3697,19 @@ private fun NoteRow(
                     modifier = Modifier.testTag("note_preview_${note.id}"),
                 )
             }
+            if (note.type == NoteTypes.DRAWING) {
+                val drawingStrokes = remember(note.id, note.drawingData) {
+                    DrawingJson.decode(note.drawingData)
+                }
+                Spacer(Modifier.height(8.dp))
+                DrawingNoteThumbnail(
+                    noteId = note.id,
+                    strokes = drawingStrokes,
+                    isEmpty = drawingStrokes.isEmpty(),
+                    text = text,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             if (showReminderSummary) {
                 reminderRowSummary(note, text, appLanguage)?.let { summary ->
                     Spacer(Modifier.height(4.dp))
@@ -3724,6 +3737,29 @@ private fun NoteRow(
                 modifier = Modifier.testTag("note_relative_updated_${note.id}"),
             )
         }
+    }
+}
+
+@Composable
+private fun DrawingNoteThumbnail(
+    noteId: Long,
+    strokes: List<DrawingStroke>,
+    isEmpty: Boolean,
+    text: UiText,
+    modifier: Modifier = Modifier,
+) {
+    var thumbnailSize by remember(noteId, strokes) { mutableStateOf(IntSize.Zero) }
+    val viewportScale = drawingViewportScale(strokes, thumbnailSize)
+    Canvas(
+        modifier = modifier
+            .height(84.dp)
+            .background(Color.White, RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            .onSizeChanged { thumbnailSize = it }
+            .semantics { contentDescription = text.drawing }
+            .testTag(if (isEmpty) "empty_drawing_thumbnail_$noteId" else "drawing_note_thumbnail_$noteId"),
+    ) {
+        drawDrawingStrokes(strokes, viewportScale)
     }
 }
 
@@ -6854,6 +6890,16 @@ private fun DrawingEditorScreen(
                 )
             }
         } else if (isFullscreenDrawing) {
+            val hidePristineChrome = isNewDraft &&
+                !hasDrawingUserIntent(
+                    titleValue = title,
+                    strokeValues = strokes,
+                    metadataIntent = hasMetadataIntent,
+                    currentNote = currentNote,
+                ) &&
+                saveStatus != SaveStatus.Saving &&
+                saveStatus != SaveStatus.Failed &&
+                drawingIoMessage == null
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -6878,22 +6924,35 @@ private fun DrawingEditorScreen(
                     ) {
                         Icon(Icons.Filled.FullscreenExit, contentDescription = null)
                     }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = title.ifBlank { text.untitledDrawing },
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        DrawingStatusLine(
-                            saveStatus = saveStatus,
-                            lastSavedAt = lastSavedAt ?: currentNote.updatedAt,
-                            drawingIoMessage = drawingIoMessage,
-                            text = text,
-                            appLanguage = appLanguage,
-                            showUpdatedTime = false,
-                            onRetry = ::retrySaveDrawingNote,
-                        )
+                    if (hidePristineChrome) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    } else {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = title.ifBlank { text.untitledDrawing },
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            DrawingStatusLine(
+                                saveStatus = saveStatus,
+                                lastSavedAt = lastSavedAt ?: currentNote.updatedAt,
+                                drawingIoMessage = drawingIoMessage,
+                                text = text,
+                                appLanguage = appLanguage,
+                                showUpdatedTime = false,
+                                onRetry = ::retrySaveDrawingNote,
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = ::exitFullscreenDrawing,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .semantics { contentDescription = text.details }
+                            .testTag("drawing_fullscreen_details_button"),
+                    ) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = null)
                     }
                 }
                 DrawingCanvas(
