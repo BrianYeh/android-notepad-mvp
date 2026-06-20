@@ -6292,7 +6292,7 @@ private fun DrawingEditorScreen(
     LaunchedEffect(loadedNoteId) {
         if (loadedNoteId == noteId && !hasHandledInitialDrawingFocus) {
             hasHandledInitialDrawingFocus = true
-            if (title.isBlank() && strokes.isEmpty()) {
+            if (strokes.isNotEmpty() || title.isBlank()) {
                 isFullscreenDrawing = true
             }
         }

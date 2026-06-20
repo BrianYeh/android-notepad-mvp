@@ -2754,6 +2754,10 @@ class TextInputTest {
         }
 
         composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        waitForTag("fullscreen_drawing_mode")
+        composeRule.onNodeWithText(title).assertIsDisplayed()
+        composeRule.onNodeWithTag("drawing_note_save_status").assertTextContains("Saved", substring = true)
+        composeRule.onNodeWithTag("drawing_fullscreen_details_button").assertIsDisplayed().performClick()
         waitForTag("drawing_note_title")
         assertEquals(title, noteById(noteId)?.title)
         assertTrue(drawingStrokes(noteId).isNotEmpty())
@@ -2773,8 +2777,28 @@ class TextInputTest {
         }
         composeRule.onNodeWithTag("drawing_note_thumbnail_$noteId", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag("note_card_$noteId").performClick()
+        waitForTag("fullscreen_drawing_mode")
+        composeRule.onNodeWithTag("drawing_fullscreen_details_button").assertIsDisplayed().performClick()
         waitForTag("drawing_note_title")
+        composeRule.onNodeWithTag("share_drawing_png_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("export_drawing_png_button").assertIsDisplayed()
         assertTrue(drawingStrokes(noteId).isNotEmpty())
+    }
+
+    @Test
+    fun titleOnlyDrawingReopensInDetailsMode() {
+        val title = "Title only drawing ${System.currentTimeMillis()}"
+        val noteId = createDrawingNote(title = title)
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("note_card_$noteId") > 0
+        }
+        composeRule.onNodeWithTag("note_card_$noteId").performClick()
+
+        waitForTag("drawing_note_title")
+        assertTagAbsent("fullscreen_drawing_mode")
+        composeRule.onNodeWithTag("drawing_note_title").assertTextContains(title)
+        assertEquals(emptyList<DrawingStroke>(), drawingStrokes(noteId))
     }
 
     @Test
