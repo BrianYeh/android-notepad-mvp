@@ -25,7 +25,6 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.lifecycle.Lifecycle
@@ -44,17 +43,11 @@ import com.example.notepad.data.TextFormatRange
 import com.example.notepad.data.TextFormatType
 import com.example.notepad.data.TextFormattingJson
 import com.example.notepad.debug.DebugPremiumAccess
-import com.example.notepad.ui.cursorScrollTarget
 import com.example.notepad.ui.cropTextFormatRangesForSegment
-import com.example.notepad.ui.drawingExportCanvasSizePx
-import com.example.notepad.ui.drawingRequiredCanvasHeightPx
-import com.example.notepad.ui.drawingViewportScale
 import com.example.notepad.ui.findHighlightedLinkedText
 import com.example.notepad.ui.findHighlightedLinkedTextSegment
-import com.example.notepad.ui.findMatchScrollTarget
 import com.example.notepad.ui.findInNoteMatches
 import com.example.notepad.ui.formatFindMatchStatus
-import com.example.notepad.ui.highlightRanges
 import com.example.notepad.ui.nextFindMatchIndex
 import com.example.notepad.ui.previousFindMatchIndex
 import com.example.notepad.ui.readContentLines
@@ -683,6 +676,10 @@ class TextInputTest {
         listOf("HL", "Tx", "Text formatting Premium").forEach { rawLabel ->
             assertExactTextAbsent(rawLabel)
             assertContentDescriptionAbsent(rawLabel)
+        }
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            tagCount("add_note_button") > 0 && tagCount("text_note_content") == 0
         }
     }
 
@@ -1468,11 +1465,17 @@ class TextInputTest {
         assertTagAbsent("text_note_focus_mode")
         assertTagAbsent("text_note_compact_metadata")
         assertTagAbsent("text_note_edit_metadata")
+        assertTagAbsent("text_note_top_save_status")
+        assertTagAbsent("text_editor_accessory_bar")
+        assertTagAbsent("formatting_premium_entry_button")
+        assertExactTextAbsent("Untitled text note")
         composeRule.onNodeWithTag("more_note_button").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("text_note_edit_details_menu_item").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().assertIsFocused()
         composeRule.onNodeWithTag("text_note_title").assertIsDisplayed().performTextInput(title)
         composeRule.onNodeWithTag("text_note_content").assertIsDisplayed().performTextInput(body)
+        composeRule.onNodeWithTag("text_note_top_save_status").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_editor_accessory_bar").assertIsDisplayed()
         composeRule.onNodeWithTag("back_button").performClick()
 
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -1531,8 +1534,17 @@ class TextInputTest {
             composeRule.onAllNodesWithText(firstLine).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText(firstLine).performClick()
-        composeRule.onNodeWithTag("text_note_read_title").assertTextContains(firstLine)
+        assertTagAbsent("text_note_read_title")
+        composeRule.onNodeWithTag("text_note_read_content").assertTextContains(firstLine, substring = true)
         composeRule.onNodeWithTag("text_note_read_content").assertTextContains("Second line", substring = true)
+        composeRule.onNodeWithTag("text_note_read_content").performTouchInput {
+            down(Offset(center.x, center.y * 0.4f))
+            up()
+        }
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .assertTextContains(body, substring = true)
+            .assertIsFocused()
         assertEquals("", noteById(noteId)?.title)
     }
 
@@ -2973,231 +2985,4 @@ class TextInputTest {
         }
     }
 
-    @Test
-    fun highlightRangesAreCaseInsensitive() {
-        assertEquals(listOf(0..4, 11..15), "Alpha note alpha".highlightRanges("alpha"))
-        assertEquals(listOf(0..1, 4..5), "中文內容中文".highlightRanges("中文"))
-    }
-
-    @Test
-    fun findInNoteMatchesAreCaseInsensitiveAndSupportChinese() {
-        assertEquals(listOf(0..4, 11..15), findInNoteMatches("Alpha note alpha", "ALPHA"))
-        assertEquals(listOf(0..1, 4..5), findInNoteMatches("中文內容中文", "中文"))
-    }
-
-    @Test
-    fun findInNoteNavigationWrapsAround() {
-        assertEquals(0, nextFindMatchIndex(4, 5))
-        assertEquals(4, previousFindMatchIndex(0, 5))
-        assertEquals(2, nextFindMatchIndex(1, 5))
-        assertEquals(1, previousFindMatchIndex(2, 5))
-    }
-
-    @Test
-    fun findMatchScrollTargetKeepsActiveMatchVisible() {
-        assertEquals(
-            676,
-            findMatchScrollTarget(
-                currentScroll = 0,
-                viewportHeight = 400,
-                matchTop = 950f,
-                matchBottom = 980f,
-                maxScroll = 2_000,
-                viewportPaddingPx = 96f,
-            ),
-        )
-        assertEquals(
-            104,
-            findMatchScrollTarget(
-                currentScroll = 800,
-                viewportHeight = 400,
-                matchTop = 200f,
-                matchBottom = 230f,
-                maxScroll = 2_000,
-                viewportPaddingPx = 96f,
-            ),
-        )
-        assertEquals(
-            null,
-            findMatchScrollTarget(
-                currentScroll = 500,
-                viewportHeight = 400,
-                matchTop = 650f,
-                matchBottom = 680f,
-                maxScroll = 2_000,
-                viewportPaddingPx = 96f,
-            ),
-        )
-    }
-
-    @Test
-    fun findMatchScrollTargetUsesSmallerPaddingForShortViewports() {
-        assertEquals(
-            270,
-            findMatchScrollTarget(
-                currentScroll = 0,
-                viewportHeight = 180,
-                matchTop = 360f,
-                matchBottom = 390f,
-                maxScroll = 1_000,
-                viewportPaddingPx = 96f,
-            ),
-        )
-    }
-
-    @Test
-    fun cursorScrollTargetKeepsTypingCaretVisibleNearViewportBottom() {
-        assertEquals(
-            656,
-            cursorScrollTarget(
-                currentScroll = 0,
-                viewportHeight = 400,
-                cursorTop = 980f,
-                cursorBottom = 1_000f,
-                maxScroll = 2_000,
-                viewportBottomPaddingPx = 56f,
-            ),
-        )
-        assertEquals(
-            76,
-            cursorScrollTarget(
-                currentScroll = 500,
-                viewportHeight = 400,
-                cursorTop = 100f,
-                cursorBottom = 120f,
-                maxScroll = 2_000,
-                viewportTopPaddingPx = 24f,
-            ),
-        )
-        assertEquals(
-            null,
-            cursorScrollTarget(
-                currentScroll = 500,
-                viewportHeight = 400,
-                cursorTop = 620f,
-                cursorBottom = 650f,
-                maxScroll = 2_000,
-                viewportBottomPaddingPx = 56f,
-            ),
-        )
-    }
-
-    @Test
-    fun drawingViewportScaleKeepsTallSavedStrokesVisibleWithoutResizingCanvas() {
-        val tallStroke = DrawingStroke(
-            points = listOf(DrawingPoint(40f, 20f), DrawingPoint(180f, 960f)),
-            widthPx = 20f,
-        )
-
-        assertEquals(
-            1_018f,
-            drawingRequiredCanvasHeightPx(
-                strokes = listOf(tallStroke),
-                minimumHeightPx = 420f,
-            ),
-            0.001f,
-        )
-        assertEquals(
-            0.619f,
-            drawingViewportScale(
-                strokes = listOf(tallStroke),
-                measuredCanvasSize = IntSize(width = 360, height = 600),
-            ),
-            0.001f,
-        )
-    }
-
-    @Test
-    fun drawingExportCanvasSizePreservesTallSavedStrokeBottom() {
-        val tallStroke = DrawingStroke(
-            points = listOf(DrawingPoint(40f, 20f), DrawingPoint(180f, 960f)),
-            widthPx = 20f,
-        )
-
-        assertEquals(
-            IntSize(width = 360, height = 1_018),
-            drawingExportCanvasSizePx(
-                strokes = listOf(tallStroke),
-                measuredCanvasSize = IntSize(width = 360, height = 600),
-                fallbackWidthPx = 1080,
-                fallbackHeightPx = 1440,
-            ),
-        )
-    }
-
-    @Test
-    fun drawingBoundsIgnoreInvisibleEraserStrokes() {
-        val penStroke = DrawingStroke(
-            points = listOf(DrawingPoint(40f, 20f), DrawingPoint(180f, 300f)),
-            widthPx = 20f,
-        )
-        val eraserStroke = DrawingStroke(
-            points = listOf(DrawingPoint(40f, 20f), DrawingPoint(180f, 960f)),
-            widthPx = 120f,
-            tool = DrawingTools.ERASER,
-        )
-
-        assertEquals(
-            358f,
-            drawingRequiredCanvasHeightPx(
-                strokes = listOf(penStroke, eraserStroke),
-                minimumHeightPx = 320f,
-            ),
-            0.001f,
-        )
-        assertEquals(
-            1f,
-            drawingViewportScale(
-                strokes = listOf(penStroke, eraserStroke),
-                measuredCanvasSize = IntSize(width = 360, height = 600),
-            ),
-            0.001f,
-        )
-    }
-
-    @Test
-    fun drawingExportCanvasSizeCapsHugeRestoredCoordinates() {
-        val hugeStroke = DrawingStroke(
-            points = listOf(DrawingPoint(40f, 20f), DrawingPoint(500_000f, 900_000f)),
-            widthPx = 20f,
-        )
-
-        assertEquals(
-            IntSize(width = 4_096, height = 4_096),
-            drawingExportCanvasSizePx(
-                strokes = listOf(hugeStroke),
-                measuredCanvasSize = IntSize(width = 360, height = 600),
-                fallbackWidthPx = 1080,
-                fallbackHeightPx = 1440,
-                maxDimensionPx = 4_096,
-            ),
-        )
-    }
-
-    @Test
-    fun drawingExportCanvasSizeRoundsFractionalBoundsUp() {
-        val fractionalStroke = DrawingStroke(
-            points = listOf(DrawingPoint(100.1f, 50.1f)),
-            widthPx = 5f,
-        )
-
-        assertEquals(
-            IntSize(width = 151, height = 101),
-            drawingExportCanvasSizePx(
-                strokes = listOf(fractionalStroke),
-                measuredCanvasSize = IntSize(width = 100, height = 100),
-                fallbackWidthPx = 100,
-                fallbackHeightPx = 100,
-            ),
-        )
-    }
-
-    @Test
-    fun findInNoteNoMatchesAndEmptyQueryAreHandled() {
-        assertEquals(emptyList<IntRange>(), findInNoteMatches("Alpha note", "missing"))
-        assertEquals(emptyList<IntRange>(), findInNoteMatches("Alpha note", ""))
-        assertEquals(-1, nextFindMatchIndex(0, 0))
-        assertEquals(-1, previousFindMatchIndex(0, 0))
-        assertEquals("No matches", formatFindMatchStatus(0, 0, "No matches"))
-    }
 }

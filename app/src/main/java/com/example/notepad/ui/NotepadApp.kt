@@ -4561,13 +4561,22 @@ private fun TextEditorScreen(
     }
 
     val currentNote = note
-    val currentDisplayTitle = remember(title, content, currentNote?.type) {
+    val bodyDerivedDisplayTitle = remember(content) { firstTextContentTitle(content) }
+    val currentDisplayTitle = remember(title, bodyDerivedDisplayTitle, currentNote?.type) {
         if (currentNote?.type == NoteTypes.TEXT) {
-            title.ifBlank { firstTextContentTitle(content) ?: text.untitledTextNote }
+            title.ifBlank { bodyDerivedDisplayTitle ?: text.untitledTextNote }
         } else {
             title.ifBlank { text.untitledTextNote }
         }
     }
+    val usesBodyDerivedTitle = currentNote?.type == NoteTypes.TEXT &&
+        title.isBlank() &&
+        bodyDerivedDisplayTitle != null
+    val isBlankStandardNewTextDraft = currentNote?.type == NoteTypes.TEXT &&
+        isNewDraft &&
+        currentNote.reminderAt == null &&
+        isBlankDraftContent() &&
+        saveStatus != SaveStatus.Failed
     val isCompactEditor = isEditing && (isFocusWriting || isContentFocused)
     val findActionLabel = findInNoteActionLabel(appLanguage)
 
@@ -4579,19 +4588,21 @@ private fun TextEditorScreen(
             TopAppBar(
                 title = {
                     if (isEditing) {
-                        Column {
-                            Text(
-                                currentDisplayTitle,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                saveStatus.label(text, appLanguage),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1,
-                                modifier = Modifier.testTag("text_note_top_save_status"),
-                            )
+                        if (!isBlankStandardNewTextDraft) {
+                            Column {
+                                Text(
+                                    currentDisplayTitle,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    saveStatus.label(text, appLanguage),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    modifier = Modifier.testTag("text_note_top_save_status"),
+                                )
+                            }
                         }
                     } else {
                         Text(
@@ -4799,12 +4810,7 @@ private fun TextEditorScreen(
                         },
                     )
                 }
-                val hideBlankDraftMetadataSurface = isNewDraft &&
-                    currentNote.reminderAt == null &&
-                    title.isBlank() &&
-                    content.isBlank() &&
-                    textFormattingJson.isBlank()
-                if (isCompactEditor && !isMetadataExpanded && !hideBlankDraftMetadataSurface) {
+                if (isCompactEditor && !isMetadataExpanded && !isBlankStandardNewTextDraft) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -5054,7 +5060,7 @@ private fun TextEditorScreen(
                             .testTag("text_note_content"),
                     )
                 }
-                if (isCompactEditor) {
+                if (isCompactEditor && !isBlankStandardNewTextDraft) {
                     TextEditorAccessoryBar(
                         text = text,
                         appLanguage = appLanguage,
@@ -5130,15 +5136,17 @@ private fun TextEditorScreen(
                             .padding(horizontal = 20.dp, vertical = 18.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                            Text(
-                                text = currentDisplayTitle,
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier
-                                    .clickable { editTitleFromReadMode() }
-                                    .testTag("text_note_read_title"),
-                            )
+                            if (!usesBodyDerivedTitle) {
+                                Text(
+                                    text = currentDisplayTitle,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier
+                                        .clickable { editTitleFromReadMode() }
+                                        .testTag("text_note_read_title"),
+                                )
+                            }
                             if (saveStatus == SaveStatus.Failed) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
