@@ -2464,11 +2464,22 @@ class TextInputTest {
         composeRule.onNodeWithTag("premium_tab").performClick()
 
         composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("premium_preview_title").fetchSemanticsNodes().isNotEmpty()
+        }
         assertTagAbsent("annual_plan_option")
         assertTagAbsent("monthly_plan_option")
         assertTagAbsent("premium_subscribe_button")
-        composeRule.onNodeWithTag("premium_restore_button").assertIsDisplayed()
+        assertTagAbsent("premium_restore_button")
+        composeRule.onNodeWithTag("premium_preview_title").assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_preview_body").assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("Price not available").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Subscribe (setup pending)").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("No trial or introductory offer is configured.").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Privacy Policy").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Terms of Service").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Google Play", substring = true).fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("backend verification", substring = true).fetchSemanticsNodes().size)
         composeRule.onNodeWithText("Folders").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Text formatting").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Reminder/calendar tools").performScrollTo().assertIsDisplayed()

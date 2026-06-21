@@ -258,6 +258,7 @@ private const val MAX_DRAWING_EXPORT_DIMENSION = 4096
 private const val NOTE_PREVIEW_MAX_CHARS = 160
 private const val NOTE_PREVIEW_CONTEXT_BEFORE = 45
 private const val NOTE_PREVIEW_CONTEXT_AFTER = 110
+private const val PREMIUM_AVAILABILITY_CHECK_GRACE_MS = 2_500L
 private val NOTE_PAPER_BACKGROUND = Color(0xFFFFF7D7)
 private val NOTE_PAPER_SURFACE = Color(0xFFFFFBEA)
 
@@ -282,6 +283,41 @@ private enum class MainContentView {
 private enum class PremiumPlanSelection {
     Annual,
     Monthly,
+}
+
+internal enum class PremiumUiMode {
+    ActiveEntitlement,
+    AccountStatus,
+    CheckingAvailability,
+    CommerceReady,
+    PreviewUnavailable,
+}
+
+internal fun premiumUiMode(billingState: PremiumBillingState): PremiumUiMode {
+    if (billingState.hasPremiumAccess) return PremiumUiMode.ActiveEntitlement
+    if (
+        billingState.subscription.status == PremiumSubscriptionStatus.PendingPurchase ||
+        billingState.subscription.status == PremiumSubscriptionStatus.VerificationPending
+    ) {
+        return PremiumUiMode.AccountStatus
+    }
+    if (billingState.loading) return PremiumUiMode.CheckingAvailability
+    if (
+        billingState.billingAvailable &&
+        billingState.annualPrice.isNullOrBlank() &&
+        billingState.monthlyPrice.isNullOrBlank() &&
+        billingState.lastError == null
+    ) {
+        return PremiumUiMode.CheckingAvailability
+    }
+    return if (
+        billingState.billingAvailable &&
+        (!billingState.annualPrice.isNullOrBlank() || !billingState.monthlyPrice.isNullOrBlank())
+    ) {
+        PremiumUiMode.CommerceReady
+    } else {
+        PremiumUiMode.PreviewUnavailable
+    }
 }
 
 private enum class DrawingTool {
@@ -432,6 +468,30 @@ private fun importExportHintLabel(language: AppLanguage): String {
         "以文字檔或 ZIP 封存移動記事。這是本機檔案匯入／匯出，不是同步或備份。"
     } else {
         "Move notes as text files or a ZIP archive. This is local file import/export, not sync or backup."
+    }
+}
+
+private fun UiText.premiumPreviewTitle(): String {
+    return if (this === TraditionalChineseText) "進階功能正在準備中" else "Premium is being prepared"
+}
+
+private fun UiText.premiumPreviewBody(): String {
+    return if (this === TraditionalChineseText) {
+        "你現在可以繼續免費使用記事；進階版開放後會提供資料夾、文字格式、提醒／日曆工具。"
+    } else {
+        "You can keep using free notes now. When Premium opens, it will add folders, text formatting, and reminder/calendar tools."
+    }
+}
+
+private fun UiText.premiumCheckingTitle(): String {
+    return if (this === TraditionalChineseText) "正在確認進階功能" else "Checking Premium availability"
+}
+
+private fun UiText.premiumCheckingBody(): String {
+    return if (this === TraditionalChineseText) {
+        "Just Notes 正在確認這台裝置是否可使用進階功能。"
+    } else {
+        "Just Notes is checking whether Premium is available on this device."
     }
 }
 
@@ -899,9 +959,26 @@ private fun PremiumScreen(
 ) {
     val context = LocalContext.current
     var selectedPlan by remember { mutableStateOf(PremiumPlanSelection.Annual) }
-    val annualPriceAvailable = billingState.billingAvailable && billingState.annualPrice != null
-    val monthlyPriceAvailable = billingState.billingAvailable && billingState.monthlyPrice != null
-    val showCommerceUi = annualPriceAvailable || monthlyPriceAvailable
+    val uiMode = premiumUiMode(billingState)
+    var availabilityCheckTimedOut by remember { mutableStateOf(false) }
+    LaunchedEffect(uiMode) {
+        availabilityCheckTimedOut = false
+        if (uiMode == PremiumUiMode.CheckingAvailability) {
+            delay(PREMIUM_AVAILABILITY_CHECK_GRACE_MS)
+            availabilityCheckTimedOut = true
+        }
+    }
+    val displayMode = if (
+        uiMode == PremiumUiMode.CheckingAvailability &&
+        availabilityCheckTimedOut
+    ) {
+        PremiumUiMode.PreviewUnavailable
+    } else {
+        uiMode
+    }
+    val annualPriceAvailable = billingState.billingAvailable && !billingState.annualPrice.isNullOrBlank()
+    val monthlyPriceAvailable = billingState.billingAvailable && !billingState.monthlyPrice.isNullOrBlank()
+    val showCommerceUi = displayMode == PremiumUiMode.CommerceReady
     val selectedBillingPlan = when (selectedPlan) {
         PremiumPlanSelection.Annual -> PremiumPlan.Annual
         PremiumPlanSelection.Monthly -> PremiumPlan.Monthly
@@ -985,35 +1062,93 @@ private fun PremiumScreen(
                     Text(if (billingState.hasPremiumAccess) text.premiumActive else text.premiumSubscribe)
                 }
             }
-            TextButton(
-                onClick = onRefreshPurchaseStatus,
-                modifier = Modifier.testTag("premium_restore_button"),
-            ) {
-                Text(text.premiumRestore)
-            }
-            Text(
-                text = premiumStatusText(text, billingState),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                text = billingState.lastError ?: premiumDetailText(text),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(
-                    text = text.privacyPolicy,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textDecoration = TextDecoration.Underline,
-                )
-                Text(
-                    text = text.termsOfService,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textDecoration = TextDecoration.Underline,
-                )
+            when (displayMode) {
+                PremiumUiMode.ActiveEntitlement -> {
+                    Text(
+                        text = text.premiumActive,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.testTag("premium_active_status"),
+                    )
+                }
+                PremiumUiMode.AccountStatus -> {
+                    TextButton(
+                        onClick = onRefreshPurchaseStatus,
+                        modifier = Modifier.testTag("premium_restore_button"),
+                    ) {
+                        Text(text.premiumRestore)
+                    }
+                    Text(
+                        text = premiumStatusText(text, billingState),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = billingState.lastError ?: premiumDetailText(text),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                PremiumUiMode.CheckingAvailability -> {
+                    Text(
+                        text = text.premiumCheckingTitle(),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.testTag("premium_checking_title"),
+                    )
+                    Text(
+                        text = text.premiumCheckingBody(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("premium_checking_body"),
+                    )
+                }
+                PremiumUiMode.CommerceReady -> {
+                    TextButton(
+                        onClick = onRefreshPurchaseStatus,
+                        modifier = Modifier.testTag("premium_restore_button"),
+                    ) {
+                        Text(text.premiumRestore)
+                    }
+                    Text(
+                        text = premiumStatusText(text, billingState),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = billingState.lastError ?: premiumDetailText(text),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Text(
+                            text = text.privacyPolicy,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textDecoration = TextDecoration.Underline,
+                        )
+                        Text(
+                            text = text.termsOfService,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textDecoration = TextDecoration.Underline,
+                        )
+                    }
+                }
+                PremiumUiMode.PreviewUnavailable -> {
+                    Text(
+                        text = text.premiumPreviewTitle(),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.testTag("premium_preview_title"),
+                    )
+                    Text(
+                        text = text.premiumPreviewBody(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("premium_preview_body"),
+                    )
+                }
             }
             Text(
                 text = text.premiumFeatures,

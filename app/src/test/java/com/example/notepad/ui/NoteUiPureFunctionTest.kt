@@ -1,6 +1,9 @@
 package com.example.notepad.ui
 
 import androidx.compose.ui.unit.IntSize
+import com.example.notepad.billing.PremiumBillingState
+import com.example.notepad.billing.PremiumSubscriptionSnapshot
+import com.example.notepad.billing.PremiumSubscriptionStatus
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
 import com.example.notepad.data.DrawingTools
@@ -8,6 +11,119 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class NoteUiPureFunctionTest {
+    @Test
+    fun premiumUiModeUsesUnavailablePreviewWhenBillingHasNoPrices() {
+        assertEquals(
+            PremiumUiMode.PreviewUnavailable,
+            premiumUiMode(PremiumBillingState(loading = false)),
+        )
+        assertEquals(
+            PremiumUiMode.PreviewUnavailable,
+            premiumUiMode(
+                PremiumBillingState(
+                    billingAvailable = true,
+                    loading = false,
+                    lastError = "Products are unavailable",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun premiumUiModeKeepsConnectedBillingWithoutPricesInCheckingState() {
+        assertEquals(
+            PremiumUiMode.CheckingAvailability,
+            premiumUiMode(PremiumBillingState(billingAvailable = true, loading = false)),
+        )
+    }
+
+    @Test
+    fun premiumUiModeKeepsLoadingSeparateFromUnavailablePreview() {
+        assertEquals(
+            PremiumUiMode.CheckingAvailability,
+            premiumUiMode(PremiumBillingState()),
+        )
+    }
+
+    @Test
+    fun premiumUiModePreservesInFlightPurchaseStatusWithoutPrices() {
+        assertEquals(
+            PremiumUiMode.AccountStatus,
+            premiumUiMode(
+                PremiumBillingState(
+                    subscription = PremiumSubscriptionSnapshot(
+                        status = PremiumSubscriptionStatus.PendingPurchase,
+                    ),
+                    loading = false,
+                ),
+            ),
+        )
+        assertEquals(
+            PremiumUiMode.AccountStatus,
+            premiumUiMode(
+                PremiumBillingState(
+                    subscription = PremiumSubscriptionSnapshot(
+                        status = PremiumSubscriptionStatus.VerificationPending,
+                    ),
+                    loading = false,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun premiumUiModeUsesCommerceOnlyWhenARealPriceIsAvailable() {
+        assertEquals(
+            PremiumUiMode.CommerceReady,
+            premiumUiMode(
+                PremiumBillingState(
+                    billingAvailable = true,
+                    loading = false,
+                    monthlyPrice = "$3.99",
+                ),
+            ),
+        )
+        assertEquals(
+            PremiumUiMode.CommerceReady,
+            premiumUiMode(
+                PremiumBillingState(
+                    billingAvailable = true,
+                    loading = false,
+                    annualPrice = "$39.99",
+                ),
+            ),
+        )
+        assertEquals(
+            PremiumUiMode.CheckingAvailability,
+            premiumUiMode(
+                PremiumBillingState(
+                    billingAvailable = true,
+                    loading = false,
+                    monthlyPrice = " ",
+                ),
+            ),
+        )
+        assertEquals(
+            PremiumUiMode.PreviewUnavailable,
+            premiumUiMode(
+                PremiumBillingState(
+                    billingAvailable = true,
+                    loading = false,
+                    monthlyPrice = " ",
+                    lastError = "No configured offer",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun premiumUiModeKeepsActiveEntitlementAheadOfUnavailablePrices() {
+        assertEquals(
+            PremiumUiMode.ActiveEntitlement,
+            premiumUiMode(PremiumBillingState(debugPremiumOverride = true)),
+        )
+    }
+
     @Test
     fun highlightRangesAreCaseInsensitive() {
         assertEquals(listOf(0..4, 11..15), "Alpha note alpha".highlightRanges("alpha"))
