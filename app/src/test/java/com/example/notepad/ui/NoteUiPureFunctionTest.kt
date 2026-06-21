@@ -7,10 +7,38 @@ import com.example.notepad.billing.PremiumSubscriptionStatus
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
 import com.example.notepad.data.DrawingTools
+import com.example.notepad.data.SyncMetadata
+import com.example.notepad.data.SyncStatus
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class NoteUiPureFunctionTest {
+    @Test
+    fun googleAccountSyncUiOnlyShowsForExistingConnectedAccount() {
+        assertEquals(
+            false,
+            shouldShowGoogleAccountSyncUi(
+                SyncMetadata(
+                    deviceId = "device",
+                    deviceName = "Pixel",
+                    accountEmail = null,
+                    status = SyncStatus.SignedOut,
+                ),
+            ),
+        )
+        assertEquals(
+            true,
+            shouldShowGoogleAccountSyncUi(
+                SyncMetadata(
+                    deviceId = "device",
+                    deviceName = "Pixel",
+                    accountEmail = "person@example.com",
+                    status = SyncStatus.Idle,
+                ),
+            ),
+        )
+    }
+
     @Test
     fun premiumUiModeUsesUnavailablePreviewWhenBillingHasNoPrices() {
         assertEquals(

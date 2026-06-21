@@ -2441,11 +2441,20 @@ class TextInputTest {
     }
 
     @Test
-    fun settingsExposeManualBackupControls() {
+    fun settingsHideGoogleSyncByDefaultAndExposeManualBackupControls() {
         composeRule.onNodeWithTag("settings_button").performClick()
 
-        composeRule.onNodeWithTag("google_account_sync_title").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("google_sync_button").performScrollTo().assertIsDisplayed()
+        assertTagAbsent("google_account_sync_title")
+        assertTagAbsent("google_account_status")
+        assertTagAbsent("google_last_sync_status")
+        assertTagAbsent("google_sync_progress")
+        assertTagAbsent("google_sync_error")
+        assertTagAbsent("google_sync_button")
+        assertTagAbsent("google_sign_out_button")
+        assertExactTextAbsent("Google Account Sync")
+        assertExactTextAbsent("Sign in with Google")
+        assertEquals(0, composeRule.onAllNodesWithText("Google Drive app data", substring = true).fetchSemanticsNodes().size)
+
         composeRule.onNodeWithTag("online_sync_title").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("online_sync_target_status").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("online_sync_note_count").performScrollTo().assertIsDisplayed()

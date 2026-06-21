@@ -320,6 +320,10 @@ internal fun premiumUiMode(billingState: PremiumBillingState): PremiumUiMode {
     }
 }
 
+internal fun shouldShowGoogleAccountSyncUi(syncMetadata: SyncMetadata): Boolean {
+    return syncMetadata.accountEmail != null
+}
+
 private enum class DrawingTool {
     Pen,
     Eraser,
@@ -2010,6 +2014,7 @@ private fun SettingsScreen(
     var isBackupInProgress by remember { mutableStateOf(false) }
     var isRestoreInProgress by remember { mutableStateOf(false) }
     var isGoogleSyncInProgress by remember { mutableStateOf(false) }
+    val showGoogleAccountSyncUi = shouldShowGoogleAccountSyncUi(syncMetadata)
 
     LaunchedEffect(isPrivacyLocked) {
         if (isPrivacyLocked) {
@@ -2310,88 +2315,88 @@ private fun SettingsScreen(
                     )
                 }
             }
-            HorizontalDivider()
-            Text(
-                text = text.googleAccountSync,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.testTag("google_account_sync_title"),
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            if (showGoogleAccountSyncUi) {
+                HorizontalDivider()
                 Text(
-                    text = "G",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .background(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(8.dp),
-                        )
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    text = text.googleAccountSync,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.testTag("google_account_sync_title"),
                 )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = syncMetadata.accountEmail?.let(text::signedInAsAccount) ?: text.notSignedIn,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.testTag("google_account_status"),
-                    )
-                    Text(
-                        text = "${text.syncStatus}: ${syncMetadata.status.label(text)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            Text(
-                text = text.googleAccountSyncHint,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            syncMetadata.lastSyncedAt?.let { syncedAt ->
-                Text(
-                    text = "${text.lastSync}: ${formatTime(syncedAt, appLanguage)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("google_last_sync_status"),
-                )
-            }
-            if (isGoogleSyncInProgress || syncMetadata.status == SyncStatus.Syncing) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.testTag("google_sync_progress"),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp))
                     Text(
-                        text = text.syncStatus,
+                        text = "G",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .background(
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(8.dp),
+                            )
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = syncMetadata.accountEmail?.let(text::signedInAsAccount) ?: text.notSignedIn,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.testTag("google_account_status"),
+                        )
+                        Text(
+                            text = "${text.syncStatus}: ${syncMetadata.status.label(text)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Text(
+                    text = text.googleAccountSyncHint,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                syncMetadata.lastSyncedAt?.let { syncedAt ->
+                    Text(
+                        text = "${text.lastSync}: ${formatTime(syncedAt, appLanguage)}",
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("google_last_sync_status"),
                     )
                 }
-            }
-            syncMetadata.lastError?.let { error ->
-                Text(
-                    text = error.message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.testTag("google_sync_error"),
-                )
-            }
-            Button(
-                onClick = { startGoogleSync() },
-                enabled = !isGoogleSyncInProgress && !isBackupInProgress && !isRestoreInProgress,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("google_sync_button"),
-            ) {
-                Text(if (syncMetadata.accountEmail == null) text.signInWithGoogle else text.syncNow)
-            }
-            if (syncMetadata.accountEmail != null) {
+                if (isGoogleSyncInProgress || syncMetadata.status == SyncStatus.Syncing) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.testTag("google_sync_progress"),
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                        Text(
+                            text = text.syncStatus,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                syncMetadata.lastError?.let { error ->
+                    Text(
+                        text = error.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("google_sync_error"),
+                    )
+                }
+                Button(
+                    onClick = { startGoogleSync() },
+                    enabled = !isGoogleSyncInProgress && !isBackupInProgress && !isRestoreInProgress,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("google_sync_button"),
+                ) {
+                    Text(text.syncNow)
+                }
                 TextButton(
                     onClick = { showGoogleSignOutDialog = true },
                     enabled = !isGoogleSyncInProgress,
