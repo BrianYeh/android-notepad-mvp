@@ -38,6 +38,7 @@ import com.example.notepad.data.SyncStatus
 import com.example.notepad.data.TextImportFile
 import com.example.notepad.data.buildSharedNoteTitle
 import com.example.notepad.data.normalizedReminderRepeat
+import com.example.notepad.debug.DebugGoogleSyncAccess
 import com.example.notepad.debug.DebugPremiumAccess
 import com.example.notepad.debug.DebugSaveFailure
 import com.example.notepad.ocr.MlKitOcrTextRecognizer
@@ -111,6 +112,13 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     private val _onlineSyncAutoOnStart = MutableStateFlow(preferences.getBoolean("online_sync_auto_on_start", false))
     val onlineSyncAutoOnStart: StateFlow<Boolean> = _onlineSyncAutoOnStart
     val debugPremiumToolsAvailable: Boolean = DebugPremiumAccess.isAvailable
+    val debugGoogleSyncToolsAvailable: Boolean = DebugGoogleSyncAccess.isAvailable
+    val debugGoogleSyncEntryEnabled = DebugGoogleSyncAccess.observe(application)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = DebugGoogleSyncAccess.read(application),
+        )
     private val _lastOnlineSyncAt = MutableStateFlow(
         preferences.getLong("last_online_sync_at", 0L).takeIf { it > 0L },
     )
@@ -218,6 +226,11 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     fun setDebugPremiumOverride(enabled: Boolean) {
         if (!DebugPremiumAccess.isAvailable) return
         DebugPremiumAccess.write(getApplication(), enabled)
+    }
+
+    fun setDebugGoogleSyncEntryEnabled(enabled: Boolean) {
+        if (!DebugGoogleSyncAccess.isAvailable) return
+        DebugGoogleSyncAccess.write(getApplication(), enabled)
     }
 
     override fun onCleared() {

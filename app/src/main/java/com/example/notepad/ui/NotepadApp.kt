@@ -320,8 +320,11 @@ internal fun premiumUiMode(billingState: PremiumBillingState): PremiumUiMode {
     }
 }
 
-internal fun shouldShowGoogleAccountSyncUi(syncMetadata: SyncMetadata): Boolean {
-    return syncMetadata.accountEmail != null
+internal fun shouldShowGoogleAccountSyncUi(
+    syncMetadata: SyncMetadata,
+    debugGoogleSyncEntryEnabled: Boolean = false,
+): Boolean {
+    return syncMetadata.accountEmail != null || debugGoogleSyncEntryEnabled
 }
 
 private enum class DrawingTool {
@@ -523,6 +526,36 @@ private fun debugPremiumOverrideBody(language: AppLanguage): String {
     }
 }
 
+private fun debugGoogleSyncEntryLabel(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) "顯示 Google Sync 測試入口" else "Show Google Sync test entry"
+}
+
+private fun debugGoogleSyncEntryBody(language: AppLanguage): String {
+    return if (language == AppLanguage.TraditionalChinese) {
+        "僅限 debug 版，用來測登入、同步與登出；正式版不顯示。"
+    } else {
+        "Debug build only. Tests sign-in, sync, and sign-out without exposing this in release."
+    }
+}
+
+private fun googleAccountSyncHintLabel(
+    language: AppLanguage,
+    accountEmail: String?,
+    debugGoogleSyncEntryEnabled: Boolean,
+    text: UiText,
+): String {
+    if (!debugGoogleSyncEntryEnabled) return text.googleAccountSyncHint
+    return if (accountEmail == null) {
+        if (language == AppLanguage.TraditionalChinese) {
+            "Debug 測試入口：可在全新安裝後測 Google 登入與 Drive app data 同步。這不是正式使用者承諾。"
+        } else {
+            "Debug test entry: sign in and test Drive app data sync after a fresh install. This is not a release promise."
+        }
+    } else {
+        text.googleAccountSyncHint
+    }
+}
+
 @Composable
 fun LocalNotepadTheme(content: @Composable () -> Unit) {
     MaterialTheme(
@@ -636,6 +669,7 @@ fun NotepadApp(
     val lastOnlineRestoreAt by viewModel.lastOnlineRestoreAt.collectAsStateWithLifecycle()
     val restoreRollbackCheckpoint by viewModel.restoreRollbackCheckpoint.collectAsStateWithLifecycle()
     val syncMetadata by viewModel.syncMetadata.collectAsStateWithLifecycle()
+    val debugGoogleSyncEntryEnabled by viewModel.debugGoogleSyncEntryEnabled.collectAsStateWithLifecycle()
     var onlineSyncAutoAttempted by remember { mutableStateOf(false) }
     val calendarNotes = remember(allNotes, selectedFolderId, listMode) {
         allNotes
@@ -795,6 +829,8 @@ fun NotepadApp(
             syncMetadata = syncMetadata,
             billingState = billingState,
             debugPremiumToolsAvailable = viewModel.debugPremiumToolsAvailable,
+            debugGoogleSyncToolsAvailable = viewModel.debugGoogleSyncToolsAvailable,
+            debugGoogleSyncEntryEnabled = debugGoogleSyncEntryEnabled,
             restoreRollbackCheckpoint = restoreRollbackCheckpoint,
             isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
@@ -804,6 +840,7 @@ fun NotepadApp(
             onOnlineSyncTargetChange = viewModel::setOnlineSyncTargetUri,
             onOnlineSyncAutoOnStartChange = viewModel::setOnlineSyncAutoOnStart,
             onDebugPremiumOverrideChange = viewModel::setDebugPremiumOverride,
+            onDebugGoogleSyncEntryChange = viewModel::setDebugGoogleSyncEntryEnabled,
             onOnlineSyncRecorded = { viewModel.recordOnlineSync() },
             onOnlineRestoreRecorded = { viewModel.recordOnlineRestore() },
             onOnlineSyncDisconnect = viewModel::disconnectOnlineSync,
@@ -1988,6 +2025,8 @@ private fun SettingsScreen(
     syncMetadata: SyncMetadata,
     billingState: PremiumBillingState,
     debugPremiumToolsAvailable: Boolean,
+    debugGoogleSyncToolsAvailable: Boolean,
+    debugGoogleSyncEntryEnabled: Boolean,
     restoreRollbackCheckpoint: DecodedBackup?,
     isPrivacyLocked: Boolean,
     viewModel: NotepadViewModel,
@@ -1997,6 +2036,7 @@ private fun SettingsScreen(
     onOnlineSyncTargetChange: (String?) -> Unit,
     onOnlineSyncAutoOnStartChange: (Boolean) -> Unit,
     onDebugPremiumOverrideChange: (Boolean) -> Unit,
+    onDebugGoogleSyncEntryChange: (Boolean) -> Unit,
     onOnlineSyncRecorded: () -> Unit,
     onOnlineRestoreRecorded: () -> Unit,
     onOnlineSyncDisconnect: () -> Unit,
@@ -2014,7 +2054,7 @@ private fun SettingsScreen(
     var isBackupInProgress by remember { mutableStateOf(false) }
     var isRestoreInProgress by remember { mutableStateOf(false) }
     var isGoogleSyncInProgress by remember { mutableStateOf(false) }
-    val showGoogleAccountSyncUi = shouldShowGoogleAccountSyncUi(syncMetadata)
+    val showGoogleAccountSyncUi = shouldShowGoogleAccountSyncUi(syncMetadata, debugGoogleSyncEntryEnabled)
 
     LaunchedEffect(isPrivacyLocked) {
         if (isPrivacyLocked) {
@@ -2226,7 +2266,7 @@ private fun SettingsScreen(
                 text = text,
                 onEditorFontSizeChange = onEditorFontSizeChange,
             )
-            if (debugPremiumToolsAvailable) {
+            if (debugPremiumToolsAvailable || debugGoogleSyncToolsAvailable) {
                 HorizontalDivider()
                 Text(
                     text = developerToolsLabel(appLanguage),
@@ -2234,26 +2274,53 @@ private fun SettingsScreen(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.testTag("debug_premium_section"),
                 )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = debugPremiumOverrideLabel(appLanguage),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text(
-                            text = debugPremiumOverrideBody(appLanguage),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                if (debugPremiumToolsAvailable) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = debugPremiumOverrideLabel(appLanguage),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                text = debugPremiumOverrideBody(appLanguage),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = billingState.debugPremiumOverride,
+                            onCheckedChange = onDebugPremiumOverrideChange,
+                            modifier = Modifier.testTag("debug_premium_switch"),
                         )
                     }
-                    Switch(
-                        checked = billingState.debugPremiumOverride,
-                        onCheckedChange = onDebugPremiumOverrideChange,
-                        modifier = Modifier.testTag("debug_premium_switch"),
-                    )
+                }
+                if (debugGoogleSyncToolsAvailable) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("debug_google_sync_entry_row"),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = debugGoogleSyncEntryLabel(appLanguage),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                text = debugGoogleSyncEntryBody(appLanguage),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = debugGoogleSyncEntryEnabled,
+                            onCheckedChange = onDebugGoogleSyncEntryChange,
+                            modifier = Modifier.testTag("debug_google_sync_entry_switch"),
+                        )
+                    }
                 }
             }
             HorizontalDivider()
@@ -2355,7 +2422,12 @@ private fun SettingsScreen(
                     }
                 }
                 Text(
-                    text = text.googleAccountSyncHint,
+                    text = googleAccountSyncHintLabel(
+                        language = appLanguage,
+                        accountEmail = syncMetadata.accountEmail,
+                        debugGoogleSyncEntryEnabled = debugGoogleSyncEntryEnabled,
+                        text = text,
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2395,14 +2467,16 @@ private fun SettingsScreen(
                         .fillMaxWidth()
                         .testTag("google_sync_button"),
                 ) {
-                    Text(text.syncNow)
+                    Text(if (syncMetadata.accountEmail == null) text.signInWithGoogle else text.syncNow)
                 }
-                TextButton(
-                    onClick = { showGoogleSignOutDialog = true },
-                    enabled = !isGoogleSyncInProgress,
-                    modifier = Modifier.testTag("google_sign_out_button"),
-                ) {
-                    Text(text.signOut)
+                if (syncMetadata.accountEmail != null) {
+                    TextButton(
+                        onClick = { showGoogleSignOutDialog = true },
+                        enabled = !isGoogleSyncInProgress,
+                        modifier = Modifier.testTag("google_sign_out_button"),
+                    ) {
+                        Text(text.signOut)
+                    }
                 }
             }
             HorizontalDivider()

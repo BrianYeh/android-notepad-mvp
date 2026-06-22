@@ -43,7 +43,9 @@ import com.example.notepad.data.ReminderRepeat
 import com.example.notepad.data.TextFormatRange
 import com.example.notepad.data.TextFormatType
 import com.example.notepad.data.TextFormattingJson
+import com.example.notepad.debug.DebugGoogleSyncAccess
 import com.example.notepad.debug.DebugPremiumAccess
+import com.example.notepad.debug.DebugSaveFailure
 import com.example.notepad.ui.cropTextFormatRangesForSegment
 import com.example.notepad.ui.findHighlightedLinkedText
 import com.example.notepad.ui.findHighlightedLinkedTextSegment
@@ -55,7 +57,6 @@ import com.example.notepad.ui.readContentLines
 import com.example.notepad.ui.readContentMatchTargetForRange
 import com.example.notepad.ui.webUrlAt
 import com.example.notepad.ui.webUrlRanges
-import com.example.notepad.debug.DebugSaveFailure
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -76,6 +77,7 @@ class TextInputTest {
 
     @Before
     fun resetDebugPremiumOverride() {
+        DebugGoogleSyncAccess.write(composeRule.activity, false)
         DebugPremiumAccess.write(composeRule.activity, false)
         DebugSaveFailure.clear()
         resetDrawingToolPreferences()
@@ -83,6 +85,7 @@ class TextInputTest {
 
     @After
     fun clearDebugPremiumOverride() {
+        DebugGoogleSyncAccess.write(composeRule.activity, false)
         DebugPremiumAccess.write(composeRule.activity, false)
         DebugSaveFailure.clear()
         resetDrawingToolPreferences()
@@ -2466,6 +2469,20 @@ class TextInputTest {
         composeRule.onNodeWithTag("import_export_title").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("batch_export_button").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("batch_import_button").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun settingsDebugGoogleSyncEntryExposesFreshInstallSignInOnlyInDebug() {
+        composeRule.onNodeWithTag("settings_button").performClick()
+
+        composeRule.onNodeWithTag("debug_google_sync_entry_switch")
+            .performScrollTo()
+            .performClick()
+
+        composeRule.onNodeWithTag("google_account_sync_title").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("google_account_status").performScrollTo().assertTextContains("Not signed in")
+        composeRule.onNodeWithTag("google_sync_button").performScrollTo().assertTextContains("Sign in with Google")
+        assertTagAbsent("google_sign_out_button")
     }
 
     @Test
