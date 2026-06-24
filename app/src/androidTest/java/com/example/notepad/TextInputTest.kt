@@ -32,6 +32,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.notepad.data.DEFAULT_FOLDER_ID
+import com.example.notepad.data.ChecklistJson
 import com.example.notepad.data.DrawingJson
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
@@ -1198,6 +1199,37 @@ class TextInputTest {
             composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText(title).performClick()
+        waitForTag("checklist_use_mode")
+        composeRule.onNodeWithTag("checklist_use_title").assertTextContains(title)
+        composeRule.onNodeWithText(firstItem).assertIsDisplayed()
+        composeRule.onNodeWithText(secondItem).assertIsDisplayed()
+        assertTagAbsent("checklist_note_title")
+        assertTagAbsent("add_checklist_item_button")
+        assertTagAbsent("delete_checklist_item_button")
+        composeRule.onAllNodesWithTag("checklist_use_item_checkbox")[1]
+            .assertIsDisplayed()
+            .performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                withContext(Dispatchers.IO) {
+                    NotepadDatabase.getInstance(composeRule.activity)
+                        .notepadDao()
+                        .getAllNotes()
+                        .firstOrNull { it.title == title }
+                        ?.textContent
+                        ?.let { ChecklistJson.decode(it).filter { item -> item.text.isNotBlank() } }
+                        ?.map { it.checked } == listOf(true, true)
+                }
+            }
+        }
+        composeRule.onNodeWithTag("back_button").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(title).performClick()
+        waitForTag("checklist_use_mode")
+        composeRule.onNodeWithTag("checklist_progress").assertTextContains("2/2", substring = true)
+        composeRule.onNodeWithTag("edit_checklist_button").performClick()
         waitForTag("checklist_editor")
         composeRule.onNodeWithText(firstItem).assertIsDisplayed()
         composeRule.onNodeWithText(secondItem).assertIsDisplayed()
@@ -1227,6 +1259,10 @@ class TextInputTest {
             composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText(title).performClick()
+        waitForTag("checklist_use_mode")
+        composeRule.onNodeWithTag("empty_checklist_edit_button")
+            .assertIsDisplayed()
+            .performClick()
         waitForTag("checklist_editor")
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag("checklist_item_text").fetchSemanticsNodes().size == 2

@@ -243,7 +243,7 @@ private sealed interface AppScreen {
     data class Premium(val returnTo: AppScreen = Main) : AppScreen
     data class TextEditor(val noteId: Long, val isNewDraft: Boolean = false) : AppScreen
     data class DrawingEditor(val noteId: Long, val isNewDraft: Boolean = false) : AppScreen
-    data class ChecklistEditor(val noteId: Long) : AppScreen
+    data class ChecklistEditor(val noteId: Long, val startInEditMode: Boolean = false) : AppScreen
 }
 
 private data class PendingRestoreBackup(
@@ -787,7 +787,7 @@ fun NotepadApp(
             },
             onCreateChecklistNote = {
                 viewModel.createChecklistNote { noteId ->
-                    screen = AppScreen.ChecklistEditor(noteId)
+                    screen = AppScreen.ChecklistEditor(noteId, startInEditMode = true)
                 }
             },
             onCreateOcrNote = {
@@ -895,13 +895,20 @@ fun NotepadApp(
 
         is AppScreen.ChecklistEditor -> ChecklistEditorScreen(
             noteId = currentScreen.noteId,
+            startInEditMode = currentScreen.startInEditMode,
             folders = folders,
             text = text,
             appLanguage = appLanguage,
             billingState = billingState,
             isPrivacyLocked = isPrivacyLocked,
             viewModel = viewModel,
-            onOpenPremium = { screen = AppScreen.Premium(returnTo = currentScreen) },
+            onOpenPremium = { returnToEditMode ->
+                screen = AppScreen.Premium(
+                    returnTo = currentScreen.copy(
+                        startInEditMode = currentScreen.startInEditMode || returnToEditMode,
+                    ),
+                )
+            },
             onBack = { screen = AppScreen.Main },
             onDeleted = { screen = AppScreen.Main },
         )
@@ -6035,13 +6042,14 @@ private fun TextEditorToolbarButton(
 @Composable
 private fun ChecklistEditorScreen(
     noteId: Long,
+    startInEditMode: Boolean,
     folders: List<FolderEntity>,
     text: UiText,
     appLanguage: AppLanguage,
     billingState: PremiumBillingState,
     isPrivacyLocked: Boolean,
     viewModel: NotepadViewModel,
-    onOpenPremium: () -> Unit,
+    onOpenPremium: (returnToEditMode: Boolean) -> Unit,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
 ) {
@@ -6053,18 +6061,21 @@ private fun ChecklistEditorScreen(
     var lastSavedAt by remember(noteId) { mutableStateOf<Long?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isSavingAndLeaving by remember(noteId) { mutableStateOf(false) }
+    var isEditingChecklist by remember(noteId) { mutableStateOf(startInEditMode) }
     val scope = rememberCoroutineScope()
     val titleFocusRequester = remember(noteId) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val autoSaveVersion = remember(noteId) { AtomicLong(0L) }
+    val useModeSaveMutex = remember(noteId) { Mutex() }
     val checklistJson = remember(items) { ChecklistJson.encode(items) }
     val latestNote by rememberUpdatedState(note)
     val latestTitle by rememberUpdatedState(title)
     val latestItems by rememberUpdatedState(items)
     val latestLoadedNoteId by rememberUpdatedState(loadedNoteId)
-    val checkedCount = items.count { it.checked }
-    val visibleItemCount = items.count { it.text.isNotBlank() }.coerceAtLeast(items.size)
+    val visibleItems = items.filter { it.text.isNotBlank() }
+    val checkedCount = visibleItems.count { it.checked }
+    val visibleItemCount = visibleItems.size
 
     LaunchedEffect(note?.id) {
         val loaded = note ?: return@LaunchedEffect
@@ -6141,7 +6152,7 @@ private fun ChecklistEditorScreen(
     fun openPremiumAfterSavingChecklist() {
         val currentNote = latestNote
         if (currentNote == null) {
-            onOpenPremium()
+            onOpenPremium(true)
             return
         }
         autoSaveVersion.incrementAndGet()
@@ -6151,7 +6162,7 @@ private fun ChecklistEditorScreen(
             saveStatus = SaveStatus.Saving
             lastSavedAt = viewModel.saveChecklistNoteNow(noteId, titleToSave, checklistJsonToSave) ?: currentNote.updatedAt
             saveStatus = SaveStatus.Saved
-            onOpenPremium()
+            onOpenPremium(true)
         }
     }
 
@@ -6168,6 +6179,24 @@ private fun ChecklistEditorScreen(
     fun deleteItem(id: String) {
         autoSaveVersion.incrementAndGet()
         items = items.filterNot { it.id == id }.ifEmpty { ChecklistJson.emptyItems() }
+    }
+
+    fun toggleUseModeItem(id: String, checked: Boolean) {
+        val saveVersion = autoSaveVersion.incrementAndGet()
+        val updatedItems = items.map { item ->
+            if (item.id == id) item.copy(checked = checked) else item
+        }
+        items = updatedItems
+        scope.launch {
+            useModeSaveMutex.withLock {
+                saveStatus = SaveStatus.Saving
+                val savedAt = viewModel.saveChecklistNoteNow(noteId, latestTitle, ChecklistJson.encode(updatedItems))
+                if (saveVersion == autoSaveVersion.get()) {
+                    lastSavedAt = savedAt ?: lastSavedAt
+                    saveStatus = SaveStatus.Saved
+                }
+            }
+        }
     }
 
     LaunchedEffect(isPrivacyLocked) {
@@ -6207,11 +6236,20 @@ private fun ChecklistEditorScreen(
                     }
                 },
                 actions = {
-                    TextButton(
-                        onClick = { showDeleteDialog = true },
-                        modifier = Modifier.testTag("delete_checklist_note_button"),
-                    ) {
-                        Text(text.moveToTrash)
+                    if (isEditingChecklist) {
+                        TextButton(
+                            onClick = { showDeleteDialog = true },
+                            modifier = Modifier.testTag("delete_checklist_note_button"),
+                        ) {
+                            Text(text.moveToTrash)
+                        }
+                    } else {
+                        TextButton(
+                            onClick = { isEditingChecklist = true },
+                            modifier = Modifier.testTag("edit_checklist_button"),
+                        ) {
+                            Text(text.edit)
+                        }
                     }
                 },
             )
@@ -6226,6 +6264,89 @@ private fun ChecklistEditorScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(text.noteNotFound)
+            }
+        } else if (!isEditingChecklist) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .testTag("checklist_use_mode"),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item {
+                    Card(shape = RoundedCornerShape(8.dp)) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = title.ifBlank { text.untitledChecklist },
+                                style = MaterialTheme.typography.titleLarge,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.testTag("checklist_use_title"),
+                            )
+                            Text(
+                                text = text.checkedItems(checkedCount, visibleItemCount),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("checklist_progress"),
+                            )
+                            currentNote.reminderAt?.let {
+                                Text(
+                                    text = reminderStatus(it, text, appLanguage),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (it <= System.currentTimeMillis()) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.testTag("note_reminder_status"),
+                                )
+                            }
+                        }
+                    }
+                }
+                if (visibleItems.isEmpty()) {
+                    item {
+                        Button(
+                            onClick = { isEditingChecklist = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("empty_checklist_edit_button"),
+                        ) {
+                            Text(text.edit)
+                        }
+                    }
+                } else {
+                    items(visibleItems, key = { it.id }) { item ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("checklist_use_item_${item.id}"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Checkbox(
+                                checked = item.checked,
+                                onCheckedChange = { checked ->
+                                    toggleUseModeItem(item.id, checked)
+                                },
+                                modifier = Modifier.testTag("checklist_use_item_checkbox"),
+                            )
+                            Text(
+                                text = item.text,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("checklist_use_item_text"),
+                            )
+                        }
+                    }
+                }
             }
         } else {
             LazyColumn(
