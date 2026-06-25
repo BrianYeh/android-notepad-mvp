@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.update
 class PremiumBilling(
     private val application: Application,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val connectToPlay: Boolean = true,
 ) : PurchasesUpdatedListener {
     private val store = PremiumEntitlementStore(
         application.getSharedPreferences(PremiumEntitlementStore.PREFERENCES_NAME, Context.MODE_PRIVATE),
@@ -49,6 +50,10 @@ class PremiumBilling(
         .build()
 
     fun start() {
+        if (!connectToPlay) {
+            _state.update { it.copy(billingAvailable = false, loading = false, lastError = null) }
+            return
+        }
         if (billingClient.isReady) {
             refresh()
             return
@@ -89,6 +94,10 @@ class PremiumBilling(
     }
 
     fun refresh() {
+        if (!connectToPlay) {
+            _state.update { it.copy(billingAvailable = false, loading = false, lastError = null) }
+            return
+        }
         if (!billingClient.isReady) {
             start()
             return

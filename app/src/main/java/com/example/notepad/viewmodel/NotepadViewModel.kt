@@ -70,7 +70,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         File(application.filesDir, "restore-rollback-checkpoint.json"),
     )
     private val driveSyncClient = GoogleDriveSyncClient(application)
-    private val premiumBilling = PremiumBilling(application)
+    private val premiumBilling = PremiumBilling(
+        application = application,
+        connectToPlay = DebugPremiumAccess.shouldConnectBilling(),
+    )
     private val googleSyncMutex = Mutex()
     private val drawingSaveEditGates = mutableMapOf<Long, DrawingSaveEditGate>()
     private val deviceId = preferences.getString("sync_device_id", null) ?: UUID.randomUUID().toString().also {

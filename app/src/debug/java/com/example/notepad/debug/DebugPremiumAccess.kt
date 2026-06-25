@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.StateFlow
 object DebugPremiumAccess {
     const val isAvailable: Boolean = true
     private val overrideState = MutableStateFlow(false)
+    @Volatile
+    private var billingConnectionSuppressed = false
     private var loaded = false
 
     fun observe(context: Context): StateFlow<Boolean> {
@@ -26,6 +28,14 @@ object DebugPremiumAccess {
             .putBoolean(PREMIUM_OVERRIDE_ENABLED_KEY, enabled)
             .apply()
         overrideState.value = enabled
+    }
+
+    fun shouldConnectBilling(): Boolean {
+        return !billingConnectionSuppressed
+    }
+
+    fun suppressBillingConnectionForTests(suppressed: Boolean) {
+        billingConnectionSuppressed = suppressed
     }
 
     private fun ensureLoaded(context: Context) {

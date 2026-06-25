@@ -17,4 +17,10 @@ object DebugPremiumAccess {
     }
 
     fun write(context: Context, enabled: Boolean) = Unit
+
+    fun shouldConnectBilling(): Boolean {
+        return true
+    }
+
+    fun suppressBillingConnectionForTests(suppressed: Boolean) = Unit
 }
