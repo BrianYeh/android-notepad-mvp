@@ -14,9 +14,9 @@ import org.junit.Test
 
 class NoteUiPureFunctionTest {
     @Test
-    fun googleAccountSyncUiOnlyShowsForExistingConnectedAccount() {
+    fun googleAccountSyncUiShowsOnFreshInstall() {
         assertEquals(
-            false,
+            true,
             shouldShowGoogleAccountSyncUi(
                 SyncMetadata(
                     deviceId = "device",

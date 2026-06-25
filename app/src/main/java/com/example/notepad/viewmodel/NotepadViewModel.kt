@@ -47,7 +47,9 @@ import com.example.notepad.ocr.OcrNoteUseCase
 import com.example.notepad.reminder.ReminderScheduler
 import com.example.notepad.widget.NotepadWidgets
 import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -370,7 +372,8 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     fun connectGoogleAccountFromIntent(data: Intent?): Boolean {
         val account = try {
             GoogleSignIn.getSignedInAccountFromIntent(data).getResult(ApiException::class.java)
-        } catch (_: ApiException) {
+        } catch (exception: ApiException) {
+            updateSyncFailure(exception.toSignInSyncError())
             null
         } ?: return false
 
@@ -390,6 +393,27 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             lastError = null,
         )
         return true
+    }
+
+    private fun ApiException.toSignInSyncError(): SyncError {
+        return when (statusCode) {
+            CommonStatusCodes.DEVELOPER_ERROR -> SyncError(
+                code = SyncErrorCode.MissingGoogleConfiguration,
+                message = "Google sign-in is not configured for this app signing certificate.",
+            )
+            CommonStatusCodes.NETWORK_ERROR -> SyncError(
+                code = SyncErrorCode.NetworkUnavailable,
+                message = "Network unavailable.",
+            )
+            GoogleSignInStatusCodes.SIGN_IN_CANCELLED -> SyncError(
+                code = SyncErrorCode.NotSignedIn,
+                message = "Google sign-in was cancelled.",
+            )
+            else -> SyncError(
+                code = SyncErrorCode.Unknown,
+                message = "Google sign-in failed.",
+            )
+        }
     }
 
     fun signOutGoogleAccount() {

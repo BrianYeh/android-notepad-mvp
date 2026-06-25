@@ -324,7 +324,7 @@ internal fun shouldShowGoogleAccountSyncUi(
     syncMetadata: SyncMetadata,
     debugGoogleSyncEntryEnabled: Boolean = false,
 ): Boolean {
-    return syncMetadata.accountEmail != null || debugGoogleSyncEntryEnabled
+    return true
 }
 
 private enum class DrawingTool {
@@ -535,24 +535,6 @@ private fun debugGoogleSyncEntryBody(language: AppLanguage): String {
         "僅限 debug 版，用來測登入、同步與登出；正式版不顯示。"
     } else {
         "Debug build only. Tests sign-in, sync, and sign-out without exposing this in release."
-    }
-}
-
-private fun googleAccountSyncHintLabel(
-    language: AppLanguage,
-    accountEmail: String?,
-    debugGoogleSyncEntryEnabled: Boolean,
-    text: UiText,
-): String {
-    if (!debugGoogleSyncEntryEnabled) return text.googleAccountSyncHint
-    return if (accountEmail == null) {
-        if (language == AppLanguage.TraditionalChinese) {
-            "Debug 測試入口：可在全新安裝後測 Google 登入與 Drive app data 同步。這不是正式使用者承諾。"
-        } else {
-            "Debug test entry: sign in and test Drive app data sync after a fresh install. This is not a release promise."
-        }
-    } else {
-        text.googleAccountSyncHint
     }
 }
 
@@ -2304,31 +2286,6 @@ private fun SettingsScreen(
                         )
                     }
                 }
-                if (debugGoogleSyncToolsAvailable) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("debug_google_sync_entry_row"),
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = debugGoogleSyncEntryLabel(appLanguage),
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                            Text(
-                                text = debugGoogleSyncEntryBody(appLanguage),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = debugGoogleSyncEntryEnabled,
-                            onCheckedChange = onDebugGoogleSyncEntryChange,
-                            modifier = Modifier.testTag("debug_google_sync_entry_switch"),
-                        )
-                    }
-                }
             }
             HorizontalDivider()
             Text(
@@ -2429,12 +2386,11 @@ private fun SettingsScreen(
                     }
                 }
                 Text(
-                    text = googleAccountSyncHintLabel(
-                        language = appLanguage,
-                        accountEmail = syncMetadata.accountEmail,
-                        debugGoogleSyncEntryEnabled = debugGoogleSyncEntryEnabled,
-                        text = text,
-                    ),
+                    text = if (syncMetadata.accountEmail == null) {
+                        text.googleAccountSyncHint
+                    } else {
+                        text.googleAccountSyncConnectedHint
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

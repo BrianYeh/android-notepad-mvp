@@ -2480,19 +2480,16 @@ class TextInputTest {
     }
 
     @Test
-    fun settingsHideGoogleSyncByDefaultAndExposeManualBackupControls() {
+    fun settingsExposeGoogleSyncByDefaultAndManualBackupControls() {
         composeRule.onNodeWithTag("settings_button").performClick()
 
-        assertTagAbsent("google_account_sync_title")
-        assertTagAbsent("google_account_status")
+        composeRule.onNodeWithTag("google_account_sync_title").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("google_account_status").performScrollTo().assertTextContains("Not signed in")
         assertTagAbsent("google_last_sync_status")
         assertTagAbsent("google_sync_progress")
         assertTagAbsent("google_sync_error")
-        assertTagAbsent("google_sync_button")
+        composeRule.onNodeWithTag("google_sync_button").performScrollTo().assertTextContains("Sign in with Google")
         assertTagAbsent("google_sign_out_button")
-        assertExactTextAbsent("Google Account Sync")
-        assertExactTextAbsent("Sign in with Google")
-        assertEquals(0, composeRule.onAllNodesWithText("Google Drive app data", substring = true).fetchSemanticsNodes().size)
 
         composeRule.onNodeWithTag("online_sync_title").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("online_sync_target_status").performScrollTo().assertIsDisplayed()
@@ -2508,13 +2505,10 @@ class TextInputTest {
     }
 
     @Test
-    fun settingsDebugGoogleSyncEntryExposesFreshInstallSignInOnlyInDebug() {
+    fun settingsDoesNotExposeDeadGoogleSyncDebugSwitch() {
         composeRule.onNodeWithTag("settings_button").performClick()
 
-        composeRule.onNodeWithTag("debug_google_sync_entry_switch")
-            .performScrollTo()
-            .performClick()
-
+        assertTagAbsent("debug_google_sync_entry_switch")
         composeRule.onNodeWithTag("google_account_sync_title").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("google_account_status").performScrollTo().assertTextContains("Not signed in")
         composeRule.onNodeWithTag("google_sync_button").performScrollTo().assertTextContains("Sign in with Google")
