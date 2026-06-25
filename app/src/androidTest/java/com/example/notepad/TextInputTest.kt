@@ -94,7 +94,9 @@ class TextInputTest {
 
     private fun waitForTag(tag: String) {
         composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+            runCatching {
+                composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+            }.getOrDefault(false)
         }
     }
 
@@ -170,8 +172,12 @@ class TextInputTest {
 
     private fun selectReminderFilter(filterName: String) {
         composeRule.onNodeWithTag("reminder_filter_selector").performClick()
-        waitForTag("reminder_$filterName")
-        composeRule.onNodeWithTag("reminder_$filterName").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("reminder_$filterName", useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+        composeRule.onNodeWithTag("reminder_$filterName", useUnmergedTree = true).performClick()
     }
 
     private fun clickFirstCalendarPreset() {
@@ -249,6 +255,12 @@ class TextInputTest {
             .executeShellCommand("input keyevent KEYCODE_BACK")
             .close()
         composeRule.waitForIdle()
+    }
+
+    private fun exitFullscreenDrawingFromUi() {
+        waitForTag("drawing_fullscreen_details_button")
+        composeRule.onNodeWithTag("drawing_fullscreen_details_button").performClick()
+        waitForTag("drawing_note_title")
     }
 
     private fun grantPostNotificationsIfNeeded() {
@@ -2647,9 +2659,7 @@ class TextInputTest {
         composeRule.onNodeWithTag("drawing_tool_Eraser").assertIsDisplayed().performClick()
         drawShortStrokeOnFullscreenCanvas()
 
-        composeRule.activityRule.scenario.onActivity { activity ->
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
+        pressDeviceBack()
         waitForTag("drawing_note_title")
         composeRule.onNodeWithTag("back_button").performClick()
 
@@ -2663,17 +2673,14 @@ class TextInputTest {
 
     @Test
     fun existingBlankDrawingOpenedFromListIsKeptAfterBack() {
+        waitForTag("add_note_button")
         val noteId = createDrawingNote()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("note_card_$noteId") > 0
-        }
+        waitForTag("note_card_$noteId")
         composeRule.onNodeWithTag("note_card_$noteId").performClick()
         waitForTag("fullscreen_drawing_mode")
 
-        composeRule.activityRule.scenario.onActivity { activity ->
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
+        pressDeviceBack()
         waitForTag("drawing_note_title")
         composeRule.onNodeWithTag("back_button").performClick()
 
@@ -2816,10 +2823,7 @@ class TextInputTest {
         val noteId = waitForSingleNewNoteId(beforeIds)
         waitForTag("fullscreen_drawing_mode")
         drawShortStrokeOnFullscreenCanvas()
-        composeRule.activityRule.scenario.onActivity { activity ->
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
-        waitForTag("drawing_note_title")
+        exitFullscreenDrawingFromUi()
         composeRule.onNodeWithTag("drawing_note_title").performTextInput(title)
 
         composeRule.waitUntil(timeoutMillis = 5_000) {

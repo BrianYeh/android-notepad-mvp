@@ -32,7 +32,7 @@ Native Android notepad built with Kotlin, Jetpack Compose, Room, and MVVM.
 - App language follows the Android system language, matching ColorNote-style behavior
 - Manual JSON backup and restore from Settings; restore validates the selected backup, previews note/folder counts, and saves a private rollback checkpoint before replacing local data
 - Sync-ready local metadata for stable folder/note IDs and tombstones
-- Google account sync foundation is implemented with Google Sign-In and Drive app data, but release readiness still depends on the OAuth/Drive setup and real-device hardening in `GOOGLE_ACCOUNT_SYNC_SETUP.md`
+- Google account sync is implemented with Google Sign-In and Drive app data, with release setup and real-device hardening tracked in `GOOGLE_ACCOUNT_SYNC_SETUP.md`
 
 ## Requirements
 
@@ -85,7 +85,7 @@ All notes and folders are stored in the local Room database `local_notepad.db`. 
 
 ## Google Account Sync
 
-Google account sync has an Android-side implementation using Google Sign-In and Drive app data, but it is not release-ready until Google Cloud OAuth and Drive API credentials are configured and the real-device hardening checklist is complete. See `GOOGLE_ACCOUNT_SYNC_SETUP.md` for the required package name, debug signing fingerprints, Drive scopes, dependencies, and validation checklist. Manual JSON backup remains a separate Android file-picker flow, even when the user stores that backup file in Google Drive.
+Google account sync uses Google Sign-In and private Drive app data. The Settings entry is visible in release builds, but Play-installed builds need the Google Cloud OAuth Android client to include the Play Console app signing SHA-1 for package `com.brianyeh.justnotes`. See `GOOGLE_ACCOUNT_SYNC_SETUP.md` for the required fingerprints, Drive scopes, dependencies, and validation checklist. Manual JSON backup remains a separate Android file-picker flow, even when the user stores that backup file in Google Drive.
 
 ## Notifications
 

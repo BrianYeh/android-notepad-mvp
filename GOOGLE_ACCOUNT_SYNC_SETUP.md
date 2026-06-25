@@ -1,6 +1,6 @@
 # Google Account Sync Setup
 
-Google account sync now has Android-side implementation, but release readiness still depends on completing the Google Cloud checklist and validating the hardening cases below on real accounts/devices. The app must keep manual Drive file-picker backup separate from account sync.
+Google account sync now has Android-side implementation and the Settings entry is visible in release builds. Release readiness still depends on completing the Google Cloud checklist and validating the hardening cases below on real accounts/devices. The app must keep manual Drive file-picker backup separate from account sync.
 
 ## Current Phase 0 Findings
 
@@ -11,6 +11,7 @@ Google account sync now has Android-side implementation, but release readiness s
   - SHA-1: `0D:7D:F6:AB:E9:79:27:82:91:F8:E0:E5:1B:95:62:DF:71:63:8C:81`
   - SHA-256: `C8:95:F4:4A:37:BE:74:81:B6:B5:60:BF:F4:AC:73:DF:14:BD:25:86:B3:63:E1:4D:00:E6:7C:A4:BB:62:8D:02`
 - No `google-services.json`, release keystore, or release OAuth client configuration is present in the repo.
+- Play-distributed builds require the Google Play App Signing certificate SHA-1 in the Android OAuth client. The upload key SHA-1 is not enough after Play re-signs the app.
 - Gradle now includes Google Sign-In and Google Drive REST dependencies.
 - The manifest includes `android.permission.INTERNET` for Drive sync.
 - Existing Settings backup is a manual JSON backup through Android's file picker. It is not account sync.
@@ -27,7 +28,9 @@ Google account sync now has Android-side implementation, but release readiness s
 4. Create an Android OAuth client:
    - Package name: `com.brianyeh.justnotes`
    - Debug SHA-1: `0D:7D:F6:AB:E9:79:27:82:91:F8:E0:E5:1B:95:62:DF:71:63:8C:81`
-   - Add the release SHA-1 before shipping release builds
+   - Add the Play Console app signing SHA-1 before testing Play-installed builds:
+     - Play Console > Just Notes > Setup > App integrity > App signing key certificate > SHA-1 certificate fingerprint
+   - Add the upload key SHA-1 too if you sideload locally signed release artifacts outside Play
 5. Choose the Drive storage scope:
    - Preferred: `https://www.googleapis.com/auth/drive.appdata` for `appDataFolder`
    - Fallback only with product approval: `https://www.googleapis.com/auth/drive.file` for an app-managed visible Drive file
@@ -46,6 +49,7 @@ Google account sync now has Android-side implementation, but release readiness s
 - `deletedAt` tombstones are preserved for normal soft deletes.
 - Permanent note deletes are retained as lightweight sync tombstones so another device cannot revive a purged note.
 - Settings shows signed-in email, current sync status, retryable errors, and sign-out behavior.
+- Settings shows the Google account sync sign-in entry on a fresh release install.
 - Keep manual backup/restore separate from sync because restore replaces local data.
 
 ## Remaining Product Risks
