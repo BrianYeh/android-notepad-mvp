@@ -44,7 +44,6 @@ import com.example.notepad.data.ReminderRepeat
 import com.example.notepad.data.TextFormatRange
 import com.example.notepad.data.TextFormatType
 import com.example.notepad.data.TextFormattingJson
-import com.example.notepad.debug.DebugGoogleSyncAccess
 import com.example.notepad.debug.DebugPremiumAccess
 import com.example.notepad.debug.DebugSaveFailure
 import com.example.notepad.ui.cropTextFormatRangesForSegment
@@ -78,7 +77,6 @@ class TextInputTest {
 
     @Before
     fun resetDebugPremiumOverride() {
-        DebugGoogleSyncAccess.write(composeRule.activity, false)
         DebugPremiumAccess.write(composeRule.activity, false)
         DebugSaveFailure.clear()
         resetDrawingToolPreferences()
@@ -86,7 +84,6 @@ class TextInputTest {
 
     @After
     fun clearDebugPremiumOverride() {
-        DebugGoogleSyncAccess.write(composeRule.activity, false)
         DebugPremiumAccess.write(composeRule.activity, false)
         DebugSaveFailure.clear()
         resetDrawingToolPreferences()

@@ -32,18 +32,6 @@ class NoteUiPureFunctionTest {
                 SyncMetadata(
                     deviceId = "device",
                     deviceName = "Pixel",
-                    accountEmail = null,
-                    status = SyncStatus.SignedOut,
-                ),
-                debugGoogleSyncEntryEnabled = true,
-            ),
-        )
-        assertEquals(
-            true,
-            shouldShowGoogleAccountSyncUi(
-                SyncMetadata(
-                    deviceId = "device",
-                    deviceName = "Pixel",
                     accountEmail = "person@example.com",
                     status = SyncStatus.Idle,
                 ),
