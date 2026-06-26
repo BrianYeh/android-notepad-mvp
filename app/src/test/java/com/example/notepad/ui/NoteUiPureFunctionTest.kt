@@ -379,4 +379,15 @@ class NoteUiPureFunctionTest {
         assertEquals(-1, previousFindMatchIndex(0, 0))
         assertEquals("No matches", formatFindMatchStatus(0, 0, "No matches"))
     }
+
+    @Test
+    fun noteContentUrlsPreserveBalancedParenthesesAndTrimSentencePunctuation() {
+        val content = "Read https://en.wikipedia.org/wiki/Foo_(bar), then (https://example.com/path)."
+
+        val urlRanges = content.webUrlRanges()
+
+        assertEquals(2, urlRanges.size)
+        assertEquals("https://en.wikipedia.org/wiki/Foo_(bar)", content.substring(urlRanges[0].range))
+        assertEquals("https://example.com/path", content.substring(urlRanges[1].range))
+    }
 }

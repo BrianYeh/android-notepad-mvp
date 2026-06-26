@@ -254,6 +254,13 @@ class TextInputTest {
         composeRule.waitForIdle()
     }
 
+    private fun pressActivityBack() {
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.onBackPressedDispatcher.onBackPressed()
+        }
+        composeRule.waitForIdle()
+    }
+
     private fun exitFullscreenDrawingFromUi() {
         waitForTag("drawing_fullscreen_details_button")
         composeRule.onNodeWithTag("drawing_fullscreen_details_button").performClick()
@@ -1779,17 +1786,6 @@ class TextInputTest {
     }
 
     @Test
-    fun noteContentUrlsPreserveBalancedParenthesesAndTrimSentencePunctuation() {
-        val content = "Read https://en.wikipedia.org/wiki/Foo_(bar), then (https://example.com/path)."
-
-        val urlRanges = content.webUrlRanges()
-
-        assertEquals(2, urlRanges.size)
-        assertEquals("https://en.wikipedia.org/wiki/Foo_(bar)", content.substring(urlRanges[0].range))
-        assertEquals("https://example.com/path", content.substring(urlRanges[1].range))
-    }
-
-    @Test
     fun highlightedLinkedTextKeepsClickableUrlAnnotation() {
         val content = "Visit https://example.com/docs for docs"
         val urlStart = content.indexOf("https://")
@@ -2656,7 +2652,7 @@ class TextInputTest {
         composeRule.onNodeWithTag("drawing_tool_Eraser").assertIsDisplayed().performClick()
         drawShortStrokeOnFullscreenCanvas()
 
-        pressDeviceBack()
+        pressActivityBack()
         waitForTag("drawing_note_title")
         composeRule.onNodeWithTag("back_button").performClick()
 
@@ -2677,7 +2673,7 @@ class TextInputTest {
         composeRule.onNodeWithTag("note_card_$noteId").performClick()
         waitForTag("fullscreen_drawing_mode")
 
-        pressDeviceBack()
+        pressActivityBack()
         waitForTag("drawing_note_title")
         composeRule.onNodeWithTag("back_button").performClick()
 

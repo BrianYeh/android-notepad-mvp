@@ -2,7 +2,7 @@ package com.example.notepad.ui
 
 import com.example.notepad.data.AppLanguage
 
-data class UiText(
+class UiText(
     val appName: String,
     val settings: String,
     val notesTab: String,
@@ -257,8 +257,14 @@ data class UiText(
     val syncTarget: String,
     val thisDevice: String,
     val connectedDevices: String,
-    val googleDriveHandledByFiles: String,
 ) {
+    val googleDriveHandledByFiles: String
+        get() = if (this === TraditionalChineseText) {
+            "此畫面只透過 Android 檔案選擇器儲存與還原手動 JSON 備份。"
+        } else {
+            "This screen saves and restores manual JSON backups through Android's file picker."
+        }
+
     fun resultCount(count: Int): String {
         return if (this === TraditionalChineseText) {
             "$count 筆結果"
@@ -591,7 +597,6 @@ val EnglishText = UiText(
     syncTarget = "Backup target",
     thisDevice = "This device",
     connectedDevices = "Device",
-    googleDriveHandledByFiles = "This screen saves and restores manual JSON backups through Android's file picker.",
 )
 
 val TraditionalChineseText = UiText(
@@ -849,7 +854,6 @@ val TraditionalChineseText = UiText(
     syncTarget = "備份目標",
     thisDevice = "這台裝置",
     connectedDevices = "裝置",
-    googleDriveHandledByFiles = "此畫面只透過 Android 檔案選擇器儲存與還原手動 JSON 備份。",
 )
 
 fun uiTextFor(language: AppLanguage): UiText {
