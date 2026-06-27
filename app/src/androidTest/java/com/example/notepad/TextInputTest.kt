@@ -243,8 +243,17 @@ class TextInputTest {
     }
 
     private fun enableDebugPremiumAccess() {
-        DebugPremiumAccess.write(composeRule.activity, true)
+        composeRule.onNodeWithTag("settings_button").performClick()
+        waitForTag("debug_premium_section")
+        if (debugPremiumSwitchState() != ToggleableState.On) {
+            composeRule.onNodeWithTag("debug_premium_switch").assertIsDisplayed().performClick()
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            debugPremiumSwitchState() == ToggleableState.On
+        }
+        pressActivityBack()
         composeRule.waitForIdle()
+        waitForTag("add_note_button")
     }
 
     private fun pressDeviceBack() {
@@ -870,37 +879,22 @@ class TextInputTest {
     }
 
     @Test
-    fun reminderControlsRouteNonPremiumUsersToPremium() {
+    fun reminderControlsStayFreeForNonPremiumUsers() {
         openAddMenuItem("new_text_note_menu_item")
         waitForTag("text_note_content")
         composeRule.onNodeWithTag("text_note_content")
             .assertIsDisplayed()
-            .performTextInput("Reminder gate draft")
+            .performTextInput("Reminder free draft")
 
         composeRule.onNodeWithTag("more_note_button").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("set_reminder_menu_item")
             .assertIsDisplayed()
-            .assertTextContains("Premium", substring = true)
-            .performClick()
-
-        waitForTag("premium_screen")
-        composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
-        composeRule.activityRule.scenario.onActivity { activity ->
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithTag("text_note_content").fetchSemanticsNodes().isNotEmpty() ||
-                composeRule.onAllNodesWithTag("text_note_read_content").fetchSemanticsNodes().isNotEmpty()
-        }
-        if (composeRule.onAllNodesWithTag("text_note_content").fetchSemanticsNodes().isNotEmpty()) {
-            composeRule.onNodeWithTag("text_note_content").assertTextContains("Reminder gate draft")
-        } else {
-            composeRule.onNodeWithTag("text_note_read_content").assertTextContains("Reminder gate draft")
-        }
+            .assertTextEquals("Set reminder")
+        assertTagAbsent("premium_screen")
     }
 
     @Test
-    fun freeReminderClearWorksAndRepeatControlsAreHidden() {
+    fun freeReminderClearAndRepeatControlsWork() {
         val suffix = System.currentTimeMillis()
         val title = "Existing reminder $suffix"
         val reminderAt = Calendar.getInstance().apply {
@@ -924,11 +918,11 @@ class TextInputTest {
         waitForTag("text_note_read_mode")
         composeRule.onNodeWithTag("note_reminder_status").assertIsDisplayed()
         composeRule.onNodeWithTag("more_note_button").assertIsDisplayed().performClick()
-        composeRule.onNodeWithTag("set_reminder_menu_item").assertTextContains("Premium", substring = true)
-        assertTagAbsent("text_reminder_repeat_None")
-        assertTagAbsent("text_reminder_repeat_Daily")
-        assertTagAbsent("text_reminder_repeat_Weekly")
-        assertTagAbsent("text_reminder_repeat_Monthly")
+        composeRule.onNodeWithTag("set_reminder_menu_item").assertTextEquals("Set reminder")
+        composeRule.onNodeWithTag("text_reminder_repeat_None").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_reminder_repeat_Daily").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_reminder_repeat_Weekly").assertIsDisplayed()
+        composeRule.onNodeWithTag("text_reminder_repeat_Monthly").assertIsDisplayed()
         composeRule.onNodeWithTag("clear_reminder_menu_item").assertIsDisplayed().performClick()
 
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -944,8 +938,8 @@ class TextInputTest {
     }
 
     @Test
-    fun drawingReminderGateSavesDraftBeforePremium() {
-        val title = "Drawing premium gate ${System.currentTimeMillis()}"
+    fun drawingReminderIsFreeForNonPremiumUsers() {
+        val title = "Drawing reminder free ${System.currentTimeMillis()}"
 
         openAddMenuItem("new_drawing_note_menu_item")
         exitInitialDrawingFocusModeIfNeeded()
@@ -954,65 +948,40 @@ class TextInputTest {
             .performTextInput(title)
         composeRule.onNodeWithTag("set_reminder_button")
             .assertIsDisplayed()
-            .assertTextContains("Premium", substring = true)
+            .assertTextEquals("Set reminder")
+        assertTagAbsent("premium_screen")
+    }
+
+    @Test
+    fun blankDrawingReminderPickerCancelKeepsDraft() {
+        val beforeIds = noteIds()
+
+        openAddMenuItem("new_drawing_note_menu_item")
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        exitInitialDrawingFocusModeIfNeeded()
+        composeRule.onNodeWithTag("set_reminder_button")
+            .assertIsDisplayed()
             .performClick()
 
-        waitForTag("premium_screen")
-        composeRule.activityRule.scenario.onActivity { activity ->
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
+        pressDeviceBack()
         waitForTag("drawing_note_title")
-        composeRule.onNodeWithTag("drawing_note_title")
-            .assertIsDisplayed()
-            .assertTextContains(title)
-    }
-
-    @Test
-    fun blankDrawingReminderPremiumGateCancelStillDeletesDraft() {
-        val beforeIds = noteIds()
-
-        openAddMenuItem("new_drawing_note_menu_item")
-        val noteId = waitForSingleNewNoteId(beforeIds)
-        exitInitialDrawingFocusModeIfNeeded()
-        composeRule.onNodeWithTag("set_reminder_button")
-            .assertIsDisplayed()
-            .assertTextContains("Premium", substring = true)
-            .performClick()
-
-        waitForTag("premium_screen")
-        composeRule.activityRule.scenario.onActivity { activity ->
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
-
+        composeRule.onNodeWithTag("back_button").performClick()
         composeRule.waitUntil(timeoutMillis = 10_000) {
-            tagCount("add_note_button") > 0 && noteIds() == beforeIds
+            tagCount("add_note_button") > 0
         }
-        assertNull(noteById(noteId))
+        assertTrue(noteById(noteId) != null)
     }
 
     @Test
-    fun blankDrawingPremiumReminderPickerCancelKeepsDraft() {
-        composeRule.onNodeWithTag("settings_button").performClick()
-        composeRule.onNodeWithTag("debug_premium_section").assertIsDisplayed()
-        composeRule.onNodeWithTag("debug_premium_switch").assertIsDisplayed().performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            debugPremiumSwitchState() == ToggleableState.On
-        }
-        assertTrue(DebugPremiumAccess.read(composeRule.activity))
-        composeRule.activityRule.scenario.onActivity { activity ->
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
-        waitForTag("add_note_button")
+    fun blankDrawingFreeReminderPickerCancelKeepsDraft() {
         val beforeIds = noteIds()
 
         openAddMenuItem("new_drawing_note_menu_item")
         val noteId = waitForSingleNewNoteId(beforeIds)
         exitInitialDrawingFocusModeIfNeeded()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            !nodeText("set_reminder_button").contains("Premium")
-        }
         composeRule.onNodeWithTag("set_reminder_button")
             .assertIsDisplayed()
+            .assertTextEquals("Set reminder")
             .performClick()
 
         pressDeviceBack()
@@ -1026,8 +995,8 @@ class TextInputTest {
     }
 
     @Test
-    fun checklistReminderGateSavesDraftBeforePremium() {
-        val title = "Checklist premium gate ${System.currentTimeMillis()}"
+    fun checklistReminderIsFreeForNonPremiumUsers() {
+        val title = "Checklist reminder free ${System.currentTimeMillis()}"
 
         openAddMenuItem("new_checklist_note_menu_item")
         waitForTag("checklist_note_title")
@@ -1037,13 +1006,8 @@ class TextInputTest {
         composeRule.onNodeWithTag("set_reminder_button")
             .performScrollTo()
             .assertIsDisplayed()
-            .assertTextContains("Premium", substring = true)
-            .performClick()
-
-        waitForTag("premium_screen")
-        composeRule.activityRule.scenario.onActivity { activity ->
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
+            .assertTextEquals("Set reminder")
+        assertTagAbsent("premium_screen")
         waitForTag("checklist_note_title")
         composeRule.onNodeWithTag("checklist_note_title")
             .assertIsDisplayed()
@@ -1307,18 +1271,16 @@ class TextInputTest {
     }
 
     @Test
-    fun freeUsersDoNotSeeCalendarViewChip() {
+    fun freeUsersSeeReminderAndCalendarControls() {
         openFilterPanel()
 
-        assertTagAbsent("home_reminders_button")
-        assertTagAbsent("calendar_view_chip")
-        assertTagAbsent("quick_filter_HasReminder")
+        composeRule.onNodeWithTag("home_reminders_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("calendar_view_chip").assertIsDisplayed()
+        composeRule.onNodeWithTag("quick_filter_HasReminder").assertIsDisplayed()
     }
 
     @Test
-    fun premiumHomeReminderButtonOpensCalendar() {
-        enableDebugPremiumAccess()
-
+    fun freeHomeReminderButtonOpensCalendar() {
         waitForTag("home_reminders_button")
         composeRule.onNodeWithTag("home_reminders_button").assertIsDisplayed().performClick()
 
@@ -1349,8 +1311,6 @@ class TextInputTest {
                 noteId
             }
         }
-        DebugPremiumAccess.write(composeRule.activity, true)
-
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1368,7 +1328,6 @@ class TextInputTest {
 
     @Test
     fun calendarAddCreatesReminderDraftForSelectedFutureDay() {
-        enableDebugPremiumAccess()
         grantPostNotificationsIfNeeded()
         val beforeIds = noteIds()
 
@@ -1414,8 +1373,7 @@ class TextInputTest {
     }
 
     @Test
-    fun premiumReminderFiltersSeparateWithOverdueAndUpcomingNotes() {
-        enableDebugPremiumAccess()
+    fun freeReminderFiltersSeparateWithOverdueAndUpcomingNotes() {
         val suffix = System.currentTimeMillis()
         val noReminderTitle = "Reminder filter none $suffix"
         val overdueTitle = "Reminder filter overdue $suffix"
@@ -1480,7 +1438,6 @@ class TextInputTest {
 
     @Test
     fun overdueReminderRepeatCanBeChangedFromTextOverflow() {
-        enableDebugPremiumAccess()
         grantPostNotificationsIfNeeded()
         val title = "Overdue repeat edit ${System.currentTimeMillis()}"
         val noteId = createTextNote(
@@ -2543,7 +2500,7 @@ class TextInputTest {
         assertEquals(0, composeRule.onAllNodesWithText("backend verification", substring = true).fetchSemanticsNodes().size)
         composeRule.onNodeWithText("Folders").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Text formatting").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Reminder/calendar tools").performScrollTo().assertIsDisplayed()
+        assertEquals(0, composeRule.onAllNodesWithText("Reminder/calendar tools").fetchSemanticsNodes().size)
         composeRule.onNodeWithTag("premium_format_sample_h1").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_format_sample_h2").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_format_sample_bold").performScrollTo().assertIsDisplayed()
@@ -2552,7 +2509,11 @@ class TextInputTest {
         composeRule.onNodeWithTag("premium_format_sample_link").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_format_sample_highlight").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("premium_folder_sample").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("premium_schedule_sample").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_free_features").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Reminders / calendar").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Google Drive sync").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Search").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Local storage").performScrollTo().assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("Import / Export").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Import and export").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Writing assistant").fetchSemanticsNodes().size)

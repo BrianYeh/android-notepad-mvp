@@ -412,10 +412,6 @@ private fun openLinkFailedLabel(language: AppLanguage): String {
     return if (language == AppLanguage.TraditionalChinese) "無法開啟連結。" else "Could not open link."
 }
 
-private fun setReminderActionLabel(text: UiText, hasPremiumAccess: Boolean): String {
-    return if (hasPremiumAccess) text.setReminder else "${text.setReminder} (${text.premium})"
-}
-
 @Composable
 private fun rememberReminderDeliveryGate(text: UiText): (() -> Unit) -> Unit {
     val context = LocalContext.current
@@ -476,14 +472,26 @@ private fun importExportHintLabel(language: AppLanguage): String {
 }
 
 private fun UiText.premiumPreviewTitle(): String {
-    return if (this === TraditionalChineseText) "進階功能正在準備中" else "Premium is being prepared"
+    return if (this === TraditionalChineseText) "高級版即將開放" else "Premium is coming soon"
 }
 
 private fun UiText.premiumPreviewBody(): String {
     return if (this === TraditionalChineseText) {
-        "你現在可以繼續免費使用記事；進階版開放後會提供資料夾、文字格式、提醒／日曆工具。"
+        "升級後可使用資料夾分類與文字格式，讓記事更容易整理與閱讀。訂閱功能準備中。"
     } else {
-        "You can keep using free notes now. When Premium opens, it will add folders, text formatting, and reminder/calendar tools."
+        "Upgrade for folders and text formatting so notes are easier to organize and read. Subscriptions are being prepared."
+    }
+}
+
+private fun UiText.premiumFreeFeaturesTitle(): String {
+    return if (this === TraditionalChineseText) "免費功能仍可使用" else "Free features stay available"
+}
+
+private fun UiText.premiumFreeFeatureItems(): List<String> {
+    return if (this === TraditionalChineseText) {
+        listOf("文字記事", "手繪記事", "提醒／日曆", "Google Drive 同步", "搜尋", "本機儲存")
+    } else {
+        listOf("Text notes", "Drawing notes", "Reminders / calendar", "Google Drive sync", "Search", "Local storage")
     }
 }
 
@@ -987,9 +995,17 @@ private fun PremiumScreen(
     } else {
         uiMode
     }
+    val effectiveDisplayMode = if (
+        displayMode == PremiumUiMode.CommerceReady &&
+        !billingState.canLaunchPurchase
+    ) {
+        PremiumUiMode.PreviewUnavailable
+    } else {
+        displayMode
+    }
     val annualPriceAvailable = billingState.billingAvailable && !billingState.annualPrice.isNullOrBlank()
     val monthlyPriceAvailable = billingState.billingAvailable && !billingState.monthlyPrice.isNullOrBlank()
-    val showCommerceUi = displayMode == PremiumUiMode.CommerceReady
+    val showCommerceUi = effectiveDisplayMode == PremiumUiMode.CommerceReady
     val selectedBillingPlan = when (selectedPlan) {
         PremiumPlanSelection.Annual -> PremiumPlan.Annual
         PremiumPlanSelection.Monthly -> PremiumPlan.Monthly
@@ -1073,7 +1089,7 @@ private fun PremiumScreen(
                     Text(if (billingState.hasPremiumAccess) text.premiumActive else text.premiumSubscribe)
                 }
             }
-            when (displayMode) {
+            when (effectiveDisplayMode) {
                 PremiumUiMode.ActiveEntitlement -> {
                     Text(
                         text = text.premiumActive,
@@ -1177,11 +1193,7 @@ private fun PremiumScreen(
                 body = text.premiumTextFormattingBody,
                 sample = { PremiumFormattingSample() },
             )
-            PremiumFeature(
-                title = text.premiumIcons,
-                body = text.premiumIconsBody,
-                sample = { PremiumIconSample() },
-            )
+            PremiumFreeFeatures(text)
         }
     }
 }
@@ -1415,20 +1427,24 @@ private fun PremiumFormatSampleText(
 }
 
 @Composable
-private fun PremiumIconSample() {
-    Row(
+private fun PremiumFreeFeatures(text: UiText) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
-            .padding(8.dp)
-            .testTag("premium_schedule_sample"),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .testTag("premium_free_features"),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        listOf("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT").forEachIndexed { index, day ->
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(day, style = MaterialTheme.typography.bodySmall)
-                Text((index + 1).toString(), style = MaterialTheme.typography.bodyLarge)
-            }
+        Text(
+            text = text.premiumFreeFeaturesTitle(),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        text.premiumFreeFeatureItems().forEach { item ->
+            Text(
+                text = item,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -1516,6 +1532,13 @@ private fun MainScreen(
         createNote()
     }
 
+    fun createReminderWithAllowedFolder(reminderAt: Long) {
+        if (!hasPremiumAccess) {
+            onSelectFolder(null)
+        }
+        onCreateReminderTextNote(reminderAt)
+    }
+
     LaunchedEffect(isPrivacyLocked) {
         if (isPrivacyLocked) {
             addMenuExpanded = false
@@ -1546,25 +1569,6 @@ private fun MainScreen(
 
     LaunchedEffect(listMode) {
         if (isTrash) contentView = MainContentView.List
-    }
-
-    LaunchedEffect(hasPremiumAccess, contentView) {
-        if (!hasPremiumAccess && contentView == MainContentView.Calendar) {
-            contentView = MainContentView.List
-            clearNoteSelection()
-        }
-    }
-
-    LaunchedEffect(hasPremiumAccess, quickFilter) {
-        if (!hasPremiumAccess && quickFilter == NoteQuickFilter.HasReminder) {
-            onQuickFilterChange(NoteQuickFilter.All)
-        }
-    }
-
-    LaunchedEffect(hasPremiumAccess, reminderFilter) {
-        if (!hasPremiumAccess && reminderFilter != ReminderFilter.All) {
-            onReminderFilterChange(ReminderFilter.All)
-        }
     }
 
     LaunchedEffect(searchQuery) {
@@ -1758,7 +1762,7 @@ private fun MainScreen(
                     text = text,
                     appLanguage = appLanguage,
                     filtersExpanded = shouldShowFilterPanel,
-                    showHomeRemindersButton = hasPremiumAccess && !isTrash,
+                    showHomeRemindersButton = !isTrash,
                     isCalendarSelected = contentView == MainContentView.Calendar,
                     onOpenReminders = {
                         contentView = MainContentView.Calendar
@@ -1775,19 +1779,15 @@ private fun MainScreen(
                         contentView = contentView,
                         text = text,
                         isPrivacyLocked = isPrivacyLocked,
-                        showCalendarView = !isTrash && hasPremiumAccess,
-                        showReminderQuickFilter = hasPremiumAccess,
-                        showReminderFilter = hasPremiumAccess,
+                        showCalendarView = !isTrash,
+                        showReminderQuickFilter = true,
+                        showReminderFilter = true,
                         onSortOptionChange = onSortOptionChange,
                         onQuickFilterChange = onQuickFilterChange,
                         onReminderFilterChange = onReminderFilterChange,
                         onContentViewChange = { view ->
-                            if (view == MainContentView.Calendar && !hasPremiumAccess) {
-                                onOpenPremium()
-                            } else {
-                                contentView = view
-                                clearNoteSelection()
-                            }
+                            contentView = view
+                            clearNoteSelection()
                         },
                     )
                 }
@@ -1805,7 +1805,7 @@ private fun MainScreen(
             val startNoteSelection: (NoteEntity) -> Unit = { note ->
                 selectedNoteIds = selectedNoteIds + note.id
             }
-            if (contentView == MainContentView.Calendar && !isTrash && hasPremiumAccess) {
+            if (contentView == MainContentView.Calendar && !isTrash) {
                 ReminderCalendarView(
                     notes = calendarNotes,
                     folders = folders,
@@ -1828,7 +1828,7 @@ private fun MainScreen(
                     onDeleteNote = { noteToDelete = it },
                     onTogglePinned = onTogglePinned,
                     onCalendarDateChange = ::clearNoteSelection,
-                    onCreateReminderAt = onCreateReminderTextNote,
+                    onCreateReminderAt = ::createReminderWithAllowedFolder,
                     modifier = Modifier.weight(1f),
                 )
             } else {
@@ -4917,19 +4917,15 @@ private fun TextEditorScreen(
                                     },
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(setReminderActionLabel(text, billingState.hasPremiumAccess)) },
+                                    text = { Text(text.setReminder) },
                                     modifier = Modifier.testTag("set_reminder_menu_item"),
                                     onClick = {
                                         isMoreMenuExpanded = false
-                                        if (billingState.hasPremiumAccess) {
-                                            openDateTimePicker(loaded.reminderAt)
-                                        } else {
-                                            openPremiumAfterSavingTextNote()
-                                        }
+                                        openDateTimePicker(loaded.reminderAt)
                                     },
                                 )
                                 if (loaded.reminderAt != null) {
-                                    if (billingState.hasPremiumAccess) ReminderRepeat.entries.forEach { repeat ->
+                                    ReminderRepeat.entries.forEach { repeat ->
                                         DropdownMenuItem(
                                             text = {
                                                 Text(text.reminderRepeat + ": " + reminderRepeatLabel(repeat.code, text))
@@ -4937,12 +4933,8 @@ private fun TextEditorScreen(
                                             modifier = Modifier.testTag("text_reminder_repeat_" + repeat.name),
                                             onClick = {
                                                 isMoreMenuExpanded = false
-                                                if (billingState.hasPremiumAccess) {
-                                                    requireReminderDeliveryReady {
-                                                        viewModel.setNoteReminder(noteId, loaded.reminderAt, repeat.code)
-                                                    }
-                                                } else {
-                                                    openPremiumAfterSavingTextNote()
+                                                requireReminderDeliveryReady {
+                                                    viewModel.setNoteReminder(noteId, loaded.reminderAt, repeat.code)
                                                 }
                                             },
                                         )
@@ -5163,8 +5155,6 @@ private fun TextEditorScreen(
                                 text = text,
                                 appLanguage = appLanguage,
                                 isPrivacyLocked = isPrivacyLocked,
-                                hasPremiumAccess = billingState.hasPremiumAccess,
-                                onOpenPremium = ::openPremiumAfterSavingTextNote,
                                 onSetReminder = { reminderAt, repeat ->
                                     viewModel.setNoteReminder(noteId, reminderAt, repeat)
                                 },
@@ -6338,8 +6328,6 @@ private fun ChecklistEditorScreen(
                                 text = text,
                                 appLanguage = appLanguage,
                                 isPrivacyLocked = isPrivacyLocked,
-                                hasPremiumAccess = billingState.hasPremiumAccess,
-                                onOpenPremium = ::openPremiumAfterSavingChecklist,
                                 onSetReminder = { reminderAt, repeat ->
                                     viewModel.setNoteReminder(noteId, reminderAt, repeat)
                                 },
@@ -7358,10 +7346,6 @@ private fun DrawingEditorScreen(
                     text = text,
                     appLanguage = appLanguage,
                     isPrivacyLocked = isPrivacyLocked,
-                    hasPremiumAccess = billingState.hasPremiumAccess,
-                    onOpenPremium = {
-                        openPremiumAfterSavingDrawingNote()
-                    },
                     onInteract = { hasMetadataIntent = true },
                     onSetReminder = { reminderAt, repeat ->
                         hasMetadataIntent = true
@@ -8097,8 +8081,6 @@ private fun ReminderControls(
     text: UiText,
     appLanguage: AppLanguage,
     isPrivacyLocked: Boolean,
-    hasPremiumAccess: Boolean,
-    onOpenPremium: () -> Unit,
     onInteract: () -> Unit = {},
     onSetReminder: (Long, String) -> Unit,
     onClearReminder: () -> Unit,
@@ -8125,10 +8107,6 @@ private fun ReminderControls(
     }
 
     fun setRepeat(repeat: ReminderRepeat) {
-        if (!hasPremiumAccess) {
-            onOpenPremium()
-            return
-        }
         note.reminderAt?.let { reminderAt ->
             requireReminderDeliveryReady {
                 onSetReminder(reminderAt, repeat.code)
@@ -8137,10 +8115,6 @@ private fun ReminderControls(
     }
 
     fun openDateTimePicker() {
-        if (!hasPremiumAccess) {
-            onOpenPremium()
-            return
-        }
         onInteract()
         val calendar = Calendar.getInstance()
         val initialReminderAt = note.reminderAt?.takeIf { it > System.currentTimeMillis() }
@@ -8204,7 +8178,7 @@ private fun ReminderControls(
                 onClick = ::openDateTimePicker,
                 modifier = Modifier.testTag("set_reminder_button"),
             ) {
-                Text(setReminderActionLabel(text, hasPremiumAccess))
+                Text(text.setReminder)
             }
             if (note.reminderAt != null) {
                 TextButton(
@@ -8218,7 +8192,7 @@ private fun ReminderControls(
                 }
             }
         }
-        if (note.reminderAt != null && hasPremiumAccess) {
+        if (note.reminderAt != null) {
             Text(
                 text = text.reminderRepeat + ": " + reminderRepeatLabel(note.reminderRepeat, text),
                 style = MaterialTheme.typography.bodySmall,
