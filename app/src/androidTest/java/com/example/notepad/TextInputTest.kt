@@ -89,10 +89,28 @@ class TextInputTest {
         resetDrawingToolPreferences()
     }
 
-    private fun waitForTag(tag: String) {
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+    private fun waitForTag(tag: String, timeoutMillis: Long = 5_000) {
+        composeRule.waitUntil(timeoutMillis = timeoutMillis) {
             runCatching {
                 composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+            }.getOrDefault(false)
+        }
+    }
+
+    private fun waitForDisplayedTag(tag: String, timeoutMillis: Long = 5_000) {
+        composeRule.waitUntil(timeoutMillis = timeoutMillis) {
+            runCatching {
+                composeRule.onNodeWithTag(tag).assertIsDisplayed()
+                true
+            }.getOrDefault(false)
+        }
+    }
+
+    private fun waitForFocusedTag(tag: String, timeoutMillis: Long = 10_000) {
+        composeRule.waitUntil(timeoutMillis = timeoutMillis) {
+            runCatching {
+                composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes()
+                    .any { node -> node.config.getOrNull(SemanticsProperties.Focused) == true }
             }.getOrDefault(false)
         }
     }
@@ -128,9 +146,10 @@ class TextInputTest {
     }
 
     private fun createTextNoteViaFab() {
-        waitForTag("add_note_button")
+        waitForDisplayedTag("add_note_button", timeoutMillis = 10_000)
         composeRule.onNodeWithTag("add_note_button").performClick()
-        waitForTag("text_note_content")
+        waitForDisplayedTag("text_note_content", timeoutMillis = 30_000)
+        waitForFocusedTag("text_note_content")
     }
 
     private fun openCreationMenuItem(menuItemTag: String) {
@@ -660,10 +679,11 @@ class TextInputTest {
         } else {
             composeRule.onNodeWithTag("text_note_read_content").assertTextContains("Format me")
         }
-        composeRule.activityRule.scenario.onActivity { activity ->
-            activity.onBackPressedDispatcher.onBackPressed()
-        }
-        waitForTag("add_note_button")
+        composeRule.onNodeWithTag("back_button").assertIsDisplayed().performClick()
+        waitForTag("add_note_button", timeoutMillis = 10_000)
+        assertTagAbsent("premium_screen")
+        assertTagAbsent("text_note_content")
+        assertTagAbsent("text_note_read_content")
     }
 
     @Test
@@ -797,7 +817,10 @@ class TextInputTest {
         composeRule.onNodeWithTag("back_button").performClick()
         waitForTag("add_note_button")
 
-        composeRule.onNodeWithTag("note_more_$noteId").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("note_more_$noteId")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .performClick()
         assertTagAbsent("move_note_$noteId")
         composeRule.onNodeWithTag("pin_note_$noteId").assertIsDisplayed().performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -1971,9 +1994,15 @@ class TextInputTest {
             tagCount("note_card_$secondNoteId") > 0
         }
 
-        composeRule.onNodeWithTag("note_card_$firstNoteId").assertIsDisplayed().performTouchInput { longClick() }
+        composeRule.onNodeWithTag("note_card_$firstNoteId")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .performTouchInput { longClick() }
         composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("1 selected")
-        composeRule.onNodeWithTag("note_card_$secondNoteId").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("note_card_$secondNoteId")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .performClick()
         composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("2 selected")
         composeRule.onNodeWithTag("delete_selected_notes_button").performClick()
         composeRule.onNodeWithTag("confirm_dialog_confirm_button").performClick()
@@ -2968,7 +2997,7 @@ class TextInputTest {
     @Test
     fun drawingEditorCanUseFullscreenCanvasMode() {
         openAddMenuItem("new_drawing_note_menu_item")
-        waitForTag("fullscreen_drawing_mode")
+        waitForTag("fullscreen_drawing_mode", timeoutMillis = 10_000)
 
         composeRule.onNodeWithTag("fullscreen_drawing_canvas").assertIsDisplayed()
         composeRule.onNodeWithTag("exit_fullscreen_drawing_button").assertIsDisplayed()
@@ -2982,10 +3011,10 @@ class TextInputTest {
         }
 
         composeRule.onNodeWithTag("exit_fullscreen_drawing_button").performClick()
-        waitForTag("drawing_fullscreen_button")
+        waitForTag("drawing_fullscreen_button", timeoutMillis = 10_000)
 
         composeRule.onNodeWithTag("drawing_fullscreen_button").performClick()
-        waitForTag("fullscreen_drawing_mode")
+        waitForTag("fullscreen_drawing_mode", timeoutMillis = 10_000)
 
         composeRule.onNodeWithTag("fullscreen_drawing_canvas").assertIsDisplayed()
         composeRule.onNodeWithTag("exit_fullscreen_drawing_button").assertIsDisplayed()

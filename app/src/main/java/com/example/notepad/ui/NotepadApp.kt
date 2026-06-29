@@ -2855,18 +2855,25 @@ private fun NoteFilterRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            NoteQuickFilter.entries
+            listOf(
+                NoteQuickFilter.All,
+                NoteQuickFilter.HasReminder,
+                NoteQuickFilter.Text,
+                NoteQuickFilter.Drawing,
+                NoteQuickFilter.Checklist,
+                NoteQuickFilter.Pinned,
+            )
                 .filter { filter -> showReminderQuickFilter || filter != NoteQuickFilter.HasReminder }
                 .forEach { filter ->
-                item {
-                    FilterChip(
-                        selected = quickFilter == filter,
-                        onClick = { onQuickFilterChange(filter) },
-                        label = { Text(filter.label(text)) },
-                        modifier = Modifier.testTag("quick_filter_${filter.name}"),
-                    )
+                    item {
+                        FilterChip(
+                            selected = quickFilter == filter,
+                            onClick = { onQuickFilterChange(filter) },
+                            label = { Text(filter.label(text)) },
+                            modifier = Modifier.testTag("quick_filter_${filter.name}"),
+                        )
+                    }
                 }
-            }
         }
         if (showReminderFilter) {
             ReminderFilterSelector(
