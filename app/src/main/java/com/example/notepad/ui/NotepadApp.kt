@@ -320,6 +320,17 @@ internal fun premiumUiMode(billingState: PremiumBillingState): PremiumUiMode {
     }
 }
 
+internal fun shouldShowPremiumSubscribeButton(
+    billingState: PremiumBillingState,
+    displayMode: PremiumUiMode,
+    selectedPriceAvailable: Boolean,
+): Boolean {
+    return displayMode == PremiumUiMode.CommerceReady &&
+        selectedPriceAvailable &&
+        !billingState.hasPremiumAccess &&
+        billingState.canLaunchPurchase
+}
+
 internal fun shouldShowGoogleAccountSyncUi(syncMetadata: SyncMetadata): Boolean {
     return true
 }
@@ -995,14 +1006,7 @@ private fun PremiumScreen(
     } else {
         uiMode
     }
-    val effectiveDisplayMode = if (
-        displayMode == PremiumUiMode.CommerceReady &&
-        !billingState.canLaunchPurchase
-    ) {
-        PremiumUiMode.PreviewUnavailable
-    } else {
-        displayMode
-    }
+    val effectiveDisplayMode = displayMode
     val annualPriceAvailable = billingState.billingAvailable && !billingState.annualPrice.isNullOrBlank()
     val monthlyPriceAvailable = billingState.billingAvailable && !billingState.monthlyPrice.isNullOrBlank()
     val showCommerceUi = effectiveDisplayMode == PremiumUiMode.CommerceReady
@@ -1075,18 +1079,19 @@ private fun PremiumScreen(
                         modifier = Modifier.testTag("monthly_plan_option"),
                     )
                 }
-                Button(
-                    onClick = {
-                        if (!onSubscribe(selectedBillingPlan)) {
-                            Toast.makeText(context, text.premiumBillingUnavailable, Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    enabled = selectedPriceAvailable && !billingState.hasPremiumAccess && billingState.canLaunchPurchase,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("premium_subscribe_button"),
-                ) {
-                    Text(if (billingState.hasPremiumAccess) text.premiumActive else text.premiumSubscribe)
+                if (shouldShowPremiumSubscribeButton(billingState, effectiveDisplayMode, selectedPriceAvailable)) {
+                    Button(
+                        onClick = {
+                            if (!onSubscribe(selectedBillingPlan)) {
+                                Toast.makeText(context, text.premiumBillingUnavailable, Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("premium_subscribe_button"),
+                    ) {
+                        Text(if (billingState.hasPremiumAccess) text.premiumActive else text.premiumSubscribe)
+                    }
                 }
             }
             when (effectiveDisplayMode) {

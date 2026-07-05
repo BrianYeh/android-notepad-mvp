@@ -74,8 +74,13 @@ class PremiumBackendEntitlementMapperTest {
             verification = activeVerification(basePlanId = "weekly"),
             now = NOW,
         )
+        val legacyProduct = PremiumBackendEntitlementMapper.fromVerification(
+            expectedPackageName = PACKAGE_NAME,
+            verification = activeVerification(productId = "just_notes_premium_monthly"),
+            now = NOW,
+        )
 
-        listOf(wrongPackage, wrongProduct, wrongBasePlan).forEach { result ->
+        listOf(wrongPackage, wrongProduct, wrongBasePlan, legacyProduct).forEach { result ->
             assertFalse(result.accepted)
             assertEquals(PremiumSubscriptionStatus.Error, result.snapshot.status)
             assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))

@@ -165,15 +165,17 @@ class PremiumBilling(
                 return@queryProductDetailsAsync
             }
             val productDetailsList = productDetailsResult.productDetailsList
-            val selectedOffers = selectBillingOffers(productDetailsList)
+            val billingOffers = collectBillingOffers(productDetailsList)
+            val selectedOffers = selectBillingOffers(billingOffers)
+            val displayPrices = selectDisplayPrices(billingOffers.map { it.first })
             billingOffersByPlan.clear()
             billingOffersByPlan.putAll(selectedOffers)
             val unfetchedProductSummary = productDetailsResult.unfetchedProductList.joinToString { product ->
                 "${product.productId}:${product.statusCode}"
             }
             val configurationMessage = when {
-                selectedOffers.isNotEmpty() && selectedOffers.size < PremiumPlan.entries.size -> PRODUCT_CONFIGURATION_MESSAGE
-                selectedOffers.isNotEmpty() -> null
+                displayPrices.isNotEmpty() && displayPrices.size < PremiumPlan.entries.size -> PRODUCT_CONFIGURATION_MESSAGE
+                displayPrices.isNotEmpty() -> null
                 productDetailsList.isNotEmpty() -> PRODUCT_CONFIGURATION_MESSAGE
                 unfetchedProductSummary.isNotBlank() ->
                     "Premium products are not available from Google Play yet ($unfetchedProductSummary)."
@@ -184,8 +186,8 @@ class PremiumBilling(
                 it.copy(
                     billingAvailable = true,
                     loading = false,
-                    monthlyPrice = selectedOffers[PremiumPlan.Monthly]?.displayPrice,
-                    annualPrice = selectedOffers[PremiumPlan.Annual]?.displayPrice,
+                    monthlyPrice = displayPrices[PremiumPlan.Monthly],
+                    annualPrice = displayPrices[PremiumPlan.Annual],
                     lastError = visibleBillingError(),
                 )
             }
@@ -434,8 +436,8 @@ class PremiumBilling(
         }
     }
 
-    private fun selectBillingOffers(productDetailsList: List<ProductDetails>): Map<PremiumPlan, BillingOffer> {
-        val billingOffers = productDetailsList.flatMap { productDetails ->
+    private fun collectBillingOffers(productDetailsList: List<ProductDetails>): List<Pair<PremiumOfferCandidate, BillingOffer>> {
+        return productDetailsList.flatMap { productDetails ->
             productDetails.subscriptionOfferDetails.orEmpty().map { offerDetails ->
                 val candidate = PremiumOfferCandidate(
                     productId = productDetails.productId,
@@ -451,10 +453,22 @@ class PremiumBilling(
                 )
             }
         }
+    }
+
+    private fun selectBillingOffers(
+        billingOffers: List<Pair<PremiumOfferCandidate, BillingOffer>>,
+    ): Map<PremiumPlan, BillingOffer> {
         return PremiumPlan.entries.mapNotNull { plan ->
             val selected = PremiumCatalog.selectBasePlanOffer(plan, billingOffers.map { it.first })
             val billingOffer = billingOffers.singleOrNull { it.first == selected }?.second
             if (billingOffer == null) null else plan to billingOffer
+        }.toMap()
+    }
+
+    private fun selectDisplayPrices(candidates: List<PremiumOfferCandidate>): Map<PremiumPlan, String> {
+        return PremiumPlan.entries.mapNotNull { plan ->
+            val price = PremiumCatalog.selectDisplayPrice(plan, candidates)
+            if (price == null) null else plan to price
         }.toMap()
     }
 

@@ -1,6 +1,7 @@
 package com.example.notepad.billing
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -172,5 +173,56 @@ class PremiumBillingStateTest {
         )
 
         assertFalse(selected != null)
+    }
+
+    @Test
+    fun catalogQueriesOnlyPreferredSubscriptionProduct() {
+        assertEquals(listOf(PremiumCatalog.PREFERRED_PRODUCT_ID), PremiumCatalog.productIdsToQuery)
+    }
+
+    @Test
+    fun catalogDoesNotTreatLegacyProductsAsNewPremiumProducts() {
+        assertFalse(PremiumCatalog.isPremiumProduct("just_notes_premium_monthly"))
+        assertFalse(PremiumCatalog.isPremiumProduct("just_notes_premium_annual"))
+        assertEquals(null, PremiumCatalog.matchingPremiumProductId(listOf("just_notes_premium_monthly")))
+    }
+
+    @Test
+    fun catalogCanDisplayRecurringPriceFromTrialOfferWithoutSelectingPurchaseOffer() {
+        val candidates = listOf(
+            PremiumOfferCandidate(
+                productId = "just_notes_premium",
+                basePlanId = "monthly",
+                offerId = "trial10d",
+                offerToken = "trial-token",
+                formattedPrice = "TWD 33/month",
+            ),
+        )
+
+        assertEquals("TWD 33/month", PremiumCatalog.selectDisplayPrice(PremiumPlan.Monthly, candidates))
+        assertEquals(null, PremiumCatalog.selectBasePlanOffer(PremiumPlan.Monthly, candidates))
+    }
+
+    @Test
+    fun catalogDoesNotDisplayAnnualTrialWhenOnlyMonthlyTrialExists() {
+        val candidates = listOf(
+            PremiumOfferCandidate(
+                productId = "just_notes_premium",
+                basePlanId = "monthly",
+                offerId = "trial10d",
+                offerToken = "trial-token",
+                formattedPrice = "TWD 33/month",
+            ),
+            PremiumOfferCandidate(
+                productId = "just_notes_premium",
+                basePlanId = "annual",
+                offerId = null,
+                offerToken = "annual-token",
+                formattedPrice = "TWD 330/year",
+            ),
+        )
+
+        assertEquals("TWD 330/year", PremiumCatalog.selectDisplayPrice(PremiumPlan.Annual, candidates))
+        assertEquals("annual-token", PremiumCatalog.selectBasePlanOffer(PremiumPlan.Annual, candidates)?.offerToken)
     }
 }

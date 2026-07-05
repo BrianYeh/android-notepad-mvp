@@ -10,3 +10,8 @@ app/release/
 artifacts/
 connectedDebugAndroidTest*.xml
 Doc/jobs_view/**/connected_shards_*/
+avd/
+JustNotes-*-SHA256SUMS.txt
+JustNotes-*-release*.aab
+JustNotes-*-release*.apk
+JustNotes-*-test-guide-*.md

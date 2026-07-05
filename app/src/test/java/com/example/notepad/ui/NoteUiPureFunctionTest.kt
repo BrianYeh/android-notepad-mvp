@@ -145,6 +145,26 @@ class NoteUiPureFunctionTest {
     }
 
     @Test
+    fun premiumPriceDisplayStaysVisibleWhenPurchaseCannotLaunch() {
+        val state = PremiumBillingState(
+            billingAvailable = true,
+            loading = false,
+            monthlyPrice = "$3.99",
+            annualPrice = "$39.99",
+        )
+
+        assertEquals(PremiumUiMode.CommerceReady, premiumUiMode(state))
+        assertEquals(
+            false,
+            shouldShowPremiumSubscribeButton(
+                billingState = state,
+                displayMode = PremiumUiMode.CommerceReady,
+                selectedPriceAvailable = true,
+            ),
+        )
+    }
+
+    @Test
     fun premiumUiModeKeepsActiveEntitlementAheadOfUnavailablePrices() {
         assertEquals(
             PremiumUiMode.ActiveEntitlement,
