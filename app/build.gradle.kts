@@ -15,6 +15,21 @@ val allowClientOnlyBillingEntitlement = providers
     }
     .orElse("false")
 
+fun Provider<String>.quotedBuildConfigString(): String {
+    val escaped = get()
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+    return "\"$escaped\""
+}
+
+val backendBaseUrl = providers
+    .gradleProperty("justNotes.backendBaseUrl")
+    .orElse("")
+
+val googleWebClientId = providers
+    .gradleProperty("justNotes.googleWebClientId")
+    .orElse("")
+
 android {
     namespace = "com.example.notepad"
     compileSdk = 35
@@ -27,6 +42,9 @@ android {
         versionName = "1.0.3"
 
         testInstrumentationRunner = "com.example.notepad.JustNotesTestRunner"
+
+        buildConfigField("String", "BACKEND_BASE_URL", backendBaseUrl.quotedBuildConfigString())
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", googleWebClientId.quotedBuildConfigString())
     }
 
     buildTypes {

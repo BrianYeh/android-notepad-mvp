@@ -17,6 +17,7 @@ class PremiumBillingStateTest {
             subscription = PremiumSubscriptionSnapshot(
                 status = PremiumSubscriptionStatus.Active,
                 source = PremiumEntitlementSource.BackendVerified,
+                expiryTime = System.currentTimeMillis() + 60_000L,
             ),
         )
 
@@ -29,10 +30,24 @@ class PremiumBillingStateTest {
             subscription = PremiumSubscriptionSnapshot(
                 status = PremiumSubscriptionStatus.GracePeriod,
                 source = PremiumEntitlementSource.BackendVerified,
+                expiryTime = System.currentTimeMillis() + 60_000L,
             ),
         )
 
         assertTrue(state.hasPremiumAccess)
+    }
+
+    @Test
+    fun hasPremiumAccessRejectsExpiredBackendVerifiedCache() {
+        val state = PremiumBillingState(
+            subscription = PremiumSubscriptionSnapshot(
+                status = PremiumSubscriptionStatus.Active,
+                source = PremiumEntitlementSource.BackendVerified,
+                expiryTime = System.currentTimeMillis() - 1_000L,
+            ),
+        )
+
+        assertFalse(state.hasPremiumAccess)
     }
 
     @Test

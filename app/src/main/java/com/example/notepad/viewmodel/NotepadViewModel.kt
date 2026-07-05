@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.notepad.billing.BackendEntitlementRepository
 import com.example.notepad.billing.PremiumBilling
 import com.example.notepad.billing.PremiumPlan
 import com.example.notepad.data.DriveSyncResult
@@ -74,6 +75,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     private val premiumBilling = PremiumBilling(
         application = application,
         connectToPlay = DebugPremiumAccess.shouldConnectBilling(),
+    )
+    private val backendEntitlementRepository = BackendEntitlementRepository(
+        idTokenProvider = { driveSyncClient.backendIdToken },
+        applyBackendEntitlement = premiumBilling::applyBackendEntitlement,
     )
     private val googleSyncMutex = Mutex()
     private val drawingSaveEditGates = mutableMapOf<Long, DrawingSaveEditGate>()
@@ -210,10 +215,12 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             ReminderScheduler.rescheduleFutureReminders(application)
         }
         premiumBilling.start()
+        refreshBackendEntitlement()
     }
 
     fun refreshPremiumEntitlement() {
         premiumBilling.refresh()
+        refreshBackendEntitlement()
     }
 
     fun launchPremiumPurchase(activity: Activity, plan: PremiumPlan): Boolean {
@@ -367,6 +374,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         val previousAccount = _syncMetadata.value.accountEmail
         driveSyncClient.connect(account)
         if (previousAccount != account.email) {
+            premiumBilling.clearBackendEntitlement()
             _lastGoogleSyncAt.value = null
             preferences.edit()
                 .remove("last_google_sync_at")
@@ -379,6 +387,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             status = SyncStatus.Idle,
             lastError = null,
         )
+        refreshBackendEntitlement()
         return true
     }
 
@@ -405,6 +414,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun signOutGoogleAccount() {
         driveSyncClient.disconnect()
+        premiumBilling.clearBackendEntitlement()
         _lastGoogleSyncAt.value = null
         preferences.edit()
             .remove("last_google_sync_at")
@@ -416,6 +426,14 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             status = SyncStatus.SignedOut,
             lastError = null,
         )
+    }
+
+    fun refreshBackendEntitlement() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                backendEntitlementRepository.refresh()
+            }
+        }
     }
 
     suspend fun syncGoogleDrive(): DriveSyncResult<Unit> = googleSyncMutex.withLock {

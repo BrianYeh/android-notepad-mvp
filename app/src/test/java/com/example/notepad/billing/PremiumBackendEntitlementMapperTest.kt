@@ -18,7 +18,7 @@ class PremiumBackendEntitlementMapperTest {
         assertEquals(PremiumSubscriptionStatus.Active, result.snapshot.status)
         assertEquals(PremiumEntitlementSource.BackendVerified, result.snapshot.source)
         assertEquals(PremiumAcknowledgementStatus.Acknowledged, result.snapshot.acknowledgementStatus)
-        assertTrue(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+        assertTrue(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
     }
 
     @Test
@@ -34,7 +34,7 @@ class PremiumBackendEntitlementMapperTest {
         assertTrue(result.accepted)
         assertEquals(PremiumSubscriptionStatus.VerificationPending, result.snapshot.status)
         assertEquals(PremiumAcknowledgementStatus.BackendRequired, result.snapshot.acknowledgementStatus)
-        assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+        assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
     }
 
     @Test
@@ -54,7 +54,7 @@ class PremiumBackendEntitlementMapperTest {
         assertEquals(PremiumSubscriptionStatus.VerificationPending, result.snapshot.status)
         assertEquals(PremiumAcknowledgementStatus.RetryScheduled, result.snapshot.acknowledgementStatus)
         assertEquals(2, result.snapshot.acknowledgementAttemptCount)
-        assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+        assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
     }
 
     @Test
@@ -83,7 +83,7 @@ class PremiumBackendEntitlementMapperTest {
         listOf(wrongPackage, wrongProduct, wrongBasePlan, legacyProduct).forEach { result ->
             assertFalse(result.accepted)
             assertEquals(PremiumSubscriptionStatus.Error, result.snapshot.status)
-            assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+            assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
         }
     }
 
@@ -121,7 +121,7 @@ class PremiumBackendEntitlementMapperTest {
         )
 
         assertEquals(PremiumSubscriptionStatus.Revoked, revoked.snapshot.status)
-        assertFalse(revoked.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+        assertFalse(revoked.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
         assertEquals(revoked, duplicateWithDifferentPayload)
     }
 
@@ -145,7 +145,7 @@ class PremiumBackendEntitlementMapperTest {
         )
 
         assertEquals(PremiumSubscriptionStatus.GracePeriod, state.snapshot.status)
-        assertTrue(state.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+        assertTrue(state.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
     }
 
     @Test
@@ -167,7 +167,67 @@ class PremiumBackendEntitlementMapperTest {
         assertEquals(PremiumSubscriptionStatus.Active, result.snapshot.status)
         assertEquals(PremiumEntitlementStore.hashPurchaseToken(newToken), result.snapshot.purchaseTokenHash)
         assertFalse(result.snapshot.purchaseTokenHash == oldTokenHash)
-        assertTrue(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false))
+        assertTrue(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
+    }
+
+    @Test
+    fun backendEntitlementResponseMapsToBackendVerifiedSnapshot() {
+        val result = PremiumBackendEntitlementMapper.fromEntitlementResponse(
+            expectedPackageName = PACKAGE_NAME,
+            response = PremiumBackendEntitlementResponse(
+                hasPremium = true,
+                status = PremiumSubscriptionStatus.Active,
+                source = PremiumEntitlementSource.BackendVerified,
+                packageName = PACKAGE_NAME,
+                productId = PremiumCatalog.PREFERRED_PRODUCT_ID,
+                basePlanId = "monthly",
+                offerId = "trial10d",
+                expiryTime = NOW + 1_000L,
+                lastVerifiedAt = NOW,
+                purchaseTokenHash = "token-hash",
+            ),
+            now = NOW,
+        )
+
+        assertTrue(result.accepted)
+        assertEquals(PremiumEntitlementSource.BackendVerified, result.snapshot.source)
+        assertEquals(PremiumSubscriptionStatus.Active, result.snapshot.status)
+        assertEquals("token-hash", result.snapshot.purchaseTokenHash)
+        assertTrue(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
+    }
+
+    @Test
+    fun backendEntitlementResponseRejectsSelfAuthoredOrInconsistentAccess() {
+        val clientObserved = PremiumBackendEntitlementMapper.fromEntitlementResponse(
+            expectedPackageName = PACKAGE_NAME,
+            response = PremiumBackendEntitlementResponse(
+                hasPremium = true,
+                status = PremiumSubscriptionStatus.Active,
+                source = PremiumEntitlementSource.ClientObserved,
+                packageName = PACKAGE_NAME,
+                productId = PremiumCatalog.PREFERRED_PRODUCT_ID,
+                basePlanId = "monthly",
+            ),
+            now = NOW,
+        )
+        val inconsistentPremium = PremiumBackendEntitlementMapper.fromEntitlementResponse(
+            expectedPackageName = PACKAGE_NAME,
+            response = PremiumBackendEntitlementResponse(
+                hasPremium = true,
+                status = PremiumSubscriptionStatus.Expired,
+                source = PremiumEntitlementSource.BackendVerified,
+                packageName = PACKAGE_NAME,
+                productId = PremiumCatalog.PREFERRED_PRODUCT_ID,
+                basePlanId = "monthly",
+            ),
+            now = NOW,
+        )
+
+        listOf(clientObserved, inconsistentPremium).forEach { result ->
+            assertFalse(result.accepted)
+            assertEquals(PremiumSubscriptionStatus.Error, result.snapshot.status)
+            assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
+        }
     }
 
     private fun activeVerification(

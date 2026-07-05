@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "LocalNotepad"
 include(":app")
+include(":backend")

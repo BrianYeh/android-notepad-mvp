@@ -59,6 +59,19 @@ data class PremiumBackendVerificationResult(
     val rejectionReason: String? = null,
 )
 
+data class PremiumBackendEntitlementResponse(
+    val hasPremium: Boolean,
+    val status: PremiumSubscriptionStatus,
+    val source: PremiumEntitlementSource,
+    val packageName: String? = null,
+    val productId: String? = null,
+    val basePlanId: String? = null,
+    val offerId: String? = null,
+    val expiryTime: Long? = null,
+    val lastVerifiedAt: Long? = null,
+    val purchaseTokenHash: String? = null,
+)
+
 data class PremiumRtdnSimulationState(
     val snapshot: PremiumSubscriptionSnapshot = PremiumSubscriptionSnapshot(
         status = PremiumSubscriptionStatus.Free,
@@ -68,6 +81,48 @@ data class PremiumRtdnSimulationState(
 )
 
 object PremiumBackendEntitlementMapper {
+    fun fromEntitlementResponse(
+        expectedPackageName: String,
+        response: PremiumBackendEntitlementResponse,
+        now: Long,
+    ): PremiumBackendVerificationResult {
+        val rejectionReason = rejectReason(expectedPackageName, response)
+        if (rejectionReason != null) {
+            return PremiumBackendVerificationResult(
+                accepted = false,
+                rejectionReason = rejectionReason,
+                snapshot = PremiumSubscriptionSnapshot(
+                    status = PremiumSubscriptionStatus.Error,
+                    source = PremiumEntitlementSource.None,
+                    productId = response.productId,
+                    basePlanId = response.basePlanId,
+                    offerId = response.offerId,
+                    purchaseTokenHash = response.purchaseTokenHash,
+                    expiryTime = response.expiryTime,
+                    lastBackendVerifiedAt = now,
+                    lastEntitlementChangeAt = now,
+                    acknowledgementStatus = PremiumAcknowledgementStatus.NotRequired,
+                    lastAcknowledgementError = rejectionReason,
+                ),
+            )
+        }
+        return PremiumBackendVerificationResult(
+            accepted = true,
+            snapshot = PremiumSubscriptionSnapshot(
+                status = response.status,
+                source = PremiumEntitlementSource.BackendVerified,
+                productId = response.productId,
+                basePlanId = response.basePlanId,
+                offerId = response.offerId,
+                purchaseTokenHash = response.purchaseTokenHash,
+                expiryTime = response.expiryTime,
+                lastBackendVerifiedAt = response.lastVerifiedAt ?: now,
+                lastEntitlementChangeAt = now,
+                acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
+            ),
+        )
+    }
+
     fun fromVerification(
         expectedPackageName: String,
         verification: PremiumBackendPurchaseVerification,
@@ -159,10 +214,43 @@ object PremiumBackendEntitlementMapper {
         return null
     }
 
+    private fun rejectReason(
+        expectedPackageName: String,
+        response: PremiumBackendEntitlementResponse,
+    ): String? {
+        if (response.source != PremiumEntitlementSource.BackendVerified) {
+            return "Entitlement response is not backend verified."
+        }
+        val premiumStatus = response.status == PremiumSubscriptionStatus.Active ||
+            response.status == PremiumSubscriptionStatus.GracePeriod
+        if (response.hasPremium != premiumStatus) {
+            return "Entitlement response premium flag does not match subscription status."
+        }
+        if (response.productId == null && !response.hasPremium) return null
+        if (response.packageName != expectedPackageName) {
+            return "Entitlement response package does not match this app."
+        }
+        if (response.productId == null || !PremiumCatalog.isPremiumProduct(response.productId)) {
+            return "Entitlement response product is not for a known Premium product."
+        }
+        if (!response.matchesKnownBasePlan()) {
+            return "Entitlement response base plan does not match the Premium catalog."
+        }
+        return null
+    }
+
     private fun PremiumBackendPurchaseVerification.matchesKnownBasePlan(): Boolean {
         val basePlan = basePlanId ?: return true
         return PremiumPlan.entries.any { plan ->
             productId in plan.productIdsInPreferenceOrder && plan.basePlanId == basePlan
+        }
+    }
+
+    private fun PremiumBackendEntitlementResponse.matchesKnownBasePlan(): Boolean {
+        val basePlan = basePlanId ?: return true
+        val product = productId ?: return false
+        return PremiumPlan.entries.any { plan ->
+            product in plan.productIdsInPreferenceOrder && plan.basePlanId == basePlan
         }
     }
 

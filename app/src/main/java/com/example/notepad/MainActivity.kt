@@ -118,6 +118,7 @@ class MainActivity : ComponentActivity() {
                 val observer = LifecycleEventObserver { _, event ->
                     if (event == Lifecycle.Event.ON_RESUME) {
                         deviceUnlockAvailable = keyguardManager.isDeviceSecure
+                        viewModel.refreshBackendEntitlement()
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)

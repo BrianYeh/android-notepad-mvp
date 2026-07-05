@@ -48,11 +48,15 @@ data class PremiumSubscriptionSnapshot(
     val nextAcknowledgementAttemptAt: Long? = null,
     val lastAcknowledgementError: String? = null,
 ) {
-    fun hasPremiumAccess(allowClientObservedAccess: Boolean): Boolean {
+    fun hasPremiumAccess(
+        allowClientObservedAccess: Boolean,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean {
         return when (source) {
             PremiumEntitlementSource.BackendVerified ->
-                status == PremiumSubscriptionStatus.Active ||
-                    status == PremiumSubscriptionStatus.GracePeriod
+                (status == PremiumSubscriptionStatus.Active ||
+                    status == PremiumSubscriptionStatus.GracePeriod) &&
+                    expiryTime?.let { it > now } == true
             PremiumEntitlementSource.ClientObserved ->
                 allowClientObservedAccess &&
                     status == PremiumSubscriptionStatus.Active &&

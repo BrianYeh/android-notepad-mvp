@@ -2,6 +2,7 @@ package com.example.notepad.data
 
 import android.content.Context
 import android.content.Intent
+import com.example.notepad.BuildConfig
 import com.google.android.gms.auth.UserRecoverableAuthException
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -23,10 +24,13 @@ class GoogleDriveSyncClient(
     private val context: Context,
 ) : DriveSyncClient {
     private val appContext = context.applicationContext
-    private val signInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-        .requestEmail()
-        .requestScopes(Scope(DriveScopes.DRIVE_APPDATA))
-        .build()
+    private val signInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).apply {
+        requestEmail()
+        requestScopes(Scope(DriveScopes.DRIVE_APPDATA))
+        if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank()) {
+            requestIdToken(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+        }
+    }.build()
 
     private var account: GoogleSignInAccount? = GoogleSignIn.getLastSignedInAccount(appContext)
         ?.takeIf { GoogleSignIn.hasPermissions(it, Scope(DriveScopes.DRIVE_APPDATA)) }
@@ -34,6 +38,9 @@ class GoogleDriveSyncClient(
 
     override val accountEmail: String?
         get() = account?.email
+
+    val backendIdToken: String?
+        get() = account?.idToken?.takeIf { BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank() }
 
     fun signInIntent(): Intent {
         return GoogleSignIn.getClient(appContext, signInOptions).signInIntent

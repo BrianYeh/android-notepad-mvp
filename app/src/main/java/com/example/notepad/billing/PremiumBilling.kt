@@ -106,6 +106,34 @@ class PremiumBilling(
         queryActivePurchases()
     }
 
+    fun applyBackendEntitlement(response: PremiumBackendEntitlementResponse): Boolean {
+        val now = clock()
+        val result = PremiumBackendEntitlementMapper.fromEntitlementResponse(
+            expectedPackageName = BuildConfig.APPLICATION_ID,
+            response = response,
+            now = now,
+        )
+        saveSubscription(result.snapshot)
+        purchaseStatusError = result.rejectionReason
+        _state.update { it.copy(loading = false, lastError = visibleBillingError()) }
+        return result.accepted
+    }
+
+    fun clearBackendEntitlement() {
+        val current = _state.value.subscription
+        if (current.source != PremiumEntitlementSource.BackendVerified) return
+        val now = clock()
+        saveSubscription(
+            PremiumSubscriptionSnapshot(
+                status = PremiumSubscriptionStatus.Free,
+                source = PremiumEntitlementSource.None,
+                lastBackendVerifiedAt = current.lastBackendVerifiedAt,
+                lastEntitlementChangeAt = now,
+                acknowledgementStatus = PremiumAcknowledgementStatus.NotRequired,
+            ),
+        )
+    }
+
     fun launchPurchase(activity: Activity, plan: PremiumPlan): Boolean {
         if (!BuildConfig.ALLOW_CLIENT_ONLY_BILLING_ENTITLEMENT) {
             purchaseStatusError = PRODUCTION_BACKEND_REQUIRED_MESSAGE
