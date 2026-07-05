@@ -13,13 +13,18 @@ import com.brianyeh.justnotes.backend.play.NoopPlaySubscriptionVerifier
 import com.brianyeh.justnotes.backend.routes.justNotesRoutes
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class EntitlementRoutesTest {
     @Test
@@ -30,6 +35,7 @@ class EntitlementRoutesTest {
                 idTokenVerifier = FakeVerifier(),
                 entitlementRepository = EmptyRepository,
                 playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
             )
         }
 
@@ -46,6 +52,7 @@ class EntitlementRoutesTest {
                 idTokenVerifier = FakeVerifier(),
                 entitlementRepository = EmptyRepository,
                 playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
             )
         }
 
@@ -73,13 +80,14 @@ class EntitlementRoutesTest {
                             packageName = "com.brianyeh.justnotes",
                             productId = "just_notes_premium",
                             basePlanId = "monthly",
-                            expiryTime = 1_762_000_000_000L,
-                            lastVerifiedAt = 1_761_000_000_000L,
+                            expiryTime = NOW + 1_000L,
+                            lastVerifiedAt = NOW,
                             purchaseTokenHash = "token-hash",
                         )
                     }
                 },
                 playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
             )
         }
 
@@ -89,12 +97,279 @@ class EntitlementRoutesTest {
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertContains(response.bodyAsText(), """"hasPremium":true""")
+        assertContains(response.bodyAsText(), """"schemaVersion":1""")
         assertContains(response.bodyAsText(), """"packageName":"com.brianyeh.justnotes"""")
         assertContains(response.bodyAsText(), """"purchaseTokenHash":"token-hash"""")
     }
 
+    @Test
+    fun entitlementClampsExpiredCacheToNoPremium() = testApplication {
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = object : EntitlementRepository by EmptyRepository {
+                    override suspend fun getEntitlement(googleSub: String): EntitlementRecord {
+                        return EntitlementRecord(
+                            googleSub = googleSub,
+                            hasPremium = true,
+                            status = BackendSubscriptionStatus.Active,
+                            packageName = "com.brianyeh.justnotes",
+                            productId = "just_notes_premium",
+                            basePlanId = "monthly",
+                            expiryTime = NOW - 1L,
+                            lastVerifiedAt = NOW,
+                            purchaseTokenHash = "token-hash",
+                        )
+                    }
+                },
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.get("/v1/entitlement") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertContains(response.bodyAsText(), """"hasPremium":false""")
+        assertContains(response.bodyAsText(), """"status":"Expired"""")
+    }
+
+    @Test
+    fun entitlementMarksStaleCacheWithinMaxStale() = testApplication {
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = object : EntitlementRepository by EmptyRepository {
+                    override suspend fun getEntitlement(googleSub: String): EntitlementRecord {
+                        return EntitlementRecord(
+                            googleSub = googleSub,
+                            hasPremium = true,
+                            status = BackendSubscriptionStatus.Active,
+                            packageName = "com.brianyeh.justnotes",
+                            productId = "just_notes_premium",
+                            basePlanId = "monthly",
+                            expiryTime = NOW + 1_000L,
+                            lastVerifiedAt = NOW - (7L * 60L * 60L * 1_000L),
+                            purchaseTokenHash = "token-hash",
+                        )
+                    }
+                },
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.get("/v1/entitlement") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertContains(response.bodyAsText(), """"hasPremium":true""")
+        assertContains(response.bodyAsText(), """"stale":true""")
+    }
+
+    @Test
+    fun entitlementBeyondMaxStaleDoesNotGrantPremium() = testApplication {
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = object : EntitlementRepository by EmptyRepository {
+                    override suspend fun getEntitlement(googleSub: String): EntitlementRecord {
+                        return EntitlementRecord(
+                            googleSub = googleSub,
+                            hasPremium = true,
+                            status = BackendSubscriptionStatus.Active,
+                            packageName = "com.brianyeh.justnotes",
+                            productId = "just_notes_premium",
+                            basePlanId = "monthly",
+                            expiryTime = NOW + 1_000L,
+                            lastVerifiedAt = NOW - (25L * 60L * 60L * 1_000L),
+                            purchaseTokenHash = "token-hash",
+                        )
+                    }
+                },
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.get("/v1/entitlement") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertContains(response.bodyAsText(), """"hasPremium":false""")
+        assertContains(response.bodyAsText(), """"status":"Unknown"""")
+    }
+
+    @Test
+    fun entitlementWithMissingLastVerifiedAtDoesNotGrantPremium() = testApplication {
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = object : EntitlementRepository by EmptyRepository {
+                    override suspend fun getEntitlement(googleSub: String): EntitlementRecord {
+                        return EntitlementRecord(
+                            googleSub = googleSub,
+                            hasPremium = true,
+                            status = BackendSubscriptionStatus.Active,
+                            packageName = "com.brianyeh.justnotes",
+                            productId = "just_notes_premium",
+                            basePlanId = "monthly",
+                            expiryTime = NOW + 1_000L,
+                            lastVerifiedAt = null,
+                            purchaseTokenHash = "token-hash",
+                        )
+                    }
+                },
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.get("/v1/entitlement") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertContains(response.bodyAsText(), """"hasPremium":false""")
+        assertContains(response.bodyAsText(), """"status":"Unknown"""")
+    }
+
+    @Test
+    fun postVerifyIsNonGranting() = testApplication {
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = EmptyRepository,
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.post("/v1/billing/verify") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+            contentType(ContentType.Application.Json)
+            setBody(
+                """
+                {
+                  "purchaseToken": "raw-token",
+                  "packageName": "com.brianyeh.justnotes",
+                  "productId": "just_notes_premium",
+                  "basePlanId": "monthly",
+                  "offerId": "trial10d"
+                }
+                """.trimIndent(),
+            )
+        }
+
+        assertEquals(HttpStatusCode.Accepted, response.status)
+        assertContains(response.bodyAsText(), """"hasPremium":false""")
+        assertContains(response.bodyAsText(), """"status":"VerificationPending"""")
+        assertContains(response.bodyAsText(), """"errorCode":"POST_VERIFY_DISABLED"""")
+        assertFalse(response.bodyAsText().contains("raw-token"))
+    }
+
+    @Test
+    fun postVerifyCatalogMismatchIsStillNonGranting() = testApplication {
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = EmptyRepository,
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.post("/v1/billing/verify") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+            contentType(ContentType.Application.Json)
+            setBody(
+                """
+                {
+                  "purchaseToken": "raw-token",
+                  "packageName": "com.brianyeh.justnotes",
+                  "productId": "just_notes_premium",
+                  "basePlanId": "annual",
+                  "offerId": "trial10d"
+                }
+                """.trimIndent(),
+            )
+        }
+
+        assertEquals(HttpStatusCode.Accepted, response.status)
+        assertContains(response.bodyAsText(), """"hasPremium":false""")
+        assertContains(response.bodyAsText(), """"errorCode":"INVALID_CATALOG"""")
+        assertFalse(response.bodyAsText().contains("raw-token"))
+    }
+
+    @Test
+    fun postVerifyDoesNotWriteGrantingEntitlement() = testApplication {
+        val repository = RecordingRepository()
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = repository,
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.post("/v1/billing/verify") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+            contentType(ContentType.Application.Json)
+            setBody(
+                """
+                {
+                  "purchaseToken": "raw-token",
+                  "packageName": "com.brianyeh.justnotes",
+                  "productId": "just_notes_premium",
+                  "basePlanId": "monthly"
+                }
+                """.trimIndent(),
+            )
+        }
+
+        assertEquals(HttpStatusCode.Accepted, response.status)
+        assertEquals(null, repository.lastUpsert)
+    }
+
+    @Test
+    fun postVerifyRequiresAuthorization() = testApplication {
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = EmptyRepository,
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.post("/v1/billing/verify") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"purchaseToken":"raw-token"}""")
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertFalse(response.bodyAsText().contains("raw-token"))
+    }
+
     private fun testConfig(): BackendConfig {
         return BackendConfig.fromEnvironment(mapOf("GOOGLE_WEB_CLIENT_ID" to "web-client"))
+    }
+
+    private companion object {
+        const val NOW = 1_762_000_000_000L
     }
 }
 
@@ -108,6 +383,20 @@ private object EmptyRepository : EntitlementRepository {
     override suspend fun getEntitlement(googleSub: String): EntitlementRecord? = null
 
     override suspend fun upsertEntitlement(record: EntitlementRecord) = Unit
+
+    override suspend fun bindSubscriptionTokenHash(binding: SubscriptionBinding): TokenBindingResult {
+        return TokenBindingResult.Bound
+    }
+}
+
+private class RecordingRepository : EntitlementRepository {
+    var lastUpsert: EntitlementRecord? = null
+
+    override suspend fun getEntitlement(googleSub: String): EntitlementRecord? = null
+
+    override suspend fun upsertEntitlement(record: EntitlementRecord) {
+        lastUpsert = record
+    }
 
     override suspend fun bindSubscriptionTokenHash(binding: SubscriptionBinding): TokenBindingResult {
         return TokenBindingResult.Bound

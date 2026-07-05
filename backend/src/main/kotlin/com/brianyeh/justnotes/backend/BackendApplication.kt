@@ -1,6 +1,8 @@
 package com.brianyeh.justnotes.backend
 
 import com.brianyeh.justnotes.backend.auth.FailClosedGoogleIdTokenVerifier
+import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerifier
+import com.brianyeh.justnotes.backend.auth.OfficialGoogleIdTokenVerifier
 import com.brianyeh.justnotes.backend.config.BackendConfig
 import com.brianyeh.justnotes.backend.entitlement.NoopEntitlementRepository
 import com.brianyeh.justnotes.backend.play.NoopPlaySubscriptionVerifier
@@ -23,8 +25,14 @@ fun Application.justNotesBackendModule(
 ) {
     justNotesRoutes(
         config = config,
-        idTokenVerifier = FailClosedGoogleIdTokenVerifier(config),
+        idTokenVerifier = productionGoogleIdTokenVerifier(config),
         entitlementRepository = NoopEntitlementRepository,
         playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
     )
+}
+
+private fun productionGoogleIdTokenVerifier(config: BackendConfig): GoogleIdTokenVerifier {
+    if (config.validateForIdTokenVerification() != null) return FailClosedGoogleIdTokenVerifier(config)
+    return runCatching { OfficialGoogleIdTokenVerifier(config) }
+        .getOrElse { FailClosedGoogleIdTokenVerifier(config) }
 }

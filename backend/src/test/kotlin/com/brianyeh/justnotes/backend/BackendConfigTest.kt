@@ -23,10 +23,15 @@ class BackendConfigTest {
                 packageName = "com.brianyeh.justnotes",
                 productId = "just_notes_premium",
                 basePlanId = "monthly",
+                offerId = "trial10d",
             ),
         )
-        assertEquals("Package name is not allowed.", config.validateCatalog("com.attacker", "just_notes_premium", "monthly"))
-        assertEquals("Product ID is not allowed.", config.validateCatalog("com.brianyeh.justnotes", "other", "monthly"))
-        assertEquals("Base plan ID is not allowed.", config.validateCatalog("com.brianyeh.justnotes", "just_notes_premium", "weekly"))
+        assertNull(config.validateCatalog("com.brianyeh.justnotes", "just_notes_premium", "monthly", null))
+        assertNull(config.validateCatalog("com.brianyeh.justnotes", "just_notes_premium", "annual", null))
+        assertEquals("Package name is not allowed.", config.validateCatalog("com.attacker", "just_notes_premium", "monthly", null))
+        assertEquals("Product ID is not allowed.", config.validateCatalog("com.brianyeh.justnotes", "other", "monthly", null))
+        assertEquals("Base plan ID is not allowed.", config.validateCatalog("com.brianyeh.justnotes", "just_notes_premium", "weekly", null))
+        assertEquals("Offer ID is not allowed.", config.validateCatalog("com.brianyeh.justnotes", "just_notes_premium", "annual", "trial10d"))
+        assertEquals("Offer ID is not allowed.", config.validateCatalog("com.brianyeh.justnotes", "just_notes_premium", "monthly", "unknown"))
     }
 }
