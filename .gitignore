@@ -1,4 +1,5 @@
 .gradle/
+.worktrees/
 .idea/
 .kotlin/
 build/
