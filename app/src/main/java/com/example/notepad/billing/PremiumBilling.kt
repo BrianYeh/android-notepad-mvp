@@ -113,7 +113,9 @@ class PremiumBilling(
             response = response,
             now = now,
         )
-        saveSubscription(result.snapshot)
+        if (shouldPersistBackendEntitlementResult(_state.value.subscription, result)) {
+            saveSubscription(result.snapshot)
+        }
         purchaseStatusError = result.rejectionReason
         _state.update { it.copy(loading = false, lastError = visibleBillingError()) }
         return result.accepted
@@ -600,4 +602,12 @@ class PremiumBilling(
         private const val PRODUCTION_BACKEND_REQUIRED_MESSAGE =
             "Production billing is blocked until backend verification, acknowledgement, and RTDN are configured."
     }
+}
+
+internal fun shouldPersistBackendEntitlementResult(
+    current: PremiumSubscriptionSnapshot,
+    result: PremiumBackendVerificationResult,
+): Boolean {
+    if (result.shouldApplySnapshot) return true
+    return result.accepted && current.source == PremiumEntitlementSource.BackendVerified
 }

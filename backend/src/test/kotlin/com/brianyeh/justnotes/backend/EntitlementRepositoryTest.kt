@@ -1,7 +1,8 @@
 package com.brianyeh.justnotes.backend
 
+import com.brianyeh.justnotes.backend.entitlement.BackendSubscriptionStatus
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRecord
-import com.brianyeh.justnotes.backend.entitlement.EntitlementRepository
+import com.brianyeh.justnotes.backend.entitlement.InMemoryEntitlementRepository
 import com.brianyeh.justnotes.backend.entitlement.SubscriptionBinding
 import com.brianyeh.justnotes.backend.entitlement.TokenBindingResult
 import kotlinx.coroutines.runBlocking
@@ -11,7 +12,7 @@ import kotlin.test.assertEquals
 class EntitlementRepositoryTest {
     @Test
     fun tokenHashOwnershipIsUnique() = runBlocking {
-        val repository = InMemoryTestEntitlementRepository()
+        val repository = InMemoryEntitlementRepository()
         val binding = SubscriptionBinding(
             purchaseTokenHash = "hash",
             ownerGoogleSub = "sub-a",
@@ -27,27 +28,22 @@ class EntitlementRepositoryTest {
             repository.bindSubscriptionTokenHash(binding.copy(ownerGoogleSub = "sub-b")),
         )
     }
-}
 
-private class InMemoryTestEntitlementRepository : EntitlementRepository {
-    private val entitlements = mutableMapOf<String, EntitlementRecord>()
-    private val tokenOwners = mutableMapOf<String, String>()
+    @Test
+    fun entitlementRecordsCanBeStoredAndReadBack() = runBlocking {
+        val repository = InMemoryEntitlementRepository()
+        val record = EntitlementRecord(
+            googleSub = "sub-a",
+            hasPremium = true,
+            status = BackendSubscriptionStatus.Active,
+            packageName = "com.brianyeh.justnotes",
+            productId = "just_notes_premium",
+            basePlanId = "monthly",
+        )
 
-    override suspend fun getEntitlement(googleSub: String): EntitlementRecord? = entitlements[googleSub]
+        repository.upsertEntitlement(record)
 
-    override suspend fun upsertEntitlement(record: EntitlementRecord) {
-        entitlements[record.googleSub] = record
-    }
-
-    override suspend fun bindSubscriptionTokenHash(binding: SubscriptionBinding): TokenBindingResult {
-        val existingOwner = tokenOwners[binding.purchaseTokenHash]
-        return when {
-            existingOwner == null -> {
-                tokenOwners[binding.purchaseTokenHash] = binding.ownerGoogleSub
-                TokenBindingResult.Bound
-            }
-            existingOwner == binding.ownerGoogleSub -> TokenBindingResult.AlreadyOwnedBySameUser
-            else -> TokenBindingResult.AlreadyOwnedByAnotherUser(existingOwner)
-        }
+        assertEquals(record, repository.getEntitlement("sub-a"))
+        assertEquals(null, repository.getEntitlement("sub-b"))
     }
 }

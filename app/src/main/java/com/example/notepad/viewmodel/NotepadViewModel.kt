@@ -77,7 +77,8 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         connectToPlay = DebugPremiumAccess.shouldConnectBilling(),
     )
     private val backendEntitlementRepository = BackendEntitlementRepository(
-        idTokenProvider = { driveSyncClient.backendIdToken },
+        authProvider = { driveSyncClient.backendEntitlementAuth() },
+        currentAccountKeyProvider = { driveSyncClient.currentBackendEntitlementAccountKey() },
         applyBackendEntitlement = premiumBilling::applyBackendEntitlement,
     )
     private val googleSyncMutex = Mutex()

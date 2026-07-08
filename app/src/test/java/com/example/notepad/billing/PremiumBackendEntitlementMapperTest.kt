@@ -197,6 +197,56 @@ class PremiumBackendEntitlementMapperTest {
     }
 
     @Test
+    fun noBackendRecordResponseIsAcceptedWithoutApplyingSnapshot() {
+        val result = PremiumBackendEntitlementMapper.fromEntitlementResponse(
+            expectedPackageName = PACKAGE_NAME,
+            response = PremiumBackendEntitlementResponse(
+                hasPremium = false,
+                status = PremiumSubscriptionStatus.Unknown,
+                source = PremiumEntitlementSource.None,
+            ),
+            now = NOW,
+        )
+
+        assertTrue(result.accepted)
+        assertFalse(result.shouldApplySnapshot)
+        assertEquals(PremiumSubscriptionStatus.Unknown, result.snapshot.status)
+        assertEquals(PremiumEntitlementSource.None, result.snapshot.source)
+        assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = true, now = NOW))
+    }
+
+    @Test
+    fun noBackendRecordClearsStoredBackendVerifiedEntitlement() {
+        val result = noBackendRecordResult()
+        val current = PremiumSubscriptionSnapshot(
+            status = PremiumSubscriptionStatus.Active,
+            source = PremiumEntitlementSource.BackendVerified,
+            productId = PremiumCatalog.PREFERRED_PRODUCT_ID,
+            basePlanId = "monthly",
+            expiryTime = NOW + 1_000L,
+            lastBackendVerifiedAt = NOW - 1_000L,
+            acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
+        )
+
+        assertTrue(shouldPersistBackendEntitlementResult(current, result))
+    }
+
+    @Test
+    fun noBackendRecordDoesNotOverwriteClientObservedEntitlement() {
+        val result = noBackendRecordResult()
+        val current = PremiumSubscriptionSnapshot(
+            status = PremiumSubscriptionStatus.Active,
+            source = PremiumEntitlementSource.ClientObserved,
+            productId = PremiumCatalog.PREFERRED_PRODUCT_ID,
+            basePlanId = "monthly",
+            expiryTime = NOW + 1_000L,
+            acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
+        )
+
+        assertFalse(shouldPersistBackendEntitlementResult(current, result))
+    }
+
+    @Test
     fun backendEntitlementResponseRejectsSelfAuthoredOrInconsistentAccess() {
         val clientObserved = PremiumBackendEntitlementMapper.fromEntitlementResponse(
             expectedPackageName = PACKAGE_NAME,
@@ -255,6 +305,18 @@ class PremiumBackendEntitlementMapperTest {
             acknowledgementAttemptCount = acknowledgementAttemptCount,
             nextAcknowledgementAttemptAt = nextAcknowledgementAttemptAt,
             lastAcknowledgementError = lastAcknowledgementError,
+        )
+    }
+
+    private fun noBackendRecordResult(): PremiumBackendVerificationResult {
+        return PremiumBackendEntitlementMapper.fromEntitlementResponse(
+            expectedPackageName = PACKAGE_NAME,
+            response = PremiumBackendEntitlementResponse(
+                hasPremium = false,
+                status = PremiumSubscriptionStatus.Unknown,
+                source = PremiumEntitlementSource.None,
+            ),
+            now = NOW,
         )
     }
 

@@ -7,6 +7,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicLong
 
 internal data class BackendEntitlementClientConfig(
     val baseUrl: String,
@@ -35,6 +36,11 @@ internal sealed class BackendEntitlementFetchResult {
 internal interface BackendEntitlementClient {
     suspend fun fetchEntitlement(idToken: String?): BackendEntitlementFetchResult
 }
+
+internal data class BackendEntitlementAuth(
+    val idToken: String,
+    val accountKey: String,
+)
 
 internal class HttpBackendEntitlementClient(
     private val config: BackendEntitlementClientConfig = BackendEntitlementClientConfig.fromBuildConfig(),
@@ -98,14 +104,23 @@ internal class HttpBackendEntitlementClient(
 
 internal class BackendEntitlementRepository(
     private val client: BackendEntitlementClient = HttpBackendEntitlementClient(),
-    private val idTokenProvider: () -> String?,
+    private val authProvider: suspend () -> BackendEntitlementAuth?,
+    private val currentAccountKeyProvider: () -> String?,
     private val applyBackendEntitlement: (PremiumBackendEntitlementResponse) -> Boolean,
 ) {
+    private val refreshSequence = AtomicLong(0L)
+    private val latestSuccessfulRefreshId = AtomicLong(0L)
+
     suspend fun refresh(): BackendEntitlementFetchResult {
-        val requestIdToken = idTokenProvider()
-        return when (val result = client.fetchEntitlement(requestIdToken)) {
+        val refreshId = refreshSequence.incrementAndGet()
+        val requestAuth = authProvider()
+        return when (val result = client.fetchEntitlement(requestAuth?.idToken)) {
             is BackendEntitlementFetchResult.Success -> {
-                if (idTokenProvider() == requestIdToken) {
+                if (
+                    requestAuth != null &&
+                    currentAccountKeyProvider() == requestAuth.accountKey &&
+                    markLatestSuccessfulRefresh(refreshId)
+                ) {
                     applyBackendEntitlement(result.response)
                 }
                 result
@@ -115,6 +130,15 @@ internal class BackendEntitlementRepository(
             is BackendEntitlementFetchResult.Failure,
             -> result
         }
+    }
+
+    private fun markLatestSuccessfulRefresh(refreshId: Long): Boolean {
+        var latestSuccessId = latestSuccessfulRefreshId.get()
+        while (refreshId > latestSuccessId) {
+            if (latestSuccessfulRefreshId.compareAndSet(latestSuccessId, refreshId)) return true
+            latestSuccessId = latestSuccessfulRefreshId.get()
+        }
+        return false
     }
 }
 

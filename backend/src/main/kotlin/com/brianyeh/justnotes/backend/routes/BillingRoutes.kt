@@ -64,7 +64,7 @@ fun Application.justNotesRoutes(
                             googleSub = result.identity.googleSub,
                             hasPremium = false,
                             status = BackendSubscriptionStatus.Unknown,
-                            source = BackendEntitlementSource.BackendVerified,
+                            source = BackendEntitlementSource.None,
                         )
                     call.respondText(
                         entitlement.sanitizedForGet(clock(), config).toJson(),

@@ -1,6 +1,7 @@
 package com.brianyeh.justnotes.backend.entitlement
 
 enum class BackendEntitlementSource {
+    None,
     BackendVerified,
 }
 

@@ -63,6 +63,7 @@ class EntitlementRoutesTest {
         assertEquals(HttpStatusCode.OK, response.status)
         assertContains(response.bodyAsText(), """"hasPremium":false""")
         assertContains(response.bodyAsText(), """"status":"Unknown"""")
+        assertContains(response.bodyAsText(), """"source":"None"""")
     }
 
     @Test

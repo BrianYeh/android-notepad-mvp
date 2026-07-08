@@ -57,6 +57,7 @@ data class PremiumBackendVerificationResult(
     val snapshot: PremiumSubscriptionSnapshot,
     val accepted: Boolean,
     val rejectionReason: String? = null,
+    val shouldApplySnapshot: Boolean = true,
 )
 
 data class PremiumBackendEntitlementResponse(
@@ -86,6 +87,19 @@ object PremiumBackendEntitlementMapper {
         response: PremiumBackendEntitlementResponse,
         now: Long,
     ): PremiumBackendVerificationResult {
+        if (response.isNoBackendRecord()) {
+            return PremiumBackendVerificationResult(
+                accepted = true,
+                shouldApplySnapshot = false,
+                snapshot = PremiumSubscriptionSnapshot(
+                    status = PremiumSubscriptionStatus.Unknown,
+                    source = PremiumEntitlementSource.None,
+                    lastBackendVerifiedAt = response.lastVerifiedAt,
+                    lastEntitlementChangeAt = now,
+                    acknowledgementStatus = PremiumAcknowledgementStatus.NotRequired,
+                ),
+            )
+        }
         val rejectionReason = rejectReason(expectedPackageName, response)
         if (rejectionReason != null) {
             return PremiumBackendVerificationResult(
@@ -218,6 +232,7 @@ object PremiumBackendEntitlementMapper {
         expectedPackageName: String,
         response: PremiumBackendEntitlementResponse,
     ): String? {
+        if (response.isNoBackendRecord()) return null
         if (response.source != PremiumEntitlementSource.BackendVerified) {
             return "Entitlement response is not backend verified."
         }
@@ -237,6 +252,18 @@ object PremiumBackendEntitlementMapper {
             return "Entitlement response base plan does not match the Premium catalog."
         }
         return null
+    }
+
+    private fun PremiumBackendEntitlementResponse.isNoBackendRecord(): Boolean {
+        return source == PremiumEntitlementSource.None &&
+            !hasPremium &&
+            status == PremiumSubscriptionStatus.Unknown &&
+            packageName == null &&
+            productId == null &&
+            basePlanId == null &&
+            offerId == null &&
+            expiryTime == null &&
+            purchaseTokenHash == null
     }
 
     private fun PremiumBackendPurchaseVerification.matchesKnownBasePlan(): Boolean {

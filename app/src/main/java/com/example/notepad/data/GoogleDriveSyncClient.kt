@@ -3,12 +3,14 @@ package com.example.notepad.data
 import android.content.Context
 import android.content.Intent
 import com.example.notepad.BuildConfig
+import com.example.notepad.billing.BackendEntitlementAuth
 import com.google.android.gms.auth.UserRecoverableAuthException
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.Scope
+import com.google.android.gms.tasks.Tasks
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
 import com.google.api.client.googleapis.json.GoogleJsonResponseException
 import com.google.api.client.http.ByteArrayContent
@@ -19,6 +21,10 @@ import com.google.api.services.drive.DriveScopes
 import com.google.api.services.drive.model.File as DriveFile
 import java.io.IOException
 import java.util.Locale
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class GoogleDriveSyncClient(
     private val context: Context,
@@ -31,30 +37,102 @@ class GoogleDriveSyncClient(
             requestIdToken(BuildConfig.GOOGLE_WEB_CLIENT_ID)
         }
     }.build()
+    private val backendSignInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).apply {
+        requestEmail()
+        if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank()) {
+            requestIdToken(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+        }
+    }.build()
 
     private var account: GoogleSignInAccount? = GoogleSignIn.getLastSignedInAccount(appContext)
         ?.takeIf { GoogleSignIn.hasPermissions(it, Scope(DriveScopes.DRIVE_APPDATA)) }
     private var drive: Drive? = null
+    private var allowLastSignedInBackendAuth = true
 
     override val accountEmail: String?
         get() = account?.email
 
-    val backendIdToken: String?
-        get() = account?.idToken?.takeIf { BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank() }
+    internal suspend fun backendEntitlementAuth(): BackendEntitlementAuth? {
+        return refreshedBackendEntitlementAuth(
+            googleWebClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID,
+            cachedAccount = backendEntitlementAccount(),
+            refreshAccount = { refreshSignedInAccount() },
+            readIdToken = { it.idToken },
+            readAccountKey = ::backendEntitlementAccountKey,
+            cacheRefreshedAccount = ::cacheRefreshedDriveAccountIfPermitted,
+        )
+    }
+
+    internal fun currentBackendEntitlementAccountKey(): String? {
+        return backendEntitlementAccount()?.let(::backendEntitlementAccountKey)
+    }
 
     fun signInIntent(): Intent {
         return GoogleSignIn.getClient(appContext, signInOptions).signInIntent
     }
 
     fun connect(account: GoogleSignInAccount) {
+        allowLastSignedInBackendAuth = true
         this.account = account
         drive = null
     }
 
     fun disconnect() {
+        allowLastSignedInBackendAuth = false
         account = null
         drive = null
         GoogleSignIn.getClient(appContext, signInOptions).signOut()
+    }
+
+    private fun hasDriveAppDataPermission(account: GoogleSignInAccount): Boolean {
+        return GoogleSignIn.hasPermissions(account, Scope(DriveScopes.DRIVE_APPDATA))
+    }
+
+    private fun backendEntitlementAccountKey(account: GoogleSignInAccount): String? {
+        return account.account?.name ?: account.email ?: account.id
+    }
+
+    private fun backendEntitlementAccount(): GoogleSignInAccount? {
+        return backendEntitlementAccountForAuth(
+            driveAccount = account,
+            lastSignedInAccount = GoogleSignIn.getLastSignedInAccount(appContext),
+            allowLastSignedInAccount = allowLastSignedInBackendAuth,
+        )
+    }
+
+    private fun cacheRefreshedDriveAccountIfPermitted(refreshedAccount: GoogleSignInAccount) {
+        if (!allowLastSignedInBackendAuth) return
+        val currentAccount = account
+        val nextAccount = driveAccountAfterBackendAuthRefresh(
+            currentDriveAccount = currentAccount,
+            refreshedAccount = refreshedAccount,
+            refreshedHasDrivePermission = hasDriveAppDataPermission(refreshedAccount),
+        )
+        if (nextAccount !== currentAccount) {
+            if (currentAccount?.account != nextAccount?.account) {
+                drive = null
+            }
+            account = nextAccount
+        }
+        if (nextAccount != null) {
+            allowLastSignedInBackendAuth = true
+        }
+    }
+
+    private suspend fun refreshSignedInAccount(): GoogleSignInAccount? {
+        return withContext(Dispatchers.IO) {
+            try {
+                Tasks.await(
+                    GoogleSignIn.getClient(appContext, backendSignInOptions).silentSignIn(),
+                    BACKEND_ID_TOKEN_REFRESH_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS,
+                )
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 
     override suspend fun readSnapshot(): DriveSyncResult<RemoteSyncSnapshot?> {
@@ -211,5 +289,50 @@ class GoogleDriveSyncClient(
 
     private companion object {
         const val SYNC_FILE_PREFIX = "just-notes-sync-v1"
+        const val BACKEND_ID_TOKEN_REFRESH_TIMEOUT_SECONDS = 10L
     }
+}
+
+internal fun <Account> backendEntitlementAccountForAuth(
+    driveAccount: Account?,
+    lastSignedInAccount: Account?,
+    allowLastSignedInAccount: Boolean,
+): Account? {
+    return driveAccount ?: lastSignedInAccount.takeIf { allowLastSignedInAccount }
+}
+
+internal fun <Account> driveAccountAfterBackendAuthRefresh(
+    currentDriveAccount: Account?,
+    refreshedAccount: Account,
+    refreshedHasDrivePermission: Boolean,
+): Account? {
+    return if (refreshedHasDrivePermission) refreshedAccount else currentDriveAccount
+}
+
+internal suspend fun <Account> refreshedBackendEntitlementAuth(
+    googleWebClientId: String,
+    cachedAccount: Account?,
+    refreshAccount: suspend () -> Account?,
+    readIdToken: (Account) -> String?,
+    readAccountKey: (Account) -> String?,
+    cacheRefreshedAccount: (Account) -> Unit,
+): BackendEntitlementAuth? {
+    if (googleWebClientId.isBlank() || cachedAccount == null) return null
+    val refreshedAccount = try {
+        refreshAccount()
+    } catch (exception: CancellationException) {
+        throw exception
+    } catch (_: Exception) {
+        null
+    }
+    val accountForToken = refreshedAccount ?: cachedAccount
+    if (refreshedAccount != null) {
+        cacheRefreshedAccount(refreshedAccount)
+    }
+    val idToken = readIdToken(accountForToken)?.takeIf { it.isNotBlank() } ?: return null
+    val accountKey = readAccountKey(accountForToken)?.takeIf { it.isNotBlank() } ?: return null
+    return BackendEntitlementAuth(
+        idToken = idToken,
+        accountKey = accountKey,
+    )
 }
