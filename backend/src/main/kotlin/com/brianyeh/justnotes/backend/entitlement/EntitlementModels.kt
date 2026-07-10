@@ -62,6 +62,10 @@ data class SubscriptionRecord(
     val nextAcknowledgementAttemptAt: Long?,
     val lastAcknowledgementErrorCode: String?,
     val lastVerifiedAt: Long,
+    val status: BackendSubscriptionStatus = BackendSubscriptionStatus.Unknown,
+    val expiryTime: Long? = null,
+    val acknowledgementClaimGeneration: Long = 0,
+    val acknowledgementLeaseUntil: Long? = null,
 )
 
 data class EntitlementGrantInputs(

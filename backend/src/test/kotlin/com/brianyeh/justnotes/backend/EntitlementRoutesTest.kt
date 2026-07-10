@@ -4,9 +4,12 @@ import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerificationResult
 import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerifier
 import com.brianyeh.justnotes.backend.auth.VerifiedGoogleIdentity
 import com.brianyeh.justnotes.backend.config.BackendConfig
+import com.brianyeh.justnotes.backend.entitlement.AcknowledgementCompletionResult
+import com.brianyeh.justnotes.backend.entitlement.AcknowledgementClaimResult
 import com.brianyeh.justnotes.backend.entitlement.BackendAcknowledgementState
 import com.brianyeh.justnotes.backend.entitlement.BackendSubscriptionStatus
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRecord
+import com.brianyeh.justnotes.backend.entitlement.EntitlementReconciliationResult
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRepository
 import com.brianyeh.justnotes.backend.entitlement.SubscriptionRecord
 import com.brianyeh.justnotes.backend.entitlement.SubscriptionWriteResult
@@ -520,13 +523,36 @@ private class FakeVerifier : GoogleIdTokenVerifier {
 private object EmptyRepository : EntitlementRepository {
     override suspend fun getEntitlement(googleSub: String): EntitlementRecord? = null
 
-    override suspend fun upsertEntitlement(record: EntitlementRecord) = Unit
+    override suspend fun upsertEntitlement(record: EntitlementRecord): EntitlementRecord = record
 
     override suspend fun getSubscription(purchaseTokenHash: String): SubscriptionRecord? = null
 
     override suspend fun upsertSubscriptionForOwner(record: SubscriptionRecord): SubscriptionWriteResult {
         return SubscriptionWriteResult.Created
     }
+
+    override suspend fun claimSubscriptionAcknowledgement(
+        purchaseTokenHash: String,
+        ownerGoogleSub: String,
+        now: Long,
+        leaseUntil: Long,
+    ): AcknowledgementClaimResult = AcknowledgementClaimResult.Missing
+
+    override suspend fun completeSubscriptionAcknowledgement(
+        purchaseTokenHash: String,
+        ownerGoogleSub: String,
+        generation: Long,
+        acknowledgementState: BackendAcknowledgementState,
+        acknowledgementAttemptCount: Int,
+        nextAcknowledgementAttemptAt: Long?,
+        lastAcknowledgementErrorCode: String?,
+    ): AcknowledgementCompletionResult = AcknowledgementCompletionResult.Missing
+
+    override suspend fun reconcileEntitlementFromSubscription(
+        purchaseTokenHash: String,
+        ownerGoogleSub: String,
+        now: Long,
+    ): EntitlementReconciliationResult = EntitlementReconciliationResult.Missing
 }
 
 private class RecordingRepository : EntitlementRepository {
@@ -534,8 +560,9 @@ private class RecordingRepository : EntitlementRepository {
 
     override suspend fun getEntitlement(googleSub: String): EntitlementRecord? = null
 
-    override suspend fun upsertEntitlement(record: EntitlementRecord) {
+    override suspend fun upsertEntitlement(record: EntitlementRecord): EntitlementRecord {
         lastUpsert = record
+        return record
     }
 
     override suspend fun getSubscription(purchaseTokenHash: String): SubscriptionRecord? = null
@@ -543,4 +570,27 @@ private class RecordingRepository : EntitlementRepository {
     override suspend fun upsertSubscriptionForOwner(record: SubscriptionRecord): SubscriptionWriteResult {
         return SubscriptionWriteResult.Created
     }
+
+    override suspend fun claimSubscriptionAcknowledgement(
+        purchaseTokenHash: String,
+        ownerGoogleSub: String,
+        now: Long,
+        leaseUntil: Long,
+    ): AcknowledgementClaimResult = AcknowledgementClaimResult.Missing
+
+    override suspend fun completeSubscriptionAcknowledgement(
+        purchaseTokenHash: String,
+        ownerGoogleSub: String,
+        generation: Long,
+        acknowledgementState: BackendAcknowledgementState,
+        acknowledgementAttemptCount: Int,
+        nextAcknowledgementAttemptAt: Long?,
+        lastAcknowledgementErrorCode: String?,
+    ): AcknowledgementCompletionResult = AcknowledgementCompletionResult.Missing
+
+    override suspend fun reconcileEntitlementFromSubscription(
+        purchaseTokenHash: String,
+        ownerGoogleSub: String,
+        now: Long,
+    ): EntitlementReconciliationResult = EntitlementReconciliationResult.Missing
 }
