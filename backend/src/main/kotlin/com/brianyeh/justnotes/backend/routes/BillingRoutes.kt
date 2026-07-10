@@ -2,6 +2,9 @@ package com.brianyeh.justnotes.backend.routes
 
 import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerificationResult
 import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerifier
+import com.brianyeh.justnotes.backend.billing.BillingApiJson
+import com.brianyeh.justnotes.backend.billing.BillingVerifyRequest
+import com.brianyeh.justnotes.backend.billing.BillingVerifyRequestParseResult
 import com.brianyeh.justnotes.backend.config.BackendConfig
 import com.brianyeh.justnotes.backend.entitlement.BackendAcknowledgementState
 import com.brianyeh.justnotes.backend.entitlement.BackendEntitlementSource
@@ -17,12 +20,6 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 fun Application.justNotesRoutes(
     config: BackendConfig,
@@ -96,7 +93,10 @@ fun Application.justNotesRoutes(
                 return@post
             }
             val body = call.receiveText()
-            val request = BillingVerifyRequest.parse(body)
+            val request = when (val parsed = BillingApiJson.parseVerifyRequest(body)) {
+                is BillingVerifyRequestParseResult.Failure -> null
+                is BillingVerifyRequestParseResult.Success -> parsed.request
+            }
             val catalogError = request?.let {
                 config.validateCatalog(
                     packageName = it.packageName,
@@ -125,32 +125,6 @@ fun Application.justNotesRoutes(
             )
         }
     }
-}
-
-private data class BillingVerifyRequest(
-    val packageName: String?,
-    val productId: String?,
-    val basePlanId: String?,
-    val offerId: String?,
-) {
-    companion object {
-        fun parse(body: String): BillingVerifyRequest? {
-            if (body.isBlank()) return null
-            return runCatching {
-                val root = Json.parseToJsonElement(body).jsonObject
-                BillingVerifyRequest(
-                    packageName = root.optionalString("packageName"),
-                    productId = root.optionalString("productId"),
-                    basePlanId = root.optionalString("basePlanId"),
-                    offerId = root.optionalString("offerId"),
-                )
-            }.getOrNull()
-        }
-    }
-}
-
-private fun JsonObject.optionalString(name: String): String? {
-    return (this[name] as? JsonPrimitive)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
 }
 
 private fun nonGrantingVerifyResponse(

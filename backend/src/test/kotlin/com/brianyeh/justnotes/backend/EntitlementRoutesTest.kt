@@ -346,7 +346,10 @@ class EntitlementRoutesTest {
                   "packageName": "com.brianyeh.justnotes",
                   "productId": "just_notes_premium",
                   "basePlanId": "monthly",
-                  "offerId": "trial10d"
+                  "offerId": "trial10d",
+                  "appVersion": "1.0.7",
+                  "versionCode": 5,
+                  "deviceLocale": "zh-TW"
                 }
                 """.trimIndent(),
             )
@@ -388,7 +391,11 @@ class EntitlementRoutesTest {
                   "purchaseToken": "raw-token",
                   "packageName": "com.brianyeh.justnotes",
                   "productId": "just_notes_premium",
-                  "basePlanId": "monthly"
+                  "basePlanId": "monthly",
+                  "offerId": null,
+                  "appVersion": "1.0.7",
+                  "versionCode": 5,
+                  "deviceLocale": "zh-TW"
                 }
                 """.trimIndent(),
             )
@@ -421,7 +428,10 @@ class EntitlementRoutesTest {
                   "packageName": "com.brianyeh.justnotes",
                   "productId": "just_notes_premium",
                   "basePlanId": "annual",
-                  "offerId": "trial10d"
+                  "offerId": "trial10d",
+                  "appVersion": "1.0.7",
+                  "versionCode": 5,
+                  "deviceLocale": "zh-TW"
                 }
                 """.trimIndent(),
             )
@@ -455,7 +465,11 @@ class EntitlementRoutesTest {
                   "purchaseToken": "raw-token",
                   "packageName": "com.brianyeh.justnotes",
                   "productId": "just_notes_premium",
-                  "basePlanId": "monthly"
+                  "basePlanId": "monthly",
+                  "offerId": null,
+                  "appVersion": "1.0.7",
+                  "versionCode": 5,
+                  "deviceLocale": "zh-TW"
                 }
                 """.trimIndent(),
             )
