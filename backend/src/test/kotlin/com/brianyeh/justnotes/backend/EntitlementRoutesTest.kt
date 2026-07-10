@@ -8,8 +8,8 @@ import com.brianyeh.justnotes.backend.entitlement.BackendAcknowledgementState
 import com.brianyeh.justnotes.backend.entitlement.BackendSubscriptionStatus
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRecord
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRepository
-import com.brianyeh.justnotes.backend.entitlement.SubscriptionBinding
-import com.brianyeh.justnotes.backend.entitlement.TokenBindingResult
+import com.brianyeh.justnotes.backend.entitlement.SubscriptionRecord
+import com.brianyeh.justnotes.backend.entitlement.SubscriptionWriteResult
 import com.brianyeh.justnotes.backend.play.NoopPlaySubscriptionVerifier
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerificationResult
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerifier
@@ -522,8 +522,10 @@ private object EmptyRepository : EntitlementRepository {
 
     override suspend fun upsertEntitlement(record: EntitlementRecord) = Unit
 
-    override suspend fun bindSubscriptionTokenHash(binding: SubscriptionBinding): TokenBindingResult {
-        return TokenBindingResult.Bound
+    override suspend fun getSubscription(purchaseTokenHash: String): SubscriptionRecord? = null
+
+    override suspend fun upsertSubscriptionForOwner(record: SubscriptionRecord): SubscriptionWriteResult {
+        return SubscriptionWriteResult.Created
     }
 }
 
@@ -536,7 +538,9 @@ private class RecordingRepository : EntitlementRepository {
         lastUpsert = record
     }
 
-    override suspend fun bindSubscriptionTokenHash(binding: SubscriptionBinding): TokenBindingResult {
-        return TokenBindingResult.Bound
+    override suspend fun getSubscription(purchaseTokenHash: String): SubscriptionRecord? = null
+
+    override suspend fun upsertSubscriptionForOwner(record: SubscriptionRecord): SubscriptionWriteResult {
+        return SubscriptionWriteResult.Created
     }
 }

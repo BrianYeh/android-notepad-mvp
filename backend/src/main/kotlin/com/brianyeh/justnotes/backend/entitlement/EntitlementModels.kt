@@ -43,7 +43,7 @@ data class EntitlementRecord(
     val acknowledgementState: BackendAcknowledgementState? = null,
 )
 
-data class SubscriptionBinding(
+data class SubscriptionRecord(
     val purchaseTokenHash: String,
     val hashVersion: String,
     val pepperVersion: String,
@@ -51,10 +51,17 @@ data class SubscriptionBinding(
     val packageName: String,
     val productId: String,
     val basePlanId: String?,
+    val offerId: String?,
+    val linkedPurchaseTokenHash: String?,
     val tokenCiphertext: String,
     val keyVersion: String,
     val encryptedAt: Long,
     val encryptionAlgorithm: String,
+    val acknowledgementState: BackendAcknowledgementState,
+    val acknowledgementAttemptCount: Int,
+    val nextAcknowledgementAttemptAt: Long?,
+    val lastAcknowledgementErrorCode: String?,
+    val lastVerifiedAt: Long,
 )
 
 data class EntitlementGrantInputs(

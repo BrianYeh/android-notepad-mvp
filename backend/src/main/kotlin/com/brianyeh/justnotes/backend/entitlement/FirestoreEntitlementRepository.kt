@@ -6,16 +6,18 @@ import kotlinx.coroutines.withContext
 
 interface FirestoreEntitlementDocumentStore {
     suspend fun getEntitlementDocument(documentId: String): Map<String, Any?>?
+    suspend fun getSubscriptionDocument(documentId: String): Map<String, Any?>?
     suspend fun upsertEntitlementDocumentIfNotOlder(
         documentId: String,
         lastVerifiedAt: Long?,
         fields: Map<String, Any?>,
     )
-    suspend fun bindSubscriptionDocument(
+    suspend fun upsertSubscriptionDocumentForOwner(
         documentId: String,
         ownerGoogleSub: String,
+        lastVerifiedAt: Long,
         fields: Map<String, Any?>,
-    ): TokenBindingResult
+    ): SubscriptionWriteResult
 }
 
 class GoogleCloudFirestoreEntitlementDocumentStore(
@@ -23,8 +25,13 @@ class GoogleCloudFirestoreEntitlementDocumentStore(
 ) : FirestoreEntitlementDocumentStore {
     override suspend fun getEntitlementDocument(documentId: String): Map<String, Any?>? {
         return withContext(Dispatchers.IO) {
-            val snapshot = firestore.collection(ENTITLEMENTS_COLLECTION).document(documentId).get().get()
-            snapshot.data
+            firestore.collection(ENTITLEMENTS_COLLECTION).document(documentId).get().get().data
+        }
+    }
+
+    override suspend fun getSubscriptionDocument(documentId: String): Map<String, Any?>? {
+        return withContext(Dispatchers.IO) {
+            firestore.collection(SUBSCRIPTIONS_COLLECTION).document(documentId).get().get().data
         }
     }
 
@@ -46,11 +53,12 @@ class GoogleCloudFirestoreEntitlementDocumentStore(
         }
     }
 
-    override suspend fun bindSubscriptionDocument(
+    override suspend fun upsertSubscriptionDocumentForOwner(
         documentId: String,
         ownerGoogleSub: String,
+        lastVerifiedAt: Long,
         fields: Map<String, Any?>,
-    ): TokenBindingResult {
+    ): SubscriptionWriteResult {
         return withContext(Dispatchers.IO) {
             val reference = firestore.collection(SUBSCRIPTIONS_COLLECTION).document(documentId)
             firestore.runTransaction { transaction ->
@@ -59,10 +67,16 @@ class GoogleCloudFirestoreEntitlementDocumentStore(
                 when {
                     !snapshot.exists() -> {
                         transaction.create(reference, fields)
-                        TokenBindingResult.Bound
+                        SubscriptionWriteResult.Created
                     }
-                    existingOwner == ownerGoogleSub -> TokenBindingResult.AlreadyOwnedBySameUser
-                    else -> TokenBindingResult.AlreadyOwnedByAnotherUser(existingOwner.orEmpty())
+                    existingOwner != ownerGoogleSub -> SubscriptionWriteResult.OwnedByAnotherUser
+                    else -> {
+                        val existingLastVerifiedAt = snapshot.getLong(LAST_VERIFIED_AT_FIELD)
+                        if (existingLastVerifiedAt == null || lastVerifiedAt >= existingLastVerifiedAt) {
+                            transaction.set(reference, fields)
+                        }
+                        SubscriptionWriteResult.UpdatedForSameOwner
+                    }
                 }
             }.get()
         }
@@ -97,12 +111,22 @@ class FirestoreEntitlementRepository(
         )
     }
 
-    override suspend fun bindSubscriptionTokenHash(binding: SubscriptionBinding): TokenBindingResult {
-        val documentId = safeDocumentId(binding.purchaseTokenHash, "Purchase token hash")
-        return store.bindSubscriptionDocument(
+    override suspend fun getSubscription(purchaseTokenHash: String): SubscriptionRecord? {
+        val documentId = safeDocumentId(purchaseTokenHash, "Purchase token hash")
+        return store.getSubscriptionDocument(documentId)?.toSubscriptionRecord()?.also { record ->
+            check(record.purchaseTokenHash == purchaseTokenHash) {
+                "Firestore subscription hash does not match its document ID."
+            }
+        }
+    }
+
+    override suspend fun upsertSubscriptionForOwner(record: SubscriptionRecord): SubscriptionWriteResult {
+        val documentId = safeDocumentId(record.purchaseTokenHash, "Purchase token hash")
+        return store.upsertSubscriptionDocumentForOwner(
             documentId = documentId,
-            ownerGoogleSub = binding.ownerGoogleSub,
-            fields = binding.toFirestoreFields(),
+            ownerGoogleSub = record.ownerGoogleSub,
+            lastVerifiedAt = record.lastVerifiedAt,
+            fields = record.toFirestoreFields(),
         )
     }
 
@@ -124,7 +148,7 @@ class FirestoreEntitlementRepository(
         )
     }
 
-    private fun SubscriptionBinding.toFirestoreFields(): Map<String, Any?> {
+    private fun SubscriptionRecord.toFirestoreFields(): Map<String, Any?> {
         return mapOf(
             "purchaseTokenHash" to purchaseTokenHash,
             "hashVersion" to hashVersion,
@@ -133,16 +157,23 @@ class FirestoreEntitlementRepository(
             "packageName" to packageName,
             "productId" to productId,
             "basePlanId" to basePlanId,
+            "offerId" to offerId,
+            "linkedPurchaseTokenHash" to linkedPurchaseTokenHash,
             "tokenCiphertext" to tokenCiphertext,
             "keyVersion" to keyVersion,
             "encryptedAt" to encryptedAt,
             "encryptionAlgorithm" to encryptionAlgorithm,
+            "acknowledgementState" to acknowledgementState.name,
+            "acknowledgementAttemptCount" to acknowledgementAttemptCount,
+            "nextAcknowledgementAttemptAt" to nextAcknowledgementAttemptAt,
+            "lastAcknowledgementErrorCode" to lastAcknowledgementErrorCode,
+            "lastVerifiedAt" to lastVerifiedAt,
         )
     }
 
     private fun Map<String, Any?>.toEntitlementRecord(): EntitlementRecord {
         return EntitlementRecord(
-            googleSub = string("googleSub") ?: error("Firestore entitlement is missing googleSub."),
+            googleSub = requiredString("googleSub", "Firestore entitlement"),
             hasPremium = this["hasPremium"] as? Boolean ?: false,
             status = enumValueOrDefault(string("status"), BackendSubscriptionStatus.Unknown),
             source = enumValueOrDefault(string("source"), BackendEntitlementSource.None),
@@ -158,12 +189,50 @@ class FirestoreEntitlementRepository(
         )
     }
 
+    private fun Map<String, Any?>.toSubscriptionRecord(): SubscriptionRecord {
+        return SubscriptionRecord(
+            purchaseTokenHash = requiredString("purchaseTokenHash", "Firestore subscription"),
+            hashVersion = requiredString("hashVersion", "Firestore subscription"),
+            pepperVersion = requiredString("pepperVersion", "Firestore subscription"),
+            ownerGoogleSub = requiredString("ownerGoogleSub", "Firestore subscription"),
+            packageName = requiredString("packageName", "Firestore subscription"),
+            productId = requiredString("productId", "Firestore subscription"),
+            basePlanId = string("basePlanId"),
+            offerId = string("offerId"),
+            linkedPurchaseTokenHash = string("linkedPurchaseTokenHash"),
+            tokenCiphertext = requiredString("tokenCiphertext", "Firestore subscription"),
+            keyVersion = requiredString("keyVersion", "Firestore subscription"),
+            encryptedAt = requiredLong("encryptedAt", "Firestore subscription"),
+            encryptionAlgorithm = requiredString("encryptionAlgorithm", "Firestore subscription"),
+            acknowledgementState = enumValueOrDefault(
+                string("acknowledgementState"),
+                BackendAcknowledgementState.Unknown,
+            ),
+            acknowledgementAttemptCount = int("acknowledgementAttemptCount") ?: 0,
+            nextAcknowledgementAttemptAt = long("nextAcknowledgementAttemptAt"),
+            lastAcknowledgementErrorCode = string("lastAcknowledgementErrorCode"),
+            lastVerifiedAt = requiredLong("lastVerifiedAt", "Firestore subscription"),
+        )
+    }
+
     private fun Map<String, Any?>.string(name: String): String? {
         return (this[name] as? String)?.takeIf { it.isNotBlank() }
     }
 
     private fun Map<String, Any?>.long(name: String): Long? {
         return (this[name] as? Number)?.toLong()
+    }
+
+    private fun Map<String, Any?>.int(name: String): Int? {
+        return (this[name] as? Number)?.toInt()
+    }
+
+    private fun Map<String, Any?>.requiredString(name: String, label: String): String {
+        return string(name) ?: error("$label is missing $name.")
+    }
+
+    private fun Map<String, Any?>.requiredLong(name: String, label: String): Long {
+        return long(name) ?: error("$label is missing $name.")
     }
 
     private companion object {

@@ -6,7 +6,7 @@ import kotlinx.coroutines.sync.withLock
 class InMemoryEntitlementRepository : EntitlementRepository {
     private val mutex = Mutex()
     private val entitlements = mutableMapOf<String, EntitlementRecord>()
-    private val tokenOwners = mutableMapOf<String, String>()
+    private val subscriptions = mutableMapOf<String, SubscriptionRecord>()
 
     override suspend fun getEntitlement(googleSub: String): EntitlementRecord? {
         return mutex.withLock { entitlements[googleSub] }
@@ -14,20 +14,37 @@ class InMemoryEntitlementRepository : EntitlementRepository {
 
     override suspend fun upsertEntitlement(record: EntitlementRecord) {
         mutex.withLock {
-            entitlements[record.googleSub] = record
+            val existing = entitlements[record.googleSub]
+            val existingVerifiedAt = existing?.lastVerifiedAt
+            if (
+                existing == null ||
+                existingVerifiedAt == null ||
+                (record.lastVerifiedAt != null && record.lastVerifiedAt >= existingVerifiedAt)
+            ) {
+                entitlements[record.googleSub] = record
+            }
         }
     }
 
-    override suspend fun bindSubscriptionTokenHash(binding: SubscriptionBinding): TokenBindingResult {
+    override suspend fun getSubscription(purchaseTokenHash: String): SubscriptionRecord? {
+        return mutex.withLock { subscriptions[purchaseTokenHash] }
+    }
+
+    override suspend fun upsertSubscriptionForOwner(record: SubscriptionRecord): SubscriptionWriteResult {
         return mutex.withLock {
-            val existingOwner = tokenOwners[binding.purchaseTokenHash]
+            val existing = subscriptions[record.purchaseTokenHash]
             when {
-                existingOwner == null -> {
-                    tokenOwners[binding.purchaseTokenHash] = binding.ownerGoogleSub
-                    TokenBindingResult.Bound
+                existing == null -> {
+                    subscriptions[record.purchaseTokenHash] = record
+                    SubscriptionWriteResult.Created
                 }
-                existingOwner == binding.ownerGoogleSub -> TokenBindingResult.AlreadyOwnedBySameUser
-                else -> TokenBindingResult.AlreadyOwnedByAnotherUser(existingOwner)
+                existing.ownerGoogleSub != record.ownerGoogleSub -> SubscriptionWriteResult.OwnedByAnotherUser
+                else -> {
+                    if (record.lastVerifiedAt >= existing.lastVerifiedAt) {
+                        subscriptions[record.purchaseTokenHash] = record
+                    }
+                    SubscriptionWriteResult.UpdatedForSameOwner
+                }
             }
         }
     }
