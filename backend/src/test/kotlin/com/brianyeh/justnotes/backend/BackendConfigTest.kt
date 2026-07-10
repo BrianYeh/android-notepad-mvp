@@ -15,8 +15,36 @@ class BackendConfigTest {
     }
 
     @Test
+    fun configFailsClosedForMalformedGoogleWebClientId() {
+        val config = BackendConfig.fromEnvironment(
+            mapOf("GOOGLE_WEB_CLIENT_ID" to "android-client-id"),
+        )
+
+        assertEquals(
+            "Google web client ID format is invalid.",
+            config.validateForIdTokenVerification(),
+        )
+    }
+
+    @Test
+    fun configAcceptsGoogleWebClientIdAndTrimsEnvironmentValues() {
+        val config = BackendConfig.fromEnvironment(
+            mapOf(
+                "GOOGLE_WEB_CLIENT_ID" to "  test-web-client.apps.googleusercontent.com  ",
+                "FIRESTORE_PROJECT_ID" to "  gen-lang-client-0599059254  ",
+            ),
+        )
+
+        assertNull(config.validateForIdTokenVerification())
+        assertEquals("test-web-client.apps.googleusercontent.com", config.googleWebClientId)
+        assertEquals("gen-lang-client-0599059254", config.firestoreProjectId)
+    }
+
+    @Test
     fun configAcceptsOnlyKnownCatalogValues() {
-        val config = BackendConfig.fromEnvironment(mapOf("GOOGLE_WEB_CLIENT_ID" to "web-client"))
+        val config = BackendConfig.fromEnvironment(
+            mapOf("GOOGLE_WEB_CLIENT_ID" to "test-web-client.apps.googleusercontent.com"),
+        )
 
         assertNull(
             config.validateCatalog(

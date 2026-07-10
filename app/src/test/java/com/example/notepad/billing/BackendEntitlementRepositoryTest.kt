@@ -60,6 +60,96 @@ class BackendEntitlementRepositoryTest {
     }
 
     @Test
+    fun blankEndpointKeepsClientDisabledWhenWebClientIdIsConfigured() = runBlocking {
+        var openedConnection = false
+        val client = HttpBackendEntitlementClient(
+            config = BackendEntitlementClientConfig(
+                baseUrl = "  ",
+                googleWebClientId = TEST_WEB_CLIENT_ID,
+            ),
+            openConnection = {
+                openedConnection = true
+                throw AssertionError("A blank endpoint must not open a connection.")
+            },
+        )
+
+        val result = client.fetchEntitlement(idToken = "id-token")
+
+        assertEquals(BackendEntitlementFetchResult.Disabled, result)
+        assertFalse(openedConnection)
+    }
+
+    @Test
+    fun disabledBackendSkipsIdTokenRefresh() = runBlocking {
+        var authRequested = false
+        val repository = BackendEntitlementRepository(
+            client = HttpBackendEntitlementClient(
+                config = BackendEntitlementClientConfig(
+                    baseUrl = "",
+                    googleWebClientId = TEST_WEB_CLIENT_ID,
+                ),
+            ),
+            authProvider = {
+                authRequested = true
+                BackendEntitlementAuth(idToken = "id-token", accountKey = "account-a")
+            },
+            currentAccountKeyProvider = { "account-a" },
+            applyBackendEntitlement = { true },
+        )
+
+        val result = repository.refresh()
+
+        assertEquals(BackendEntitlementFetchResult.Disabled, result)
+        assertFalse(authRequested)
+    }
+
+    @Test
+    fun configuredEndpointWithoutWebClientIdFailsClosedBeforeSendingToken() = runBlocking {
+        var openedConnection = false
+        val client = HttpBackendEntitlementClient(
+            config = BackendEntitlementClientConfig(
+                baseUrl = "https://backend.example",
+                googleWebClientId = "",
+            ),
+            openConnection = {
+                openedConnection = true
+                throw AssertionError("Invalid identity config must not open a connection.")
+            },
+        )
+
+        val result = client.fetchEntitlement(idToken = "id-token")
+
+        assertEquals(
+            "Google web client ID is not configured.",
+            (result as BackendEntitlementFetchResult.Failure).message,
+        )
+        assertFalse(openedConnection)
+    }
+
+    @Test
+    fun configuredEndpointWithMalformedWebClientIdFailsClosedBeforeSendingToken() = runBlocking {
+        var openedConnection = false
+        val client = HttpBackendEntitlementClient(
+            config = BackendEntitlementClientConfig(
+                baseUrl = "https://backend.example",
+                googleWebClientId = "android-client-id",
+            ),
+            openConnection = {
+                openedConnection = true
+                throw AssertionError("Invalid identity config must not open a connection.")
+            },
+        )
+
+        val result = client.fetchEntitlement(idToken = "id-token")
+
+        assertEquals(
+            "Google web client ID format is invalid.",
+            (result as BackendEntitlementFetchResult.Failure).message,
+        )
+        assertFalse(openedConnection)
+    }
+
+    @Test
     fun successfulAuthenticatedBackendResponseIsApplied() = runBlocking {
         var appliedResponse: PremiumBackendEntitlementResponse? = null
         val response = activeBackendResponse()
@@ -89,7 +179,7 @@ class BackendEntitlementRepositoryTest {
         val client = HttpBackendEntitlementClient(
             config = BackendEntitlementClientConfig(
                 baseUrl = "://not-a-url",
-                googleWebClientId = "web-client-id",
+                googleWebClientId = TEST_WEB_CLIENT_ID,
             ),
         )
 
@@ -104,7 +194,7 @@ class BackendEntitlementRepositoryTest {
         val client = HttpBackendEntitlementClient(
             config = BackendEntitlementClientConfig(
                 baseUrl = "http://backend.example",
-                googleWebClientId = "web-client-id",
+                googleWebClientId = TEST_WEB_CLIENT_ID,
             ),
             openConnection = {
                 openedConnection = true
@@ -116,6 +206,35 @@ class BackendEntitlementRepositoryTest {
 
         assertTrue(result is BackendEntitlementFetchResult.Failure)
         assertFalse(openedConnection)
+    }
+
+    @Test
+    fun unsafeHttpsOriginsFailClosedBeforeSendingToken() = runBlocking {
+        val unsafeOrigins = listOf(
+            "https://user:password@backend.example",
+            "https://backend.example/prefix",
+            "https://backend.example?environment=dev",
+            "https://backend.example#entitlement",
+        )
+
+        unsafeOrigins.forEach { baseUrl ->
+            var openedConnection = false
+            val client = HttpBackendEntitlementClient(
+                config = BackendEntitlementClientConfig(
+                    baseUrl = baseUrl,
+                    googleWebClientId = TEST_WEB_CLIENT_ID,
+                ),
+                openConnection = {
+                    openedConnection = true
+                    throw AssertionError("Unsafe HTTPS origins must fail before opening a connection.")
+                },
+            )
+
+            val result = client.fetchEntitlement(idToken = "id-token")
+
+            assertTrue(baseUrl, result is BackendEntitlementFetchResult.Failure)
+            assertFalse(baseUrl, openedConnection)
+        }
     }
 
     @Test
@@ -311,7 +430,7 @@ class BackendEntitlementRepositoryTest {
         val client = HttpBackendEntitlementClient(
             config = BackendEntitlementClientConfig(
                 baseUrl = "https://backend.example",
-                googleWebClientId = "web-client-id",
+                googleWebClientId = TEST_WEB_CLIENT_ID,
             ),
             openConnection = { url ->
                 FakeHttpURLConnection(
@@ -353,5 +472,9 @@ class BackendEntitlementRepositoryTest {
             lastVerifiedAt = 1_761_000_000_000L,
             purchaseTokenHash = purchaseTokenHash,
         )
+    }
+
+    private companion object {
+        const val TEST_WEB_CLIENT_ID = "test-web-client.apps.googleusercontent.com"
     }
 }

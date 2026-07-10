@@ -13,7 +13,11 @@ data class BackendConfig(
     val entitlementMaxStaleMillis: Long,
 ) {
     fun validateForIdTokenVerification(): String? {
-        if (googleWebClientId.isNullOrBlank()) return "Google web client ID is not configured."
+        val clientId = googleWebClientId?.trim()
+        if (clientId.isNullOrBlank()) return "Google web client ID is not configured."
+        if (!GOOGLE_WEB_CLIENT_ID_PATTERN.matches(clientId)) {
+            return "Google web client ID format is invalid."
+        }
         if (issuerAllowlist.isEmpty()) return "Google ID token issuer allowlist is not configured."
         return null
     }
@@ -36,6 +40,8 @@ data class BackendConfig(
     companion object {
         const val DEFAULT_PACKAGE_NAME = "com.brianyeh.justnotes"
         const val DEFAULT_PRODUCT_ID = "just_notes_premium"
+        private val GOOGLE_WEB_CLIENT_ID_PATTERN =
+            Regex("^[A-Za-z0-9-]+\\.apps\\.googleusercontent\\.com$")
 
         fun fromEnvironment(environment: Map<String, String> = System.getenv()): BackendConfig {
             return BackendConfig(
@@ -47,9 +53,9 @@ data class BackendConfig(
                     "monthly" to setOf(null, "trial10d"),
                     "annual" to setOf(null),
                 ),
-                googleWebClientId = environment["GOOGLE_WEB_CLIENT_ID"]?.takeIf { it.isNotBlank() },
+                googleWebClientId = environment["GOOGLE_WEB_CLIENT_ID"]?.trim()?.takeIf { it.isNotBlank() },
                 issuerAllowlist = setOf("accounts.google.com", "https://accounts.google.com"),
-                firestoreProjectId = environment["FIRESTORE_PROJECT_ID"]?.takeIf { it.isNotBlank() },
+                firestoreProjectId = environment["FIRESTORE_PROJECT_ID"]?.trim()?.takeIf { it.isNotBlank() },
                 entitlementReverifyTtlMillis = 6L * 60L * 60L * 1_000L,
                 entitlementMaxStaleMillis = 24L * 60L * 60L * 1_000L,
             )

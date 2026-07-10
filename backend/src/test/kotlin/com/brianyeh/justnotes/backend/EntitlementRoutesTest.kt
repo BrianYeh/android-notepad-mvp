@@ -366,7 +366,9 @@ class EntitlementRoutesTest {
     }
 
     private fun testConfig(): BackendConfig {
-        return BackendConfig.fromEnvironment(mapOf("GOOGLE_WEB_CLIENT_ID" to "web-client"))
+        return BackendConfig.fromEnvironment(
+            mapOf("GOOGLE_WEB_CLIENT_ID" to "test-web-client.apps.googleusercontent.com"),
+        )
     }
 
     private companion object {

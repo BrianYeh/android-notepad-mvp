@@ -91,14 +91,16 @@ class GoogleIdTokenVerifierTest {
         delegate: GoogleIdTokenDelegate = PayloadDelegate(payload),
     ): OfficialGoogleIdTokenVerifier {
         return OfficialGoogleIdTokenVerifier(
-            config = BackendConfig.fromEnvironment(mapOf("GOOGLE_WEB_CLIENT_ID" to "web-client")),
+            config = BackendConfig.fromEnvironment(
+                mapOf("GOOGLE_WEB_CLIENT_ID" to "test-web-client.apps.googleusercontent.com"),
+            ),
             clock = { NOW },
             delegate = delegate,
         )
     }
 
     private fun validPayload(
-        audience: String? = "web-client",
+        audience: String? = "test-web-client.apps.googleusercontent.com",
         issuer: String? = "accounts.google.com",
         expirationTimeMillis: Long = NOW + 60_000L,
         subject: String? = "google-sub",

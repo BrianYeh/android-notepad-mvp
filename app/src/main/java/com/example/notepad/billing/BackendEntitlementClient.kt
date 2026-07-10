@@ -13,8 +13,33 @@ internal data class BackendEntitlementClientConfig(
     val baseUrl: String,
     val googleWebClientId: String,
 ) {
-    val isConfigured: Boolean
-        get() = baseUrl.isNotBlank() && googleWebClientId.isNotBlank()
+    val normalizedBaseUrl: String
+        get() = baseUrl.trim().trimEnd('/')
+
+    val isDisabled: Boolean
+        get() = normalizedBaseUrl.isBlank()
+
+    fun validationError(): String? {
+        if (isDisabled) return null
+        val clientId = googleWebClientId.trim()
+        if (clientId.isEmpty()) return "Google web client ID is not configured."
+        if (!GOOGLE_WEB_CLIENT_ID_PATTERN.matches(clientId)) {
+            return "Google web client ID format is invalid."
+        }
+        val endpoint = runCatching { URL(normalizedBaseUrl) }.getOrNull()
+            ?: return "Backend entitlement endpoint is invalid."
+        if (
+            endpoint.protocol != "https" ||
+            endpoint.host.isBlank() ||
+            endpoint.userInfo != null ||
+            endpoint.path.isNotEmpty() ||
+            endpoint.query != null ||
+            endpoint.ref != null
+        ) {
+            return "Backend entitlement endpoint must be an HTTPS origin without credentials, query, or fragment."
+        }
+        return null
+    }
 
     companion object {
         fun fromBuildConfig(): BackendEntitlementClientConfig {
@@ -23,6 +48,9 @@ internal data class BackendEntitlementClientConfig(
                 googleWebClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID,
             )
         }
+
+        private val GOOGLE_WEB_CLIENT_ID_PATTERN =
+            Regex("^[A-Za-z0-9-]+\\.apps\\.googleusercontent\\.com$")
     }
 }
 
@@ -34,6 +62,8 @@ internal sealed class BackendEntitlementFetchResult {
 }
 
 internal interface BackendEntitlementClient {
+    fun preflight(): BackendEntitlementFetchResult? = null
+
     suspend fun fetchEntitlement(idToken: String?): BackendEntitlementFetchResult
 }
 
@@ -46,15 +76,17 @@ internal class HttpBackendEntitlementClient(
     private val config: BackendEntitlementClientConfig = BackendEntitlementClientConfig.fromBuildConfig(),
     private val openConnection: (URL) -> HttpURLConnection = { url -> url.openConnection() as HttpURLConnection },
 ) : BackendEntitlementClient {
+    override fun preflight(): BackendEntitlementFetchResult? {
+        if (config.isDisabled) return BackendEntitlementFetchResult.Disabled
+        return config.validationError()?.let { BackendEntitlementFetchResult.Failure(it) }
+    }
+
     override suspend fun fetchEntitlement(idToken: String?): BackendEntitlementFetchResult {
-        if (!config.isConfigured) return BackendEntitlementFetchResult.Disabled
+        preflight()?.let { return it }
         val bearerToken = idToken?.takeIf { it.isNotBlank() } ?: return BackendEntitlementFetchResult.NotSignedIn
         var connection: HttpURLConnection? = null
         return try {
-            val endpoint = URL("${config.baseUrl.trimEnd('/')}/v1/entitlement")
-            if (endpoint.protocol != "https") {
-                return BackendEntitlementFetchResult.Failure("Backend entitlement endpoint must use HTTPS.")
-            }
+            val endpoint = URL("${config.normalizedBaseUrl}/v1/entitlement")
             connection = openConnection(endpoint)
             connection.requestMethod = "GET"
             connection.connectTimeout = TIMEOUT_MS
@@ -113,6 +145,7 @@ internal class BackendEntitlementRepository(
 
     suspend fun refresh(): BackendEntitlementFetchResult {
         val refreshId = refreshSequence.incrementAndGet()
+        client.preflight()?.let { return it }
         val requestAuth = authProvider()
         return when (val result = client.fetchEntitlement(requestAuth?.idToken)) {
             is BackendEntitlementFetchResult.Success -> {

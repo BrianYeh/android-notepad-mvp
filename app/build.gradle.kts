@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -15,6 +17,32 @@ val allowClientOnlyBillingEntitlement = providers
     }
     .orElse("false")
 
+fun String.normalizedBackendBaseUrl(): String {
+    val normalized = trim().trimEnd('/')
+    if (normalized.isEmpty()) return normalized
+    val uri = runCatching { URI(normalized) }.getOrNull()
+    require(
+        uri?.scheme == "https" &&
+            !uri.host.isNullOrBlank() &&
+            uri.rawUserInfo == null &&
+            uri.rawPath.isNullOrEmpty() &&
+            uri.rawQuery == null &&
+            uri.rawFragment == null
+    ) {
+        "justNotes.backendBaseUrl must be blank or an HTTPS origin without credentials, query, or fragment."
+    }
+    return normalized
+}
+
+fun String.normalizedGoogleWebClientId(): String {
+    val normalized = trim()
+    if (normalized.isEmpty()) return normalized
+    require(Regex("^[A-Za-z0-9-]+\\.apps\\.googleusercontent\\.com$").matches(normalized)) {
+        "justNotes.googleWebClientId must be a Google Web OAuth client ID."
+    }
+    return normalized
+}
+
 fun Provider<String>.quotedBuildConfigString(): String {
     val escaped = get()
         .replace("\\", "\\\\")
@@ -24,10 +52,12 @@ fun Provider<String>.quotedBuildConfigString(): String {
 
 val backendBaseUrl = providers
     .gradleProperty("justNotes.backendBaseUrl")
+    .map { it.normalizedBackendBaseUrl() }
     .orElse("")
 
 val googleWebClientId = providers
     .gradleProperty("justNotes.googleWebClientId")
+    .map { it.normalizedGoogleWebClientId() }
     .orElse("")
 
 android {
