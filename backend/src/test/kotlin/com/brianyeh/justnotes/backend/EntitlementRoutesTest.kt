@@ -4,12 +4,15 @@ import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerificationResult
 import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerifier
 import com.brianyeh.justnotes.backend.auth.VerifiedGoogleIdentity
 import com.brianyeh.justnotes.backend.config.BackendConfig
+import com.brianyeh.justnotes.backend.entitlement.BackendAcknowledgementState
 import com.brianyeh.justnotes.backend.entitlement.BackendSubscriptionStatus
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRecord
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRepository
 import com.brianyeh.justnotes.backend.entitlement.SubscriptionBinding
 import com.brianyeh.justnotes.backend.entitlement.TokenBindingResult
 import com.brianyeh.justnotes.backend.play.NoopPlaySubscriptionVerifier
+import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerificationResult
+import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerifier
 import com.brianyeh.justnotes.backend.routes.justNotesRoutes
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -84,6 +87,7 @@ class EntitlementRoutesTest {
                             expiryTime = NOW + 1_000L,
                             lastVerifiedAt = NOW,
                             purchaseTokenHash = "token-hash",
+                            acknowledgementState = BackendAcknowledgementState.Acknowledged,
                         )
                     }
                 },
@@ -104,6 +108,79 @@ class EntitlementRoutesTest {
     }
 
     @Test
+    fun entitlementWithInvalidPersistedCatalogDoesNotGrantPremium() = testApplication {
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = object : EntitlementRepository by EmptyRepository {
+                    override suspend fun getEntitlement(googleSub: String): EntitlementRecord {
+                        return EntitlementRecord(
+                            googleSub = googleSub,
+                            hasPremium = true,
+                            status = BackendSubscriptionStatus.Active,
+                            packageName = "com.brianyeh.justnotes",
+                            productId = "just_notes_premium",
+                            basePlanId = "annual",
+                            offerId = "trial10d",
+                            expiryTime = NOW + 1_000L,
+                            lastVerifiedAt = NOW,
+                            purchaseTokenHash = "token-hash",
+                            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+                        )
+                    }
+                },
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.get("/v1/entitlement") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertContains(response.bodyAsText(), """"hasPremium":false""")
+        assertContains(response.bodyAsText(), """"status":"Unknown"""")
+    }
+
+    @Test
+    fun entitlementClampsUnacknowledgedRecordToNoPremium() = testApplication {
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = object : EntitlementRepository by EmptyRepository {
+                    override suspend fun getEntitlement(googleSub: String): EntitlementRecord {
+                        return EntitlementRecord(
+                            googleSub = googleSub,
+                            hasPremium = true,
+                            status = BackendSubscriptionStatus.Active,
+                            packageName = "com.brianyeh.justnotes",
+                            productId = "just_notes_premium",
+                            basePlanId = "monthly",
+                            expiryTime = NOW + 1_000L,
+                            lastVerifiedAt = NOW,
+                            purchaseTokenHash = "token-hash",
+                            acknowledgementState = BackendAcknowledgementState.Pending,
+                        )
+                    }
+                },
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.get("/v1/entitlement") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertContains(response.bodyAsText(), """"hasPremium":false""")
+        assertContains(response.bodyAsText(), """"status":"VerificationPending"""")
+    }
+
+    @Test
     fun entitlementClampsExpiredCacheToNoPremium() = testApplication {
         application {
             justNotesRoutes(
@@ -121,6 +198,7 @@ class EntitlementRoutesTest {
                             expiryTime = NOW - 1L,
                             lastVerifiedAt = NOW,
                             purchaseTokenHash = "token-hash",
+                            acknowledgementState = BackendAcknowledgementState.Acknowledged,
                         )
                     }
                 },
@@ -156,6 +234,7 @@ class EntitlementRoutesTest {
                             expiryTime = NOW + 1_000L,
                             lastVerifiedAt = NOW - (7L * 60L * 60L * 1_000L),
                             purchaseTokenHash = "token-hash",
+                            acknowledgementState = BackendAcknowledgementState.Acknowledged,
                         )
                     }
                 },
@@ -191,6 +270,7 @@ class EntitlementRoutesTest {
                             expiryTime = NOW + 1_000L,
                             lastVerifiedAt = NOW - (25L * 60L * 60L * 1_000L),
                             purchaseTokenHash = "token-hash",
+                            acknowledgementState = BackendAcknowledgementState.Acknowledged,
                         )
                     }
                 },
@@ -226,6 +306,7 @@ class EntitlementRoutesTest {
                             expiryTime = NOW + 1_000L,
                             lastVerifiedAt = null,
                             purchaseTokenHash = "token-hash",
+                            acknowledgementState = BackendAcknowledgementState.Acknowledged,
                         )
                     }
                 },
@@ -275,6 +356,46 @@ class EntitlementRoutesTest {
         assertContains(response.bodyAsText(), """"hasPremium":false""")
         assertContains(response.bodyAsText(), """"status":"VerificationPending"""")
         assertContains(response.bodyAsText(), """"errorCode":"POST_VERIFY_DISABLED"""")
+        assertFalse(response.bodyAsText().contains("raw-token"))
+    }
+
+    @Test
+    fun postVerifyDoesNotInvokeProductionPlayAdapterBeforeV107() = testApplication {
+        val verifier = object : PlaySubscriptionVerifier {
+            override suspend fun verify(
+                packageName: String,
+                purchaseToken: String,
+            ): PlaySubscriptionVerificationResult {
+                error("The Play adapter must remain unreachable before v1.0.7.")
+            }
+        }
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = EmptyRepository,
+                playSubscriptionVerifier = verifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.post("/v1/billing/verify") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+            contentType(ContentType.Application.Json)
+            setBody(
+                """
+                {
+                  "purchaseToken": "raw-token",
+                  "packageName": "com.brianyeh.justnotes",
+                  "productId": "just_notes_premium",
+                  "basePlanId": "monthly"
+                }
+                """.trimIndent(),
+            )
+        }
+
+        assertEquals(HttpStatusCode.Accepted, response.status)
+        assertContains(response.bodyAsText(), "\"errorCode\":\"POST_VERIFY_DISABLED\"")
         assertFalse(response.bodyAsText().contains("raw-token"))
     }
 

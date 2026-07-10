@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class BackendConfigTest {
     @Test
@@ -61,5 +62,93 @@ class BackendConfigTest {
         assertEquals("Base plan ID is not allowed.", config.validateCatalog("com.brianyeh.justnotes", "just_notes_premium", "weekly", null))
         assertEquals("Offer ID is not allowed.", config.validateCatalog("com.brianyeh.justnotes", "just_notes_premium", "annual", "trial10d"))
         assertEquals("Offer ID is not allowed.", config.validateCatalog("com.brianyeh.justnotes", "just_notes_premium", "monthly", "unknown"))
+    }
+
+    @Test
+    fun productionAdapterConfigFailsClosedWhenCloudResourcesAreMissing() {
+        val errors = BackendConfig.fromEnvironment(emptyMap()).validateForProductionAdapters()
+
+        assertTrue(errors.any { it.contains("Firestore project ID") })
+        assertTrue(errors.any { it.contains("Google web client ID") })
+        assertTrue(errors.any { it.contains("Token hash secret") })
+        assertTrue(errors.any { it.contains("KMS token encryption key") })
+    }
+
+    @Test
+    fun productionAdapterConfigAcceptsOnlyResourceNamesNotSecretValues() {
+        val config = BackendConfig.fromEnvironment(productionEnvironment())
+
+        assertEquals(emptyList(), config.validateForProductionAdapters())
+        assertEquals("(default)", config.firestoreDatabaseId)
+        assertEquals(
+            "projects/project-id/secrets/token-hash/versions/1",
+            config.tokenHashSecretResource,
+        )
+    }
+
+    @Test
+    fun malformedSecretAndKmsResourcesFailClosed() {
+        val config = BackendConfig.fromEnvironment(
+            productionEnvironment() + mapOf(
+                "TOKEN_HASH_SECRET_RESOURCE" to "raw-secret-value",
+                "KMS_TOKEN_ENCRYPTION_KEY_RESOURCE" to "kms-key",
+            ),
+        )
+
+        val errors = config.validateForProductionAdapters()
+
+        assertTrue(errors.any { it.contains("Token hash secret") })
+        assertTrue(errors.any { it.contains("KMS token encryption key") })
+    }
+
+    @Test
+    fun productionAdapterConfigRejectsMovingLatestSecretAliases() {
+        val config = BackendConfig.fromEnvironment(
+            productionEnvironment() + mapOf(
+                "TOKEN_HASH_SECRET_RESOURCE" to
+                    "projects/project-id/secrets/token-hash/versions/latest",
+            ),
+        )
+
+        assertTrue(
+            config.validateForProductionAdapters().any { it.contains("Token hash secret") },
+        )
+    }
+
+    @Test
+    fun productionAdapterConfigRejectsMalformedFirestoreIdentifiers() {
+        val uppercaseProject = BackendConfig.fromEnvironment(
+            productionEnvironment() + ("FIRESTORE_PROJECT_ID" to "Invalid_Project"),
+        )
+        val shortDatabase = BackendConfig.fromEnvironment(
+            productionEnvironment() + ("FIRESTORE_DATABASE_ID" to "abc"),
+        )
+        val uuidDatabase = BackendConfig.fromEnvironment(
+            productionEnvironment() +
+                ("FIRESTORE_DATABASE_ID" to "f47ac10b-58cc-0372-8567-0e02b2c3d479"),
+        )
+
+        assertTrue(
+            uppercaseProject.validateForProductionAdapters().any { it.contains("Firestore project ID") },
+        )
+        assertTrue(
+            shortDatabase.validateForProductionAdapters().any { it.contains("Firestore database ID") },
+        )
+        assertTrue(
+            uuidDatabase.validateForProductionAdapters().any { it.contains("Firestore database ID") },
+        )
+    }
+
+    private fun productionEnvironment(): Map<String, String> {
+        return mapOf(
+            "GOOGLE_WEB_CLIENT_ID" to "test-web-client.apps.googleusercontent.com",
+            "FIRESTORE_PROJECT_ID" to "project-id",
+            "FIRESTORE_DATABASE_ID" to "(default)",
+            "TOKEN_HASH_SECRET_RESOURCE" to "projects/project-id/secrets/token-hash/versions/1",
+            "OBFUSCATED_ACCOUNT_SECRET_RESOURCE" to "projects/project-id/secrets/account/versions/1",
+            "EMAIL_HASH_SECRET_RESOURCE" to "projects/project-id/secrets/email/versions/1",
+            "KMS_TOKEN_ENCRYPTION_KEY_RESOURCE" to
+                "projects/project-id/locations/asia-east1/keyRings/ring/cryptoKeys/key",
+        )
     }
 }

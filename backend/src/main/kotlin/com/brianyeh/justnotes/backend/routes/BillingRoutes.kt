@@ -3,6 +3,7 @@ package com.brianyeh.justnotes.backend.routes
 import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerificationResult
 import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerifier
 import com.brianyeh.justnotes.backend.config.BackendConfig
+import com.brianyeh.justnotes.backend.entitlement.BackendAcknowledgementState
 import com.brianyeh.justnotes.backend.entitlement.BackendEntitlementSource
 import com.brianyeh.justnotes.backend.entitlement.BackendSubscriptionStatus
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRecord
@@ -178,6 +179,12 @@ private fun nonGrantingVerifyResponse(
 }
 
 private fun EntitlementRecord.sanitizedForGet(now: Long, config: BackendConfig): EntitlementRecord {
+    val catalogValid = config.validateCatalog(
+        packageName = packageName,
+        productId = productId,
+        basePlanId = basePlanId,
+        offerId = offerId,
+    ) == null
     val grantableStatus = status == BackendSubscriptionStatus.Active ||
         status == BackendSubscriptionStatus.GracePeriod ||
         status == BackendSubscriptionStatus.CanceledActiveUntilExpiry
@@ -186,12 +193,23 @@ private fun EntitlementRecord.sanitizedForGet(now: Long, config: BackendConfig):
     val age = verifiedAt?.let { now - it }
     val withinMaxStale = age?.let { it <= config.entitlementMaxStaleMillis } == true
     val stale = age?.let { it > config.entitlementReverifyTtlMillis && it <= config.entitlementMaxStaleMillis } == true
-    val effectivePremium = hasPremium && grantableStatus && expiryValid && withinMaxStale
+    val sourceVerified = source == BackendEntitlementSource.BackendVerified
+    val acknowledged = acknowledgementState == BackendAcknowledgementState.Acknowledged
+    val effectivePremium = hasPremium &&
+        catalogValid &&
+        sourceVerified &&
+        acknowledged &&
+        grantableStatus &&
+        expiryValid &&
+        withinMaxStale
     val effectiveStatus = when {
         effectivePremium && status == BackendSubscriptionStatus.CanceledActiveUntilExpiry -> BackendSubscriptionStatus.Active
         effectivePremium -> status
+        !catalogValid -> BackendSubscriptionStatus.Unknown
         !expiryValid && grantableStatus -> BackendSubscriptionStatus.Expired
         !withinMaxStale -> BackendSubscriptionStatus.Unknown
+        !sourceVerified -> BackendSubscriptionStatus.Unknown
+        !acknowledged && grantableStatus -> BackendSubscriptionStatus.VerificationPending
         else -> status
     }
     return copy(

@@ -15,10 +15,16 @@ class EntitlementRepositoryTest {
         val repository = InMemoryEntitlementRepository()
         val binding = SubscriptionBinding(
             purchaseTokenHash = "hash",
+            hashVersion = "hmac-sha256-v1",
+            pepperVersion = "1",
             ownerGoogleSub = "sub-a",
             packageName = "com.brianyeh.justnotes",
             productId = "just_notes_premium",
             basePlanId = "monthly",
+            tokenCiphertext = "ciphertext",
+            keyVersion = "key-version-1",
+            encryptedAt = 1_762_000_000_000L,
+            encryptionAlgorithm = "GOOGLE_SYMMETRIC_ENCRYPTION",
         )
 
         assertEquals(TokenBindingResult.Bound, repository.bindSubscriptionTokenHash(binding))

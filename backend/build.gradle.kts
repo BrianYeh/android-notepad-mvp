@@ -19,10 +19,17 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 dependencies {
     val ktorVersion = "2.3.12"
 
-    implementation("com.google.api-client:google-api-client:2.7.0")
-    implementation("com.google.http-client:google-http-client-gson:1.45.0")
+    implementation(platform("com.google.cloud:libraries-bom:26.85.0"))
+    implementation("com.google.cloud:google-cloud-firestore")
+    implementation("com.google.cloud:google-cloud-kms")
+    implementation("com.google.cloud:google-cloud-secretmanager")
+    implementation("com.google.auth:google-auth-library-oauth2-http")
+    implementation("com.google.api-client:google-api-client")
+    implementation("com.google.apis:google-api-services-androidpublisher:v3-rev20260706-2.0.0")
+    implementation("com.google.http-client:google-http-client-gson")
     implementation("io.ktor:ktor-server-core-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-netty-jvm:$ktorVersion")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
     testImplementation(kotlin("test"))

@@ -17,7 +17,9 @@ interface SecretValueProvider {
 data class VersionedSecret(
     val value: String,
     val version: String,
-)
+) {
+    override fun toString(): String = "VersionedSecret(value=[REDACTED], version=$version)"
+}
 
 interface PurchaseTokenHasher {
     fun hashPurchaseToken(purchaseToken: String): TokenHash
@@ -63,23 +65,8 @@ interface PurchaseTokenEncryptor {
     fun encrypt(purchaseToken: String, now: Long): TokenCiphertext
 }
 
-class FakePurchaseTokenEncryptor(
-    private val keyVersion: String = "fake-local-key",
-) : PurchaseTokenEncryptor {
-    override fun encrypt(purchaseToken: String, now: Long): TokenCiphertext {
-        return TokenCiphertext(
-            tokenCiphertext = "fake-ciphertext:${purchaseToken.length}",
-            keyVersion = keyVersion,
-            encryptedAt = now,
-            encryptionAlgorithm = "fake-local",
-        )
-    }
-}
-
-class StaticSecretValueProvider(
-    private val secret: VersionedSecret?,
-) : SecretValueProvider {
-    override fun currentSecret(): VersionedSecret? = secret
+interface PurchaseTokenCipher : PurchaseTokenEncryptor {
+    fun decrypt(ciphertext: TokenCiphertext): String
 }
 
 fun hmacSha256UrlSafe(secret: String, value: String): String {

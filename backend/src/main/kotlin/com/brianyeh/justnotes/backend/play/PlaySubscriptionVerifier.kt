@@ -47,6 +47,8 @@ data class PlaySubscriptionVerification(
     val linkedPurchaseTokenHash: String?,
     val externalAccountIdentifiers: PlayExternalAccountIdentifiers? = null,
     val canceledButActiveUntilExpiry: Boolean = false,
+    val purchaseTokenHashVersion: String? = null,
+    val purchaseTokenPepperVersion: String? = null,
 )
 
 data class PlaySubscriptionsV2Snapshot(
@@ -58,6 +60,8 @@ data class PlaySubscriptionsV2Snapshot(
     val autoRenewing: Boolean?,
     val linkedPurchaseTokenHash: String?,
     val externalAccountIdentifiers: PlayExternalAccountIdentifiers?,
+    val purchaseTokenHashVersion: String? = null,
+    val purchaseTokenPepperVersion: String? = null,
 )
 
 sealed class PlaySubscriptionVerificationResult {
@@ -69,8 +73,18 @@ interface PlaySubscriptionVerifier {
     suspend fun verify(packageName: String, purchaseToken: String): PlaySubscriptionVerificationResult
 }
 
-object NoopPlaySubscriptionVerifier : PlaySubscriptionVerifier {
-    override suspend fun verify(packageName: String, purchaseToken: String): PlaySubscriptionVerificationResult {
-        return PlaySubscriptionVerificationResult.Failure("Google Play Developer API is not configured.")
-    }
+sealed class PlaySubscriptionAcknowledgementResult {
+    data object Acknowledged : PlaySubscriptionAcknowledgementResult()
+    data class Failure(
+        val reason: String,
+        val retryable: Boolean,
+    ) : PlaySubscriptionAcknowledgementResult()
+}
+
+interface PlaySubscriptionAcknowledger {
+    suspend fun acknowledge(
+        packageName: String,
+        productId: String,
+        purchaseToken: String,
+    ): PlaySubscriptionAcknowledgementResult
 }

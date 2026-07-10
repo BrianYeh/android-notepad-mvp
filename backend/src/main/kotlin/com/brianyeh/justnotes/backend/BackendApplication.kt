@@ -1,17 +1,13 @@
 package com.brianyeh.justnotes.backend
 
-import com.brianyeh.justnotes.backend.auth.FailClosedGoogleIdTokenVerifier
 import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerifier
 import com.brianyeh.justnotes.backend.auth.OfficialGoogleIdTokenVerifier
 import com.brianyeh.justnotes.backend.config.BackendConfig
-import com.brianyeh.justnotes.backend.entitlement.InMemoryEntitlementRepository
-import com.brianyeh.justnotes.backend.play.NoopPlaySubscriptionVerifier
 import com.brianyeh.justnotes.backend.routes.justNotesRoutes
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
-
-private val productionEntitlementRepository = InMemoryEntitlementRepository()
 
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
@@ -24,17 +20,21 @@ fun main() {
 
 fun Application.justNotesBackendModule(
     config: BackendConfig = BackendConfig.fromEnvironment(),
+    dependencies: ProductionBackendDependencies = ProductionBackendDependencies.create(config),
 ) {
+    environment.monitor.subscribe(ApplicationStopped) {
+        dependencies.close()
+    }
     justNotesRoutes(
         config = config,
         idTokenVerifier = productionGoogleIdTokenVerifier(config),
-        entitlementRepository = productionEntitlementRepository,
-        playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+        entitlementRepository = dependencies.entitlementRepository,
+        playSubscriptionVerifier = dependencies.playSubscriptionVerifier,
     )
 }
 
 private fun productionGoogleIdTokenVerifier(config: BackendConfig): GoogleIdTokenVerifier {
-    if (config.validateForIdTokenVerification() != null) return FailClosedGoogleIdTokenVerifier(config)
-    return runCatching { OfficialGoogleIdTokenVerifier(config) }
-        .getOrElse { FailClosedGoogleIdTokenVerifier(config) }
+    val validationError = config.validateForIdTokenVerification()
+    require(validationError == null) { validationError ?: "Google ID token configuration is invalid." }
+    return OfficialGoogleIdTokenVerifier(config)
 }

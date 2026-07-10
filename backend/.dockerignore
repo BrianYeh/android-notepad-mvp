@@ -1,0 +1,6 @@
+.gradle
+build
+config
+cloudrun
+README.md
+*.env

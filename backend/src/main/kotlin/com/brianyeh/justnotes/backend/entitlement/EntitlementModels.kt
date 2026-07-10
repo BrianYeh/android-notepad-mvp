@@ -45,10 +45,16 @@ data class EntitlementRecord(
 
 data class SubscriptionBinding(
     val purchaseTokenHash: String,
+    val hashVersion: String,
+    val pepperVersion: String,
     val ownerGoogleSub: String,
     val packageName: String,
     val productId: String,
     val basePlanId: String?,
+    val tokenCiphertext: String,
+    val keyVersion: String,
+    val encryptedAt: Long,
+    val encryptionAlgorithm: String,
 )
 
 data class EntitlementGrantInputs(

@@ -22,6 +22,8 @@ object PlaySubscriptionMapper {
             linkedPurchaseTokenHash = snapshot.linkedPurchaseTokenHash,
             externalAccountIdentifiers = snapshot.externalAccountIdentifiers,
             canceledButActiveUntilExpiry = snapshot.subscriptionState == PlaySubscriptionState.SUBSCRIPTION_STATE_CANCELED,
+            purchaseTokenHashVersion = snapshot.purchaseTokenHashVersion,
+            purchaseTokenPepperVersion = snapshot.purchaseTokenPepperVersion,
         )
     }
 
