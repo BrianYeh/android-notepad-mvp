@@ -4,8 +4,10 @@ import com.brianyeh.justnotes.backend.play.AndroidPublisherGateway
 import com.brianyeh.justnotes.backend.play.GooglePlaySubscriptionAcknowledger
 import com.brianyeh.justnotes.backend.play.GooglePlaySubscriptionVerifier
 import com.brianyeh.justnotes.backend.play.PlayAcknowledgementState
+import com.brianyeh.justnotes.backend.play.PlayAcknowledgementFailureCode
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionAcknowledgementResult
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionState
+import com.brianyeh.justnotes.backend.play.PlayVerificationFailureCode
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerificationResult
 import com.brianyeh.justnotes.backend.security.HmacSha256PurchaseTokenHasher
 import com.brianyeh.justnotes.backend.security.StaticSecretValueProvider
@@ -81,6 +83,41 @@ class GooglePlayAdapterTest {
         val result = GooglePlaySubscriptionVerifier(gateway, hasher()).verify(PACKAGE_NAME, PURCHASE_TOKEN)
 
         assertTrue(result is PlaySubscriptionVerificationResult.Failure)
+        assertEquals(PlayVerificationFailureCode.PLAY_API_UNAVAILABLE, result.code)
+        assertTrue(result.retryable)
+        assertFalse(result.reason.contains(PURCHASE_TOKEN))
+    }
+
+    @Test
+    fun verifierInvalidInputHasStableNonRetryableCode() = runBlocking {
+        val result = GooglePlaySubscriptionVerifier(
+            RecordingPublisherGateway(subscription()),
+            hasher(),
+        ).verify(PACKAGE_NAME, "")
+
+        assertTrue(result is PlaySubscriptionVerificationResult.Failure)
+        assertEquals(PlayVerificationFailureCode.INVALID_INPUT, result.code)
+        assertFalse(result.retryable)
+    }
+
+    @Test
+    fun verifierRejectedRequestHasStableNonRetryableCode() = runBlocking {
+        val gateway = object : AndroidPublisherGateway {
+            override fun getSubscription(packageName: String, purchaseToken: String): SubscriptionPurchaseV2 {
+                throw GoogleJsonResponseException(
+                    HttpResponseException.Builder(404, "Not Found", HttpHeaders()),
+                    GoogleJsonError(),
+                )
+            }
+
+            override fun acknowledgeSubscription(packageName: String, productId: String, purchaseToken: String) = Unit
+        }
+
+        val result = GooglePlaySubscriptionVerifier(gateway, hasher()).verify(PACKAGE_NAME, PURCHASE_TOKEN)
+
+        assertTrue(result is PlaySubscriptionVerificationResult.Failure)
+        assertEquals(PlayVerificationFailureCode.PLAY_API_REJECTED, result.code)
+        assertFalse(result.retryable)
         assertFalse(result.reason.contains(PURCHASE_TOKEN))
     }
 
@@ -117,6 +154,7 @@ class GooglePlayAdapterTest {
         )
 
         assertTrue(result is PlaySubscriptionAcknowledgementResult.Failure)
+        assertEquals(PlayAcknowledgementFailureCode.PLAY_ACK_UNAVAILABLE, result.code)
         assertTrue(result.retryable)
         assertFalse(result.reason.contains(PURCHASE_TOKEN))
     }
@@ -143,8 +181,20 @@ class GooglePlayAdapterTest {
         )
 
         assertTrue(result is PlaySubscriptionAcknowledgementResult.Failure)
+        assertEquals(PlayAcknowledgementFailureCode.PLAY_ACK_RATE_LIMITED, result.code)
         assertTrue(result.retryable)
         assertFalse(result.reason.contains(PURCHASE_TOKEN))
+    }
+
+    @Test
+    fun acknowledgementInvalidInputHasStableNonRetryableCode() = runBlocking {
+        val result = GooglePlaySubscriptionAcknowledger(
+            RecordingPublisherGateway(subscription()),
+        ).acknowledge(PACKAGE_NAME, "just_notes_premium", "")
+
+        assertTrue(result is PlaySubscriptionAcknowledgementResult.Failure)
+        assertEquals(PlayAcknowledgementFailureCode.INVALID_INPUT, result.code)
+        assertFalse(result.retryable)
     }
 
     private fun subscription(): SubscriptionPurchaseV2 {

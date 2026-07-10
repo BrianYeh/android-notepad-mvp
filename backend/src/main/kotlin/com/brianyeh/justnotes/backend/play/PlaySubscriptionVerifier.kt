@@ -66,7 +66,19 @@ data class PlaySubscriptionsV2Snapshot(
 
 sealed class PlaySubscriptionVerificationResult {
     data class Success(val verification: PlaySubscriptionVerification) : PlaySubscriptionVerificationResult()
-    data class Failure(val reason: String) : PlaySubscriptionVerificationResult()
+    data class Failure(
+        val reason: String,
+        val retryable: Boolean,
+        val code: PlayVerificationFailureCode,
+    ) : PlaySubscriptionVerificationResult()
+}
+
+enum class PlayVerificationFailureCode {
+    INVALID_INPUT,
+    PLAY_API_RATE_LIMITED,
+    PLAY_API_UNAVAILABLE,
+    PLAY_API_REJECTED,
+    PLAY_RESPONSE_INVALID,
 }
 
 interface PlaySubscriptionVerifier {
@@ -78,7 +90,16 @@ sealed class PlaySubscriptionAcknowledgementResult {
     data class Failure(
         val reason: String,
         val retryable: Boolean,
+        val code: PlayAcknowledgementFailureCode,
     ) : PlaySubscriptionAcknowledgementResult()
+}
+
+enum class PlayAcknowledgementFailureCode {
+    INVALID_INPUT,
+    PLAY_ACK_CONFLICT,
+    PLAY_ACK_RATE_LIMITED,
+    PLAY_ACK_UNAVAILABLE,
+    PLAY_ACK_REJECTED,
 }
 
 interface PlaySubscriptionAcknowledger {

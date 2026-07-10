@@ -1,5 +1,7 @@
 package com.brianyeh.justnotes.backend
 
+import com.brianyeh.justnotes.backend.config.BackendConfig
+import com.brianyeh.justnotes.backend.entitlement.BackendAcknowledgementState
 import com.brianyeh.justnotes.backend.entitlement.BackendSubscriptionStatus
 import com.brianyeh.justnotes.backend.play.PlayAcknowledgementState
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionLineItem
@@ -28,6 +30,14 @@ class PlaySubscriptionMapperTest {
     }
 
     @Test
+    fun expiryEqualToCurrentTimeDoesNotGrantPremium() {
+        val record = mapped(BackendSubscriptionStatus.Active, expiryTime = NOW)
+
+        assertFalse(record.hasPremium)
+        assertEquals(BackendSubscriptionStatus.Expired, record.status)
+    }
+
+    @Test
     fun onHoldPausedExpiredRevokedPendingAndUnknownDoNotGrantPremium() {
         assertFalse(mapped(BackendSubscriptionStatus.OnHold).hasPremium)
         assertFalse(mapped(BackendSubscriptionStatus.Paused).hasPremium)
@@ -46,7 +56,7 @@ class PlaySubscriptionMapperTest {
         )
 
         assertTrue(record.hasPremium)
-        assertEquals(BackendSubscriptionStatus.Active, record.status)
+        assertEquals(BackendSubscriptionStatus.CanceledActiveUntilExpiry, record.status)
     }
 
     @Test
@@ -58,6 +68,19 @@ class PlaySubscriptionMapperTest {
 
         assertFalse(record.hasPremium)
         assertEquals(BackendSubscriptionStatus.VerificationPending, record.status)
+    }
+
+    @Test
+    fun acknowledgementSucceededInCurrentRequestGrantsAndIsRecorded() {
+        val record = mapped(
+            status = BackendSubscriptionStatus.Active,
+            acknowledgementState = "PENDING",
+            acknowledgementSucceededInRequest = true,
+        )
+
+        assertTrue(record.hasPremium)
+        assertEquals(BackendSubscriptionStatus.Active, record.status)
+        assertEquals(BackendAcknowledgementState.Acknowledged, record.acknowledgementState)
     }
 
     @Test
@@ -91,6 +114,9 @@ class PlaySubscriptionMapperTest {
                 linkedPurchaseTokenHash = null,
             ),
             now = NOW,
+            ownershipVerified = false,
+            acknowledgementSucceededInRequest = false,
+            config = testConfig(),
         )
 
         assertFalse(record.hasPremium)
@@ -114,6 +140,47 @@ class PlaySubscriptionMapperTest {
     }
 
     @Test
+    fun zeroOrMultipleSupportedLineItemsFailClosed() {
+        val noLineItems = mapped(
+            status = BackendSubscriptionStatus.Active,
+            lineItems = emptyList(),
+        )
+        val multipleLineItems = mapped(
+            status = BackendSubscriptionStatus.Active,
+            lineItems = listOf(
+                supportedLineItem(basePlanId = "monthly"),
+                supportedLineItem(basePlanId = "annual"),
+            ),
+        )
+
+        assertFalse(noLineItems.hasPremium)
+        assertEquals(BackendSubscriptionStatus.Unknown, noLineItems.status)
+        assertFalse(multipleLineItems.hasPremium)
+        assertEquals(BackendSubscriptionStatus.Unknown, multipleLineItems.status)
+    }
+
+    @Test
+    fun wrongProductBasePlanAndOfferFailClosed() {
+        val wrongProduct = mapped(
+            status = BackendSubscriptionStatus.Active,
+            lineItems = listOf(supportedLineItem(productId = "other")),
+        )
+        val wrongBasePlan = mapped(
+            status = BackendSubscriptionStatus.Active,
+            lineItems = listOf(supportedLineItem(basePlanId = "weekly")),
+        )
+        val wrongOffer = mapped(
+            status = BackendSubscriptionStatus.Active,
+            lineItems = listOf(supportedLineItem(offerId = "other")),
+        )
+
+        listOf(wrongProduct, wrongBasePlan, wrongOffer).forEach { record ->
+            assertFalse(record.hasPremium)
+            assertEquals(BackendSubscriptionStatus.Unknown, record.status)
+        }
+    }
+
+    @Test
     fun subscriptionsV2StatesMapToBackendStatuses() {
         assertEquals(
             BackendSubscriptionStatus.Active,
@@ -124,7 +191,7 @@ class PlaySubscriptionMapperTest {
             mappedFromV2(PlaySubscriptionState.SUBSCRIPTION_STATE_IN_GRACE_PERIOD).status,
         )
         assertEquals(
-            BackendSubscriptionStatus.Active,
+            BackendSubscriptionStatus.CanceledActiveUntilExpiry,
             mappedFromV2(PlaySubscriptionState.SUBSCRIPTION_STATE_CANCELED).status,
         )
         assertEquals(
@@ -144,7 +211,7 @@ class PlaySubscriptionMapperTest {
             mappedFromV2(PlaySubscriptionState.REVOKED).status,
         )
         assertEquals(
-            BackendSubscriptionStatus.VerificationPending,
+            BackendSubscriptionStatus.PendingPurchase,
             mappedFromV2(PlaySubscriptionState.SUBSCRIPTION_STATE_PENDING).status,
         )
         assertEquals(
@@ -161,15 +228,16 @@ class PlaySubscriptionMapperTest {
         expiryTime: Long = NOW + 30L * 24L * 60L * 60L * 1_000L,
         acknowledgementState: String = "ACKNOWLEDGED",
         ownershipVerified: Boolean = true,
+        acknowledgementSucceededInRequest: Boolean = false,
+        lineItems: List<PlaySubscriptionLineItem>? = null,
     ) = PlaySubscriptionMapper.toEntitlement(
         googleSub = "google-sub",
         verification = PlaySubscriptionVerification(
             packageName = "com.brianyeh.justnotes",
             purchaseTokenHash = "token-hash",
             subscriptionState = status,
-            lineItems = listOf(
-                PlaySubscriptionLineItem(
-                    productId = "just_notes_premium",
+            lineItems = lineItems ?: listOf(
+                supportedLineItem(
                     basePlanId = basePlanId,
                     offerId = offerId,
                     expiryTime = expiryTime,
@@ -182,6 +250,8 @@ class PlaySubscriptionMapperTest {
         ),
         now = NOW,
         ownershipVerified = ownershipVerified,
+        acknowledgementSucceededInRequest = acknowledgementSucceededInRequest,
+        config = testConfig(),
     )
 
     private fun mappedFromV2(state: PlaySubscriptionState) = PlaySubscriptionMapper.toEntitlement(
@@ -207,7 +277,29 @@ class PlaySubscriptionMapperTest {
         ),
         now = NOW,
         ownershipVerified = true,
+        acknowledgementSucceededInRequest = false,
+        config = testConfig(),
     )
+
+    private fun supportedLineItem(
+        productId: String = "just_notes_premium",
+        basePlanId: String = "monthly",
+        offerId: String? = null,
+        expiryTime: Long = NOW + 30L * 24L * 60L * 60L * 1_000L,
+    ): PlaySubscriptionLineItem {
+        return PlaySubscriptionLineItem(
+            productId = productId,
+            basePlanId = basePlanId,
+            offerId = offerId,
+            expiryTime = expiryTime,
+        )
+    }
+
+    private fun testConfig(): BackendConfig {
+        return BackendConfig.fromEnvironment(
+            mapOf("GOOGLE_WEB_CLIENT_ID" to "test-web-client.apps.googleusercontent.com"),
+        )
+    }
 
     private companion object {
         const val NOW = 1_762_000_000_000L
