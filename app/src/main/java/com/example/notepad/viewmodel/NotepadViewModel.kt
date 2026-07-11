@@ -8,7 +8,12 @@ import android.net.Uri
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.notepad.BuildConfig
 import com.example.notepad.billing.BackendEntitlementRepository
+import com.example.notepad.billing.BackendBillingContextFetchResult
+import com.example.notepad.billing.BackendPurchaseRepository
+import com.example.notepad.billing.BackendPurchaseSubmissionResult
+import com.example.notepad.billing.BackendPurchaseVerificationResult
 import com.example.notepad.billing.PremiumBilling
 import com.example.notepad.billing.PremiumPlan
 import com.example.notepad.data.DriveSyncResult
@@ -56,6 +61,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -81,6 +89,11 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         currentAccountKeyProvider = { driveSyncClient.currentBackendEntitlementAccountKey() },
         applyBackendEntitlement = premiumBilling::applyBackendEntitlement,
     )
+    private val backendPurchaseRepository = BackendPurchaseRepository(
+        entitlementRepository = backendEntitlementRepository,
+        applyBackendEntitlement = premiumBilling::applyBackendEntitlement,
+    )
+    private var purchaseRetryRefreshJob: Job? = null
     private val googleSyncMutex = Mutex()
     private val drawingSaveEditGates = mutableMapOf<Long, DrawingSaveEditGate>()
     private val deviceId = preferences.getString("sync_device_id", null) ?: UUID.randomUUID().toString().also {
@@ -215,6 +228,12 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             repository.ensureDefaultFolder()
             ReminderScheduler.rescheduleFutureReminders(application)
         }
+        viewModelScope.launch {
+            premiumBilling.purchaseCandidates.collect { candidate ->
+                verifyBackendPurchase(candidate)
+            }
+        }
+        updateBackendPurchaseReadiness()
         premiumBilling.start()
         refreshBackendEntitlement()
     }
@@ -224,8 +243,38 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
         refreshBackendEntitlement()
     }
 
-    fun launchPremiumPurchase(activity: Activity, plan: PremiumPlan): Boolean {
-        return premiumBilling.launchPurchase(activity, plan)
+    fun launchPremiumPurchase(activity: Activity, plan: PremiumPlan) {
+        viewModelScope.launch {
+            if (!premiumBilling.state.value.canLaunchPurchase) return@launch
+            val accountKey = driveSyncClient.currentBackendEntitlementAccountKey() ?: return@launch
+            premiumBilling.setPurchaseLaunching(true)
+            premiumBilling.reportBackendPurchaseError(null)
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    backendPurchaseRepository.fetchBillingContext()
+                }
+                if (driveSyncClient.currentBackendEntitlementAccountKey() != accountKey) return@launch
+                when (result) {
+                    is BackendBillingContextFetchResult.Success -> {
+                        premiumBilling.launchPurchase(
+                            activity = activity,
+                            plan = plan,
+                            obfuscatedExternalAccountId = result.context.obfuscatedExternalAccountId,
+                        )
+                    }
+                    BackendBillingContextFetchResult.NotSignedIn,
+                    BackendBillingContextFetchResult.Unauthorized,
+                    BackendBillingContextFetchResult.Stale,
+                    -> premiumBilling.reportBackendPurchaseError(PURCHASE_ACCOUNT_UNAVAILABLE)
+                    BackendBillingContextFetchResult.Disabled,
+                    BackendBillingContextFetchResult.Unavailable,
+                    is BackendBillingContextFetchResult.Failure,
+                    -> premiumBilling.reportBackendPurchaseError(PURCHASE_BACKEND_UNAVAILABLE)
+                }
+            } finally {
+                premiumBilling.setPurchaseLaunching(false)
+            }
+        }
     }
 
     fun setDebugPremiumOverride(enabled: Boolean) {
@@ -234,6 +283,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     }
 
     override fun onCleared() {
+        purchaseRetryRefreshJob?.cancel()
         premiumBilling.close()
         super.onCleared()
     }
@@ -388,6 +438,9 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
             status = SyncStatus.Idle,
             lastError = null,
         )
+        cancelScheduledPurchaseRefresh()
+        updateBackendPurchaseReadiness()
+        premiumBilling.refresh()
         refreshBackendEntitlement()
         return true
     }
@@ -415,6 +468,8 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun signOutGoogleAccount() {
         driveSyncClient.disconnect()
+        cancelScheduledPurchaseRefresh()
+        updateBackendPurchaseReadiness()
         premiumBilling.clearBackendEntitlement()
         _lastGoogleSyncAt.value = null
         preferences.edit()
@@ -435,6 +490,56 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
                 backendEntitlementRepository.refresh()
             }
         }
+    }
+
+    private suspend fun verifyBackendPurchase(candidate: com.example.notepad.billing.BackendPurchaseCandidate) {
+        premiumBilling.setPurchaseVerificationInFlight(true)
+        premiumBilling.reportBackendPurchaseError(null)
+        try {
+            val submission = withContext(Dispatchers.IO) {
+                backendPurchaseRepository.verify(candidate)
+            }
+            val result = (submission as? BackendPurchaseSubmissionResult.Submitted)?.result ?: return
+            when (result) {
+                is BackendPurchaseVerificationResult.Pending -> schedulePurchaseRefresh(result.response.retryAfterSeconds)
+                is BackendPurchaseVerificationResult.Unavailable -> schedulePurchaseRefresh(result.response.retryAfterSeconds)
+                is BackendPurchaseVerificationResult.Failure ->
+                    premiumBilling.reportBackendPurchaseError(PURCHASE_VERIFICATION_RETRY)
+                BackendPurchaseVerificationResult.NotSignedIn,
+                BackendPurchaseVerificationResult.Unauthorized,
+                -> premiumBilling.reportBackendPurchaseError(PURCHASE_ACCOUNT_UNAVAILABLE)
+                BackendPurchaseVerificationResult.Disabled ->
+                    premiumBilling.reportBackendPurchaseError(PURCHASE_BACKEND_UNAVAILABLE)
+                BackendPurchaseVerificationResult.Stale,
+                is BackendPurchaseVerificationResult.Rejected,
+                is BackendPurchaseVerificationResult.Verified,
+                -> Unit
+            }
+        } finally {
+            premiumBilling.setPurchaseVerificationInFlight(false)
+        }
+    }
+
+    private fun schedulePurchaseRefresh(retryAfterSeconds: Long?) {
+        val seconds = retryAfterSeconds?.coerceIn(1L, MAX_PURCHASE_RETRY_SECONDS) ?: return
+        purchaseRetryRefreshJob?.cancel()
+        purchaseRetryRefreshJob = viewModelScope.launch {
+            delay(seconds * 1_000L)
+            premiumBilling.refresh()
+        }
+    }
+
+    private fun cancelScheduledPurchaseRefresh() {
+        purchaseRetryRefreshJob?.cancel()
+        purchaseRetryRefreshJob = null
+    }
+
+    private fun updateBackendPurchaseReadiness() {
+        premiumBilling.setBackendPurchaseReady(
+            BuildConfig.ENABLE_BACKEND_PURCHASE_FLOW &&
+                BuildConfig.BACKEND_BASE_URL.isNotBlank() &&
+                driveSyncClient.currentBackendEntitlementAccountKey() != null,
+        )
     }
 
     suspend fun syncGoogleDrive(): DriveSyncResult<Unit> = googleSyncMutex.withLock {
@@ -1043,3 +1148,8 @@ private fun currentDeviceName(): String {
         .joinToString(" ")
         .ifBlank { "Android device" }
 }
+
+private const val PURCHASE_ACCOUNT_UNAVAILABLE = "Sign in again before purchasing."
+private const val PURCHASE_BACKEND_UNAVAILABLE = "Purchase verification is temporarily unavailable."
+private const val PURCHASE_VERIFICATION_RETRY = "Purchase verification will retry safely."
+private const val MAX_PURCHASE_RETRY_SECONDS = 3_600L

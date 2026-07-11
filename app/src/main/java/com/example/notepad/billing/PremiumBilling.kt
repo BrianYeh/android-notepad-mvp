@@ -29,6 +29,10 @@ internal data class PendingLaunchMetadata(
     val offerId: String?,
 )
 
+internal fun isValidObfuscatedExternalAccountId(value: String): Boolean {
+    return OBFUSCATED_EXTERNAL_ACCOUNT_ID_PATTERN.matches(value)
+}
+
 internal data class PremiumPlayPurchaseObservation(
     val purchaseToken: String,
     val products: List<String>,
@@ -193,9 +197,14 @@ class PremiumBilling(
         )
     }
 
-    fun launchPurchase(activity: Activity, plan: PremiumPlan): Boolean {
-        if (!BuildConfig.ALLOW_CLIENT_ONLY_BILLING_ENTITLEMENT) {
+    fun launchPurchase(activity: Activity, plan: PremiumPlan, obfuscatedExternalAccountId: String): Boolean {
+        if (!BuildConfig.ENABLE_BACKEND_PURCHASE_FLOW) {
             purchaseStatusError = PRODUCTION_BACKEND_REQUIRED_MESSAGE
+            _state.update { it.copy(lastError = visibleBillingError()) }
+            return false
+        }
+        if (!isValidObfuscatedExternalAccountId(obfuscatedExternalAccountId)) {
+            purchaseStatusError = INVALID_ACCOUNT_ID_MESSAGE
             _state.update { it.copy(lastError = visibleBillingError()) }
             return false
         }
@@ -206,6 +215,7 @@ class PremiumBilling(
             .build()
         val params = BillingFlowParams.newBuilder()
             .setProductDetailsParamsList(listOf(productParams))
+            .setObfuscatedAccountId(obfuscatedExternalAccountId)
             .build()
         val result = billingClient.launchBillingFlow(activity, params)
         val launchSucceeded = result.responseCode == BillingClient.BillingResponseCode.OK
@@ -221,6 +231,23 @@ class PremiumBilling(
             _state.update { it.copy(lastError = visibleBillingError()) }
         }
         return launchSucceeded
+    }
+
+    fun setBackendPurchaseReady(ready: Boolean) {
+        _state.update { it.copy(backendPurchaseReady = ready) }
+    }
+
+    fun setPurchaseLaunching(launching: Boolean) {
+        _state.update { it.copy(purchaseLaunching = launching) }
+    }
+
+    fun setPurchaseVerificationInFlight(inFlight: Boolean) {
+        _state.update { it.copy(purchaseVerificationInFlight = inFlight) }
+    }
+
+    fun reportBackendPurchaseError(message: String?) {
+        purchaseStatusError = message
+        _state.update { it.copy(lastError = visibleBillingError()) }
     }
 
     fun close() {
@@ -260,7 +287,7 @@ class PremiumBilling(
             val details = productDetailsResult.productDetailsList
             val offers = collectBillingOffers(details)
             val selected = selectBillingOffers(offers)
-            val prices = selectDisplayPrices(offers.map { it.first })
+            val prices = selectLaunchDisplayPrices(offers.map { it.first })
             billingOffersByPlan.clear()
             billingOffersByPlan.putAll(selected)
             val unfetched = productDetailsResult.unfetchedProductList.joinToString { product ->
@@ -279,6 +306,8 @@ class PremiumBilling(
                     loading = false,
                     monthlyPrice = prices[PremiumPlan.Monthly],
                     annualPrice = prices[PremiumPlan.Annual],
+                    monthlyTrialAvailable = billingOffersByPlan[PremiumPlan.Monthly]?.offerDetails?.offerId ==
+                        PremiumCatalog.TRIAL_OFFER_ID,
                     lastError = visibleBillingError(),
                 )
             }
@@ -379,9 +408,9 @@ class PremiumBilling(
         }.toMap()
     }
 
-    private fun selectDisplayPrices(candidates: List<PremiumOfferCandidate>): Map<PremiumPlan, String> {
+    private fun selectLaunchDisplayPrices(candidates: List<PremiumOfferCandidate>): Map<PremiumPlan, String> {
         return PremiumPlan.entries.mapNotNull { plan ->
-            PremiumCatalog.selectDisplayPrice(plan, candidates)?.let { plan to it }
+            PremiumCatalog.selectLaunchDisplayPrice(plan, candidates)?.let { plan to it }
         }.toMap()
     }
 
@@ -452,8 +481,11 @@ class PremiumBilling(
             "Premium products were found, but expected monthly/annual base plans without offers are missing."
         private const val PRODUCTION_BACKEND_REQUIRED_MESSAGE =
             "Production billing is blocked until backend verification completes."
+        private const val INVALID_ACCOUNT_ID_MESSAGE = "Purchase account verification is unavailable."
     }
 }
+
+private val OBFUSCATED_EXTERNAL_ACCOUNT_ID_PATTERN = Regex("^[A-Za-z0-9_-]{1,64}$")
 
 internal fun shouldPersistBackendEntitlementResult(
     current: PremiumSubscriptionSnapshot,

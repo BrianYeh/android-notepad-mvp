@@ -17,6 +17,16 @@ val allowClientOnlyBillingEntitlement = providers
     }
     .orElse("false")
 
+val enableBackendPurchaseFlow = providers
+    .gradleProperty("justNotes.enableBackendPurchaseFlow")
+    .map { value ->
+        require(value == "true" || value == "false") {
+            "justNotes.enableBackendPurchaseFlow must be either true or false."
+        }
+        value
+    }
+    .orElse("false")
+
 fun String.normalizedBackendBaseUrl(): String {
     val normalized = trim().trimEnd('/')
     if (normalized.isEmpty()) return normalized
@@ -68,8 +78,8 @@ android {
         applicationId = "com.brianyeh.justnotes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.0.7"
 
         testInstrumentationRunner = "com.example.notepad.JustNotesTestRunner"
 
@@ -79,6 +89,7 @@ android {
 
     buildTypes {
         debug {
+            buildConfigField("boolean", "ENABLE_BACKEND_PURCHASE_FLOW", enableBackendPurchaseFlow.get())
             buildConfigField(
                 "boolean",
                 "ALLOW_CLIENT_ONLY_BILLING_ENTITLEMENT",
@@ -86,6 +97,7 @@ android {
             )
         }
         release {
+            buildConfigField("boolean", "ENABLE_BACKEND_PURCHASE_FLOW", enableBackendPurchaseFlow.get())
             buildConfigField("boolean", "ALLOW_CLIENT_ONLY_BILLING_ENTITLEMENT", "false")
             isMinifyEnabled = false
             proguardFiles(

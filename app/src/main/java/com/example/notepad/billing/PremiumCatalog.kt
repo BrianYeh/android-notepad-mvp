@@ -55,12 +55,30 @@ object PremiumCatalog {
     fun selectBasePlanOffer(plan: PremiumPlan, candidates: Iterable<PremiumOfferCandidate>): PremiumOfferCandidate? {
         val matchingBasePlans = candidates.filter { candidate ->
             candidate.productId == PREFERRED_PRODUCT_ID &&
-                candidate.basePlanId == plan.basePlanId &&
-                candidate.offerId == null
+                candidate.basePlanId == plan.basePlanId
         }
-        if (matchingBasePlans.size == 1) return matchingBasePlans[0]
-        return null
+        return when (plan) {
+            PremiumPlan.Monthly -> {
+                val trials = matchingBasePlans.filter { it.offerId == TRIAL_OFFER_ID }
+                when {
+                    trials.size == 1 -> trials.single()
+                    trials.size > 1 -> null
+                    else -> matchingBasePlans.filter { it.offerId == null }.singleOrNull()
+                }
+            }
+            PremiumPlan.Annual -> matchingBasePlans.filter { it.offerId == null }.singleOrNull()
+        }
     }
+
+    fun showsTrialCopy(selectedOffer: PremiumOfferCandidate?): Boolean {
+        return selectedOffer?.basePlanId == PremiumPlan.Monthly.basePlanId &&
+            selectedOffer.offerId == TRIAL_OFFER_ID
+    }
+
+    fun selectLaunchDisplayPrice(
+        plan: PremiumPlan,
+        candidates: Iterable<PremiumOfferCandidate>,
+    ): String? = selectBasePlanOffer(plan, candidates)?.formattedPrice?.takeIf { it.isNotBlank() }
 
     fun selectDisplayPrice(plan: PremiumPlan, candidates: Iterable<PremiumOfferCandidate>): String? {
         val matchingBasePlans = candidates.filter { candidate ->
@@ -71,4 +89,6 @@ object PremiumCatalog {
         val basePlanPrice = matchingBasePlans.firstOrNull { candidate -> candidate.offerId == null }
         return (basePlanPrice ?: matchingBasePlans.firstOrNull())?.formattedPrice
     }
+
+    const val TRIAL_OFFER_ID = "trial10d"
 }

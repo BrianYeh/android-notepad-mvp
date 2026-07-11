@@ -11,6 +11,49 @@ import org.junit.Test
 
 class PremiumBillingStateTest {
     @Test
+    fun obfuscatedAccountIdAcceptsOnlyPlaySafeOneTo64CharacterValues() {
+        assertTrue(isValidObfuscatedExternalAccountId("a"))
+        assertTrue(isValidObfuscatedExternalAccountId("A_z-9"))
+        assertTrue(isValidObfuscatedExternalAccountId("x".repeat(64)))
+        assertFalse(isValidObfuscatedExternalAccountId(""))
+        assertFalse(isValidObfuscatedExternalAccountId("x".repeat(65)))
+        assertFalse(isValidObfuscatedExternalAccountId("contains space"))
+        assertFalse(isValidObfuscatedExternalAccountId("contains+plus"))
+    }
+
+    @Test
+    fun backendPurchaseLaunchRequiresEveryBackendAndBillingPrerequisite() {
+        val ready = PremiumBillingState(
+            billingAvailable = true,
+            backendPurchaseReady = true,
+            loading = false,
+        )
+
+        assertTrue(ready.canLaunchPurchase(enableBackendPurchaseFlow = true))
+        assertFalse(ready.copy(backendPurchaseReady = false).canLaunchPurchase(true))
+        assertFalse(ready.copy(billingAvailable = false).canLaunchPurchase(true))
+        assertFalse(ready.copy(purchaseLaunching = true).canLaunchPurchase(true))
+        assertFalse(ready.copy(purchaseVerificationInFlight = true).canLaunchPurchase(true))
+        assertFalse(ready.canLaunchPurchase(enableBackendPurchaseFlow = false))
+    }
+
+    @Test
+    fun pendingAndVerificationPendingSubscriptionsBlockAnotherLaunch() {
+        val ready = PremiumBillingState(billingAvailable = true, backendPurchaseReady = true)
+
+        assertFalse(
+            ready.copy(
+                subscription = PremiumSubscriptionSnapshot(status = PremiumSubscriptionStatus.PendingPurchase),
+            ).canLaunchPurchase(true),
+        )
+        assertFalse(
+            ready.copy(
+                subscription = PremiumSubscriptionSnapshot(status = PremiumSubscriptionStatus.VerificationPending),
+            ).canLaunchPurchase(true),
+        )
+    }
+
+    @Test
     fun purchasedCallbackEmitsBufferedCandidateWithLaunchMetadata() = runBlocking {
         val channel = Channel<BackendPurchaseCandidate>(Channel.BUFFERED)
         val emitted = emitBackendPurchaseCandidates(
@@ -401,7 +444,7 @@ class PremiumBillingStateTest {
     }
 
     @Test
-    fun catalogCanDisplayRecurringPriceFromTrialOfferWithoutSelectingPurchaseOffer() {
+    fun catalogDisplaysAndSelectsTheConfiguredMonthlyTrialOffer() {
         val candidates = listOf(
             PremiumOfferCandidate(
                 productId = "just_notes_premium",
@@ -413,7 +456,10 @@ class PremiumBillingStateTest {
         )
 
         assertEquals("TWD 33/month", PremiumCatalog.selectDisplayPrice(PremiumPlan.Monthly, candidates))
-        assertEquals(null, PremiumCatalog.selectBasePlanOffer(PremiumPlan.Monthly, candidates))
+        assertEquals(
+            "trial-token",
+            PremiumCatalog.selectBasePlanOffer(PremiumPlan.Monthly, candidates)?.offerToken,
+        )
     }
 
     @Test

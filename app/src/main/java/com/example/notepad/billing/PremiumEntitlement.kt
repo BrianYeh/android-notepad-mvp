@@ -84,6 +84,10 @@ data class PremiumBillingState(
     val loading: Boolean = true,
     val monthlyPrice: String? = null,
     val annualPrice: String? = null,
+    val monthlyTrialAvailable: Boolean = false,
+    val backendPurchaseReady: Boolean = false,
+    val purchaseLaunching: Boolean = false,
+    val purchaseVerificationInFlight: Boolean = false,
     val lastError: String? = null,
 ) {
     val isPremium: Boolean
@@ -93,5 +97,15 @@ data class PremiumBillingState(
         get() = isPremium || debugPremiumOverride
 
     val canLaunchPurchase: Boolean
-        get() = subscription.canLaunchPurchase(BuildConfig.ALLOW_CLIENT_ONLY_BILLING_ENTITLEMENT)
+        get() = canLaunchPurchase(BuildConfig.ENABLE_BACKEND_PURCHASE_FLOW)
+
+    fun canLaunchPurchase(enableBackendPurchaseFlow: Boolean): Boolean {
+        return enableBackendPurchaseFlow &&
+            backendPurchaseReady &&
+            billingAvailable &&
+            !purchaseLaunching &&
+            !purchaseVerificationInFlight &&
+            subscription.status != PremiumSubscriptionStatus.PendingPurchase &&
+            subscription.status != PremiumSubscriptionStatus.VerificationPending
+    }
 }
