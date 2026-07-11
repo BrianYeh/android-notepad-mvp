@@ -58,6 +58,7 @@ import com.example.notepad.ui.readContentMatchTargetForRange
 import com.example.notepad.ui.webUrlAt
 import com.example.notepad.ui.webUrlRanges
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.After
@@ -2508,6 +2509,7 @@ class TextInputTest {
 
     @Test
     fun premiumFallbackHidesCommerceAndShowsAllowedBenefits() {
+        assertFalse(BuildConfig.ENABLE_BACKEND_PURCHASE_FLOW)
         composeRule.onNodeWithTag("premium_tab").performClick()
 
         composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()

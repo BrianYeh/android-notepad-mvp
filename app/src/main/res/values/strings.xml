@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Just Notes</string>
+    <string name="app_name" translatable="false">Just Notes</string>
     <string name="reminder_snooze_10_min">Snooze 10 min</string>
     <string name="reminder_clear">Clear</string>
     <string name="widget_new_note">+</string>
