@@ -80,6 +80,17 @@ val uploadSigningConfigured = listOf(
     uploadKeyAlias,
     uploadKeyPassword,
 ).all { it.isPresent }
+val injectedUploadStoreFile = providers.gradleProperty("android.injected.signing.store.file")
+val injectedUploadStorePassword = providers.gradleProperty("android.injected.signing.store.password")
+val injectedUploadKeyAlias = providers.gradleProperty("android.injected.signing.key.alias")
+val injectedUploadKeyPassword = providers.gradleProperty("android.injected.signing.key.password")
+val androidStudioSigningConfigured = listOf(
+    injectedUploadStoreFile,
+    injectedUploadStorePassword,
+    injectedUploadKeyAlias,
+    injectedUploadKeyPassword,
+).all { it.isPresent }
+val releaseSigningConfigured = uploadSigningConfigured || androidStudioSigningConfigured
 
 android {
     namespace = "com.example.notepad"
@@ -158,8 +169,8 @@ android {
 
 tasks.matching { it.name == "bundleRelease" }.configureEach {
     doFirst {
-        require(uploadSigningConfigured) {
-            "Release upload signing properties are required for bundleRelease."
+        require(releaseSigningConfigured) {
+            "Release upload signing properties or Android Studio injected signing credentials are required for bundleRelease."
         }
     }
 }
