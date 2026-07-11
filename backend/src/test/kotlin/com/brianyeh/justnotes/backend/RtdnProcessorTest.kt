@@ -206,15 +206,29 @@ class RtdnProcessorTest {
         assertEquals("DEPENDENCY_UNAVAILABLE", scenario.events.releasedErrorCode)
     }
 
+    @Test
+    fun releaseStoreFailureStillReturnsRetryableInsteadOfEscapingAsHttp500() = runBlocking {
+        val scenario = Scenario(decryptFailure = true, releaseFailure = true)
+        scenario.seedSubscription()
+
+        val result = scenario.processor.process(envelope(), notification())
+
+        assertEquals(
+            RtdnErrorCode.DEPENDENCY_UNAVAILABLE,
+            assertIs<RtdnProcessResult.RetryableFailure>(result).errorCode,
+        )
+    }
+
     private class Scenario(
         playResult: PlaySubscriptionVerificationResult = successVerification(),
         claimResult: RtdnClaimResult = RtdnClaimResult.Claimed(1),
         decryptedToken: String = RAW_TOKEN,
         decryptedHash: String = TOKEN_HASH,
         decryptFailure: Boolean = false,
+        releaseFailure: Boolean = false,
     ) {
         val repository = InMemoryEntitlementRepository()
-        val events = RecordingEventRepository(claimResult)
+        val events = RecordingEventRepository(claimResult, releaseFailure)
         val verifier = RecordingVerifier(playResult)
         val cipher = RecordingCipher(decryptedToken, decryptFailure)
         private val hasher = object : PurchaseTokenHasher {
@@ -265,6 +279,7 @@ class RtdnProcessorTest {
 
     private class RecordingEventRepository(
         private val claimResult: RtdnClaimResult,
+        private val releaseFailure: Boolean,
     ) : RtdnEventRepository {
         var completedOutcome: String? = null
         var releasedErrorCode: String? = null
@@ -287,6 +302,7 @@ class RtdnProcessorTest {
             retryAt: Long,
             errorCode: String,
         ): Boolean {
+            if (releaseFailure) error("redacted")
             releasedErrorCode = errorCode
             return true
         }

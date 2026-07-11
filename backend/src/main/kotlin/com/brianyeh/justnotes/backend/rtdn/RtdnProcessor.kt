@@ -225,12 +225,18 @@ class RtdnProcessor(
         generation: Long,
         errorCode: RtdnErrorCode,
     ): RtdnProcessResult {
-        eventRepository.release(
-            messageIdHash = messageIdHash,
-            generation = generation,
-            retryAt = nowMillis() + retryDelayMillis,
-            errorCode = errorCode.name,
-        )
+        try {
+            eventRepository.release(
+                messageIdHash = messageIdHash,
+                generation = generation,
+                retryAt = nowMillis() + retryDelayMillis,
+                errorCode = errorCode.name,
+            )
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (_: Exception) {
+            // Pub/Sub must still redeliver when the release store is unavailable.
+        }
         return retryableWithoutClaim(errorCode)
     }
 
