@@ -443,6 +443,27 @@ class BillingVerificationOrchestratorTest {
     }
 
     @Test
+    fun canceledPendingPurchaseIsTerminalAndAllowsAForwardPurchase() = runBlocking {
+        val scenario = Scenario(
+            verification = verification(
+                state = BackendSubscriptionStatus.Free,
+                playState = PlaySubscriptionState.PENDING_PURCHASE_CANCELED,
+                acknowledgementState = PlayAcknowledgementState.ACKNOWLEDGEMENT_STATE_PENDING,
+                expiryTime = NOW,
+            ),
+        )
+
+        val outcome = scenario.verify()
+
+        assertEquals(200, outcome.httpStatus)
+        assertEquals(BackendSubscriptionStatus.Free, outcome.response.status)
+        assertFalse(outcome.response.retryable)
+        assertEquals(null, outcome.response.retryAfterSeconds)
+        assertFalse(outcome.response.hasPremium)
+        assertEquals(0, scenario.acknowledger.callCount)
+    }
+
+    @Test
     fun grantablePlayStateWithElapsedExpiryIsExpiredWithoutAcknowledgement() = runBlocking {
         val scenario = Scenario(
             verification = verification(
@@ -890,6 +911,7 @@ class BillingVerificationOrchestratorTest {
             purchaseTokenHash: String,
             ownerGoogleSub: String,
             now: Long,
+            maxStaleMillis: Long,
         ): EntitlementReconciliationResult {
             val tentative = mutex.withLock {
                 val current = subscription ?: return@withLock null
@@ -910,6 +932,7 @@ class BillingVerificationOrchestratorTest {
                     entitlement,
                     current.reconciledEntitlement(now),
                     now,
+                    maxStaleMillis,
                 )
                 entitlement = effective
                 EntitlementReconciliationResult.Success(effective, current)

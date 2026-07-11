@@ -111,6 +111,7 @@ class InMemoryEntitlementRepository : EntitlementRepository {
         purchaseTokenHash: String,
         ownerGoogleSub: String,
         now: Long,
+        maxStaleMillis: Long,
     ): EntitlementReconciliationResult {
         return mutex.withLock {
             val subscription = subscriptions[purchaseTokenHash]
@@ -119,7 +120,12 @@ class InMemoryEntitlementRepository : EntitlementRepository {
                 return@withLock EntitlementReconciliationResult.OwnedByAnotherUser
             }
             val candidate = subscription.reconciledEntitlement(now)
-            val effective = selectReconciledEntitlementRecord(entitlements[ownerGoogleSub], candidate, now)
+            val effective = selectReconciledEntitlementRecord(
+                existing = entitlements[ownerGoogleSub],
+                candidate = candidate,
+                now = now,
+                maxStaleMillis = maxStaleMillis,
+            )
             entitlements[ownerGoogleSub] = effective
             EntitlementReconciliationResult.Success(effective, subscription)
         }

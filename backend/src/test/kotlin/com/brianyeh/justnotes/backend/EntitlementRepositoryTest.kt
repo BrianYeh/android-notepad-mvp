@@ -8,6 +8,7 @@ import com.brianyeh.justnotes.backend.entitlement.EntitlementRecord
 import com.brianyeh.justnotes.backend.entitlement.InMemoryEntitlementRepository
 import com.brianyeh.justnotes.backend.entitlement.SubscriptionRecord
 import com.brianyeh.justnotes.backend.entitlement.SubscriptionWriteResult
+import com.brianyeh.justnotes.backend.entitlement.selectReconciledEntitlementRecord
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -210,6 +211,381 @@ class EntitlementRepositoryTest {
 
         assertFalse(reconciled.entitlement.hasPremium)
         assertEquals(BackendSubscriptionStatus.Expired, reconciled.entitlement.status)
+    }
+
+    @Test
+    fun newerTransientDifferentTokenCannotReplaceValidPremiumUnlessItLinksTheOldToken() = runBlocking {
+        val repository = InMemoryEntitlementRepository()
+        val active = subscription(owner = "sub-a").copy(
+            purchaseTokenHash = "active-hash",
+            linkedPurchaseTokenHash = null,
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+        )
+        repository.upsertSubscriptionForOwner(active)
+        repository.reconcileEntitlementFromSubscription("active-hash", "sub-a", NOW)
+
+        val unrelatedPending = active.copy(
+            purchaseTokenHash = "pending-hash",
+            linkedPurchaseTokenHash = null,
+            status = BackendSubscriptionStatus.PendingPurchase,
+            lastVerifiedAt = NOW + 10L,
+        )
+        repository.upsertSubscriptionForOwner(unrelatedPending)
+        val preserved = repository.reconcileEntitlementFromSubscription("pending-hash", "sub-a", NOW)
+            as com.brianyeh.justnotes.backend.entitlement.EntitlementReconciliationResult.Success
+
+        assertTrue(preserved.entitlement.hasPremium)
+        assertEquals("active-hash", preserved.entitlement.purchaseTokenHash)
+
+        repository.upsertSubscriptionForOwner(
+            unrelatedPending.copy(
+                purchaseTokenHash = "replacement-hash",
+                linkedPurchaseTokenHash = "active-hash",
+                status = BackendSubscriptionStatus.Revoked,
+                expiryTime = NOW - 1L,
+                lastVerifiedAt = NOW + 20L,
+            ),
+        )
+        val replaced = repository.reconcileEntitlementFromSubscription("replacement-hash", "sub-a", NOW)
+            as com.brianyeh.justnotes.backend.entitlement.EntitlementReconciliationResult.Success
+
+        assertFalse(replaced.entitlement.hasPremium)
+        assertEquals(BackendSubscriptionStatus.Revoked, replaced.entitlement.status)
+        assertEquals("replacement-hash", replaced.entitlement.purchaseTokenHash)
+    }
+
+    @Test
+    fun canceledReplacementPreservesTheLinkedActiveEntitlement() = runBlocking {
+        val repository = InMemoryEntitlementRepository()
+        val active = subscription(owner = "sub-a").copy(
+            purchaseTokenHash = "active-hash",
+            linkedPurchaseTokenHash = null,
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+        )
+        repository.upsertSubscriptionForOwner(active)
+        repository.reconcileEntitlementFromSubscription("active-hash", "sub-a", NOW)
+
+        repository.upsertSubscriptionForOwner(
+            active.copy(
+                purchaseTokenHash = "canceled-replacement-hash",
+                linkedPurchaseTokenHash = "active-hash",
+                status = BackendSubscriptionStatus.Free,
+                expiryTime = null,
+                lastVerifiedAt = NOW + 10L,
+            ),
+        )
+        val reconciled = repository.reconcileEntitlementFromSubscription(
+            "canceled-replacement-hash",
+            "sub-a",
+            NOW,
+        ) as com.brianyeh.justnotes.backend.entitlement.EntitlementReconciliationResult.Success
+
+        assertTrue(reconciled.entitlement.hasPremium)
+        assertEquals(BackendSubscriptionStatus.Active, reconciled.entitlement.status)
+        assertEquals("active-hash", reconciled.entitlement.purchaseTokenHash)
+    }
+
+    @Test
+    fun activePredecessorRecoversWhenCanceledReplacementWasReconciledFirst() = runBlocking {
+        val repository = InMemoryEntitlementRepository()
+        val active = subscription(owner = "sub-a").copy(
+            purchaseTokenHash = "active-hash",
+            linkedPurchaseTokenHash = null,
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+            lastVerifiedAt = NOW + 10L,
+        )
+        repository.upsertSubscriptionForOwner(
+            active.copy(
+                purchaseTokenHash = "canceled-replacement-hash",
+                linkedPurchaseTokenHash = "active-hash",
+                status = BackendSubscriptionStatus.Free,
+                expiryTime = null,
+                lastVerifiedAt = NOW,
+            ),
+        )
+        repository.reconcileEntitlementFromSubscription("canceled-replacement-hash", "sub-a", NOW)
+        repository.upsertSubscriptionForOwner(active)
+
+        val reconciled = repository.reconcileEntitlementFromSubscription("active-hash", "sub-a", NOW)
+            as com.brianyeh.justnotes.backend.entitlement.EntitlementReconciliationResult.Success
+
+        assertTrue(reconciled.entitlement.hasPremium)
+        assertEquals(BackendSubscriptionStatus.Active, reconciled.entitlement.status)
+        assertEquals("active-hash", reconciled.entitlement.purchaseTokenHash)
+    }
+
+    @Test
+    fun linkedPendingReplacementPreservesActivePredecessorInEitherReconciliationOrder() = runBlocking {
+        val active = subscription(owner = "sub-a").copy(
+            purchaseTokenHash = "active-hash",
+            linkedPurchaseTokenHash = null,
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+            lastVerifiedAt = NOW,
+        )
+        val pendingReplacement = active.copy(
+            purchaseTokenHash = "pending-replacement-hash",
+            linkedPurchaseTokenHash = "active-hash",
+            status = BackendSubscriptionStatus.PendingPurchase,
+            acknowledgementState = BackendAcknowledgementState.NotRequired,
+            lastVerifiedAt = NOW + 10L,
+        )
+
+        val activeFirst = InMemoryEntitlementRepository()
+        activeFirst.upsertSubscriptionForOwner(active)
+        activeFirst.reconcileEntitlementFromSubscription("active-hash", "sub-a", NOW)
+        activeFirst.upsertSubscriptionForOwner(pendingReplacement)
+        val afterPending = activeFirst.reconcileEntitlementFromSubscription(
+            "pending-replacement-hash",
+            "sub-a",
+            NOW,
+        ) as com.brianyeh.justnotes.backend.entitlement.EntitlementReconciliationResult.Success
+
+        val pendingFirst = InMemoryEntitlementRepository()
+        pendingFirst.upsertSubscriptionForOwner(pendingReplacement)
+        pendingFirst.reconcileEntitlementFromSubscription("pending-replacement-hash", "sub-a", NOW)
+        pendingFirst.upsertSubscriptionForOwner(active)
+        val afterActive = pendingFirst.reconcileEntitlementFromSubscription("active-hash", "sub-a", NOW)
+            as com.brianyeh.justnotes.backend.entitlement.EntitlementReconciliationResult.Success
+
+        assertTrue(afterPending.entitlement.hasPremium)
+        assertEquals("active-hash", afterPending.entitlement.purchaseTokenHash)
+        assertTrue(afterActive.entitlement.hasPremium)
+        assertEquals("active-hash", afterActive.entitlement.purchaseTokenHash)
+    }
+
+    @Test
+    fun staleOldTokenCannotRestorePremiumAfterItsNewerSuccessorWasRevoked() {
+        val staleOldToken = EntitlementRecord(
+            googleSub = "sub-a",
+            hasPremium = true,
+            status = BackendSubscriptionStatus.Active,
+            expiryTime = NOW + 30L * 24L * 60L * 60L * 1_000L,
+            lastVerifiedAt = NOW,
+            purchaseTokenHash = "old-hash",
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+        )
+        val newerRevokedSuccessor = EntitlementRecord(
+            googleSub = "sub-a",
+            hasPremium = false,
+            status = BackendSubscriptionStatus.Revoked,
+            expiryTime = NOW - 1L,
+            lastVerifiedAt = NOW + 10L,
+            purchaseTokenHash = "successor-hash",
+            linkedPurchaseTokenHash = "old-hash",
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+        )
+
+        val reconciled = selectReconciledEntitlementRecord(
+            existing = newerRevokedSuccessor,
+            candidate = staleOldToken,
+            now = NOW,
+        )
+
+        assertFalse(reconciled.hasPremium)
+        assertEquals(BackendSubscriptionStatus.Revoked, reconciled.status)
+        assertEquals("successor-hash", reconciled.purchaseTokenHash)
+    }
+
+    @Test
+    fun nullLinkedHashDoesNotMatchAnExistingLegacyEntitlementWithoutATokenHash() {
+        val newerExisting = EntitlementRecord(
+            googleSub = "sub-a",
+            hasPremium = false,
+            status = BackendSubscriptionStatus.Revoked,
+            lastVerifiedAt = NOW + 10L,
+            purchaseTokenHash = null,
+        )
+        val olderCandidate = newerExisting.copy(
+            status = BackendSubscriptionStatus.Free,
+            lastVerifiedAt = NOW,
+            purchaseTokenHash = "unrelated-hash",
+        )
+
+        val reconciled = selectReconciledEntitlementRecord(
+            existing = newerExisting,
+            candidate = olderCandidate,
+            now = NOW,
+        )
+
+        assertEquals(newerExisting, reconciled)
+    }
+
+    @Test
+    fun newerUnlinkedTerminalDenialBeatsAnOlderPremiumObservation() {
+        val olderPremium = EntitlementRecord(
+            googleSub = "sub-a",
+            hasPremium = true,
+            status = BackendSubscriptionStatus.Active,
+            expiryTime = NOW + 30L * 24L * 60L * 60L * 1_000L,
+            lastVerifiedAt = NOW,
+            purchaseTokenHash = "old-hash",
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+        )
+        val newerRevoked = olderPremium.copy(
+            hasPremium = false,
+            status = BackendSubscriptionStatus.Revoked,
+            expiryTime = NOW - 1L,
+            lastVerifiedAt = NOW + 10L,
+            purchaseTokenHash = "unlinked-new-hash",
+        )
+
+        val reconciled = selectReconciledEntitlementRecord(
+            existing = newerRevoked,
+            candidate = olderPremium,
+            now = NOW,
+        )
+
+        assertEquals(newerRevoked, reconciled)
+    }
+
+    @Test
+    fun existingTerminalDenialWinsAnEqualTimestampTieAgainstPremium() {
+        val terminal = EntitlementRecord(
+            googleSub = "sub-a",
+            hasPremium = false,
+            status = BackendSubscriptionStatus.Revoked,
+            expiryTime = NOW - 1L,
+            lastVerifiedAt = NOW,
+            purchaseTokenHash = "revoked-hash",
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+        )
+        val premium = terminal.copy(
+            hasPremium = true,
+            status = BackendSubscriptionStatus.Active,
+            expiryTime = NOW + 30L * 24L * 60L * 60L * 1_000L,
+            purchaseTokenHash = "active-hash",
+        )
+
+        val reconciled = selectReconciledEntitlementRecord(
+            existing = terminal,
+            candidate = premium,
+            now = NOW,
+        )
+
+        assertEquals(terminal, reconciled)
+    }
+
+    @Test
+    fun premiumOlderThanTheMaximumStaleWindowIsNotPreserved() {
+        val stalePremium = EntitlementRecord(
+            googleSub = "sub-a",
+            hasPremium = true,
+            status = BackendSubscriptionStatus.Active,
+            expiryTime = NOW + 30L * 24L * 60L * 60L * 1_000L,
+            lastVerifiedAt = NOW - 60_001L,
+            purchaseTokenHash = "active-hash",
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+        )
+        val pendingCandidate = stalePremium.copy(
+            hasPremium = false,
+            status = BackendSubscriptionStatus.PendingPurchase,
+            lastVerifiedAt = NOW,
+            purchaseTokenHash = "pending-hash",
+            acknowledgementState = BackendAcknowledgementState.NotRequired,
+        )
+
+        val reconciled = selectReconciledEntitlementRecord(
+            existing = stalePremium,
+            candidate = pendingCandidate,
+            now = NOW,
+            maxStaleMillis = 60_000L,
+        )
+
+        assertFalse(reconciled.hasPremium)
+        assertEquals("pending-hash", reconciled.purchaseTokenHash)
+    }
+
+    @Test
+    fun validPremiumWithinTheStaleHorizonBeatsANewerUnrelatedTransientState() {
+        val premium = EntitlementRecord(
+            googleSub = "sub-a",
+            hasPremium = true,
+            status = BackendSubscriptionStatus.Active,
+            expiryTime = NOW + 30L * 24L * 60L * 60L * 1_000L,
+            lastVerifiedAt = NOW - 1L,
+            purchaseTokenHash = "active-hash",
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+        )
+        val newerPending = premium.copy(
+            hasPremium = false,
+            status = BackendSubscriptionStatus.PendingPurchase,
+            lastVerifiedAt = NOW,
+            purchaseTokenHash = "pending-hash",
+            acknowledgementState = BackendAcknowledgementState.NotRequired,
+        )
+
+        val reconciled = selectReconciledEntitlementRecord(
+            existing = newerPending,
+            candidate = premium,
+            now = NOW,
+            maxStaleMillis = 60_000L,
+        )
+
+        assertEquals(premium, reconciled)
+    }
+
+    @Test
+    fun transientStateCannotDisplaceTerminalHistoryAndEnableOlderPremiumToReturn() {
+        val terminal = EntitlementRecord(
+            googleSub = "sub-a",
+            hasPremium = false,
+            status = BackendSubscriptionStatus.Revoked,
+            expiryTime = NOW - 1L,
+            lastVerifiedAt = NOW,
+            purchaseTokenHash = "revoked-hash",
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+        )
+        val newerPending = terminal.copy(
+            status = BackendSubscriptionStatus.PendingPurchase,
+            lastVerifiedAt = NOW + 10L,
+            purchaseTokenHash = "pending-hash",
+            acknowledgementState = BackendAcknowledgementState.NotRequired,
+        )
+        val olderPremium = terminal.copy(
+            hasPremium = true,
+            status = BackendSubscriptionStatus.Active,
+            expiryTime = NOW + 30L * 24L * 60L * 60L * 1_000L,
+            lastVerifiedAt = NOW - 10L,
+            purchaseTokenHash = "active-hash",
+        )
+
+        val afterPending = selectReconciledEntitlementRecord(terminal, newerPending, NOW)
+        val afterDelayedPremium = selectReconciledEntitlementRecord(afterPending, olderPremium, NOW)
+
+        assertEquals(terminal, afterPending)
+        assertEquals(terminal, afterDelayedPremium)
+    }
+
+    @Test
+    fun olderTerminalObservationReplacesNewerTransientAndBlocksEvenOlderPremium() {
+        val newerPending = EntitlementRecord(
+            googleSub = "sub-a",
+            hasPremium = false,
+            status = BackendSubscriptionStatus.PendingPurchase,
+            lastVerifiedAt = NOW + 10L,
+            purchaseTokenHash = "pending-hash",
+            acknowledgementState = BackendAcknowledgementState.NotRequired,
+        )
+        val terminal = newerPending.copy(
+            status = BackendSubscriptionStatus.Revoked,
+            expiryTime = NOW - 1L,
+            lastVerifiedAt = NOW,
+            purchaseTokenHash = "revoked-hash",
+            acknowledgementState = BackendAcknowledgementState.Acknowledged,
+        )
+        val olderPremium = terminal.copy(
+            hasPremium = true,
+            status = BackendSubscriptionStatus.Active,
+            expiryTime = NOW + 30L * 24L * 60L * 60L * 1_000L,
+            lastVerifiedAt = NOW - 10L,
+            purchaseTokenHash = "active-hash",
+        )
+
+        val afterTerminal = selectReconciledEntitlementRecord(newerPending, terminal, NOW)
+        val afterDelayedPremium = selectReconciledEntitlementRecord(afterTerminal, olderPremium, NOW)
+
+        assertEquals(terminal, afterTerminal)
+        assertEquals(terminal, afterDelayedPremium)
     }
 
     @Test

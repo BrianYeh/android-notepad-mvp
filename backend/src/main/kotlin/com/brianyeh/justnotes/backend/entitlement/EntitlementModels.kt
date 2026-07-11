@@ -40,6 +40,7 @@ data class EntitlementRecord(
     val lastVerifiedAt: Long? = null,
     val stale: Boolean = false,
     val purchaseTokenHash: String? = null,
+    val linkedPurchaseTokenHash: String? = null,
     val acknowledgementState: BackendAcknowledgementState? = null,
 )
 
@@ -90,19 +91,16 @@ object EntitlementGrantPolicy {
     }
 
     fun nonGrantingStatusFor(inputs: EntitlementGrantInputs): BackendSubscriptionStatus {
-        if (inputs.acknowledgementState == BackendAcknowledgementState.Pending) {
-            return BackendSubscriptionStatus.VerificationPending
-        }
-        if (!inputs.ownershipVerified) {
-            return BackendSubscriptionStatus.VerificationPending
-        }
-        if (
-            inputs.status == BackendSubscriptionStatus.Active ||
+        val grantable = inputs.status == BackendSubscriptionStatus.Active ||
             inputs.status == BackendSubscriptionStatus.GracePeriod ||
             inputs.status == BackendSubscriptionStatus.CanceledActiveUntilExpiry
+        if (!grantable) return inputs.status
+        if (
+            inputs.acknowledgementState == BackendAcknowledgementState.Pending ||
+            !inputs.ownershipVerified
         ) {
-            return BackendSubscriptionStatus.Expired
+            return BackendSubscriptionStatus.VerificationPending
         }
-        return inputs.status
+        return BackendSubscriptionStatus.Expired
     }
 }

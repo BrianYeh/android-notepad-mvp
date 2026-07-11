@@ -459,6 +459,7 @@ class BillingVerificationOrchestrator(
                 purchaseTokenHash = purchaseTokenHash,
                 ownerGoogleSub = ownerGoogleSub,
                 now = now,
+                maxStaleMillis = config.entitlementMaxStaleMillis,
             )
         } catch (exception: CancellationException) {
             throw exception

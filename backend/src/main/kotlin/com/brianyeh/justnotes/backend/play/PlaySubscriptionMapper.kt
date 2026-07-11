@@ -77,6 +77,7 @@ object PlaySubscriptionMapper {
             expiryTime = primaryLineItem?.expiryTime,
             lastVerifiedAt = now,
             purchaseTokenHash = verification.purchaseTokenHash,
+            linkedPurchaseTokenHash = verification.linkedPurchaseTokenHash,
             acknowledgementState = acknowledgementState,
         )
     }
@@ -91,7 +92,7 @@ object PlaySubscriptionMapper {
             PlaySubscriptionState.SUBSCRIPTION_STATE_EXPIRED -> BackendSubscriptionStatus.Expired
             PlaySubscriptionState.REVOKED -> BackendSubscriptionStatus.Revoked
             PlaySubscriptionState.SUBSCRIPTION_STATE_PENDING -> BackendSubscriptionStatus.PendingPurchase
-            PlaySubscriptionState.PENDING_PURCHASE_CANCELED -> BackendSubscriptionStatus.VerificationPending
+            PlaySubscriptionState.PENDING_PURCHASE_CANCELED -> BackendSubscriptionStatus.Free
             PlaySubscriptionState.SUBSCRIPTION_STATE_UNSPECIFIED -> BackendSubscriptionStatus.Unknown
             PlaySubscriptionState.UNKNOWN -> BackendSubscriptionStatus.Unknown
         }

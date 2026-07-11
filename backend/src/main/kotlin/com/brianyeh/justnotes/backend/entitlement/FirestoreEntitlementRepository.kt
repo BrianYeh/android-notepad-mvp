@@ -38,6 +38,7 @@ interface FirestoreEntitlementDocumentStore {
         subscriptionDocumentId: String,
         ownerGoogleSub: String,
         now: Long,
+        maxStaleMillis: Long,
     ): EntitlementReconciliationResult
 }
 
@@ -204,6 +205,7 @@ class GoogleCloudFirestoreEntitlementDocumentStore(
         subscriptionDocumentId: String,
         ownerGoogleSub: String,
         now: Long,
+        maxStaleMillis: Long,
     ): EntitlementReconciliationResult {
         return withContext(Dispatchers.IO) {
             val subscriptionReference = firestore.collection(SUBSCRIPTIONS_COLLECTION).document(subscriptionDocumentId)
@@ -218,7 +220,12 @@ class GoogleCloudFirestoreEntitlementDocumentStore(
                 val entitlementSnapshot = transaction.get(entitlementReference).get()
                 val existing = entitlementSnapshot.data?.let(::entitlementRecordFromFirestore)
                 val candidate = subscription.toEntitlementRecord(now)
-                val effective = selectReconciledEntitlement(existing, candidate, now)
+                val effective = selectReconciledEntitlementRecord(
+                    existing = existing,
+                    candidate = candidate,
+                    now = now,
+                    maxStaleMillis = maxStaleMillis,
+                )
                 if (!entitlementSnapshot.exists() || effective != existing) {
                     transaction.set(entitlementReference, effective.toFirestoreFields())
                 }
@@ -475,12 +482,14 @@ class FirestoreEntitlementRepository(
         purchaseTokenHash: String,
         ownerGoogleSub: String,
         now: Long,
+        maxStaleMillis: Long,
     ): EntitlementReconciliationResult {
         return store.reconcileEntitlementFromSubscription(
             entitlementDocumentId = safeDocumentId(ownerGoogleSub, "Google subject"),
             subscriptionDocumentId = safeDocumentId(purchaseTokenHash, "Purchase token hash"),
             ownerGoogleSub = ownerGoogleSub,
             now = now,
+            maxStaleMillis = maxStaleMillis,
         )
     }
 
@@ -498,6 +507,7 @@ class FirestoreEntitlementRepository(
             "lastVerifiedAt" to lastVerifiedAt,
             "stale" to stale,
             "purchaseTokenHash" to purchaseTokenHash,
+            "linkedPurchaseTokenHash" to linkedPurchaseTokenHash,
             "acknowledgementState" to acknowledgementState?.name,
         )
     }
@@ -543,6 +553,7 @@ class FirestoreEntitlementRepository(
             lastVerifiedAt = long("lastVerifiedAt"),
             stale = this["stale"] as? Boolean ?: false,
             purchaseTokenHash = string("purchaseTokenHash"),
+            linkedPurchaseTokenHash = string("linkedPurchaseTokenHash"),
             acknowledgementState = enumValueOrNull<BackendAcknowledgementState>(string("acknowledgementState")),
         )
     }
@@ -668,6 +679,7 @@ private fun entitlementRecordFromFirestore(fields: Map<String, Any?>): Entitleme
         lastVerifiedAt = fields.firestoreLong("lastVerifiedAt"),
         stale = fields["stale"] as? Boolean ?: false,
         purchaseTokenHash = fields.firestoreString("purchaseTokenHash"),
+        linkedPurchaseTokenHash = fields.firestoreString("linkedPurchaseTokenHash"),
         acknowledgementState = firestoreEnumOrNull<BackendAcknowledgementState>(
             fields.firestoreString("acknowledgementState"),
         ),
@@ -688,6 +700,7 @@ private fun EntitlementRecord.toFirestoreFields(): Map<String, Any?> {
         "lastVerifiedAt" to lastVerifiedAt,
         "stale" to stale,
         "purchaseTokenHash" to purchaseTokenHash,
+        "linkedPurchaseTokenHash" to linkedPurchaseTokenHash,
         "acknowledgementState" to acknowledgementState?.name,
     )
 }
@@ -732,29 +745,9 @@ private fun SubscriptionRecord.toEntitlementRecord(now: Long): EntitlementRecord
         lastVerifiedAt = lastVerifiedAt,
         stale = false,
         purchaseTokenHash = purchaseTokenHash,
+        linkedPurchaseTokenHash = linkedPurchaseTokenHash,
         acknowledgementState = acknowledgementState,
     )
-}
-
-private fun selectReconciledEntitlement(
-    existing: EntitlementRecord?,
-    candidate: EntitlementRecord,
-    now: Long,
-): EntitlementRecord {
-    if (existing == null) return candidate
-    val safeExisting = existing.failClosedAt(now)
-    check(safeExisting.googleSub == candidate.googleSub) {
-        "Firestore entitlement owner does not match its document ID."
-    }
-    if (safeExisting.purchaseTokenHash == candidate.purchaseTokenHash) return candidate
-    val existingVerifiedAt = safeExisting.lastVerifiedAt ?: Long.MIN_VALUE
-    val candidateVerifiedAt = candidate.lastVerifiedAt ?: Long.MIN_VALUE
-    return when {
-        candidateVerifiedAt > existingVerifiedAt -> candidate
-        candidateVerifiedAt < existingVerifiedAt -> safeExisting
-        candidate.hasPremium && !safeExisting.hasPremium -> safeExisting
-        else -> candidate
-    }
 }
 
 private fun BackendSubscriptionStatus.isGrantable(): Boolean {

@@ -215,9 +215,24 @@ class PlaySubscriptionMapperTest {
             mappedFromV2(PlaySubscriptionState.SUBSCRIPTION_STATE_PENDING).status,
         )
         assertEquals(
+            BackendSubscriptionStatus.Free,
+            mappedFromV2(PlaySubscriptionState.PENDING_PURCHASE_CANCELED).status,
+        )
+        assertEquals(
             BackendSubscriptionStatus.Unknown,
             mappedFromV2(PlaySubscriptionState.UNKNOWN).status,
         )
+    }
+
+    @Test
+    fun canceledPendingPurchaseRemainsTerminalWhenAcknowledgementIsPending() {
+        val record = mapped(
+            status = BackendSubscriptionStatus.Free,
+            acknowledgementState = "ACKNOWLEDGEMENT_STATE_PENDING",
+        )
+
+        assertEquals(BackendSubscriptionStatus.Free, record.status)
+        assertFalse(record.hasPremium)
     }
 
     private fun mapped(

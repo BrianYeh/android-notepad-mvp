@@ -970,5 +970,6 @@ private object EmptyRepository : EntitlementRepository {
         purchaseTokenHash: String,
         ownerGoogleSub: String,
         now: Long,
+        maxStaleMillis: Long,
     ): EntitlementReconciliationResult = EntitlementReconciliationResult.Missing
 }

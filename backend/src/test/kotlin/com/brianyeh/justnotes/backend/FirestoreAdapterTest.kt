@@ -400,6 +400,7 @@ class FirestoreAdapterTest {
             subscriptionDocumentId: String,
             ownerGoogleSub: String,
             now: Long,
+            maxStaleMillis: Long,
         ): EntitlementReconciliationResult {
             val subscription = subscriptionDocuments[subscriptionDocumentId]?.toSubscriptionRecord()
                 ?: return EntitlementReconciliationResult.Missing
@@ -410,6 +411,7 @@ class FirestoreAdapterTest {
                 entitlementDocuments[entitlementDocumentId]?.toEntitlementRecord(),
                 subscription.reconciledEntitlement(now),
                 now,
+                maxStaleMillis,
             )
             entitlementDocuments[entitlementDocumentId] = effective.toDocumentFields()
             return EntitlementReconciliationResult.Success(effective, subscription)
@@ -520,6 +522,7 @@ class FirestoreAdapterTest {
                 expiryTime = (this["expiryTime"] as? Number)?.toLong(),
                 lastVerifiedAt = (this["lastVerifiedAt"] as? Number)?.toLong(),
                 purchaseTokenHash = this["purchaseTokenHash"] as? String,
+                linkedPurchaseTokenHash = this["linkedPurchaseTokenHash"] as? String,
                 acknowledgementState = (this["acknowledgementState"] as? String)?.let {
                     enumValueOf<BackendAcknowledgementState>(it)
                 },
@@ -540,6 +543,7 @@ class FirestoreAdapterTest {
                 "lastVerifiedAt" to lastVerifiedAt,
                 "stale" to stale,
                 "purchaseTokenHash" to purchaseTokenHash,
+                "linkedPurchaseTokenHash" to linkedPurchaseTokenHash,
                 "acknowledgementState" to acknowledgementState?.name,
             )
         }

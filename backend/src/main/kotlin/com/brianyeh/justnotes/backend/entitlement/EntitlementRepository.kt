@@ -59,6 +59,7 @@ interface EntitlementRepository {
         purchaseTokenHash: String,
         ownerGoogleSub: String,
         now: Long,
+        maxStaleMillis: Long = Long.MAX_VALUE,
     ): EntitlementReconciliationResult
 }
 
@@ -147,6 +148,7 @@ internal fun SubscriptionRecord.reconciledEntitlement(now: Long): EntitlementRec
         lastVerifiedAt = lastVerifiedAt,
         stale = false,
         purchaseTokenHash = purchaseTokenHash,
+        linkedPurchaseTokenHash = linkedPurchaseTokenHash,
         acknowledgementState = acknowledgementState,
     )
 }
@@ -155,35 +157,84 @@ internal fun selectReconciledEntitlementRecord(
     existing: EntitlementRecord?,
     candidate: EntitlementRecord,
     now: Long,
+    maxStaleMillis: Long = Long.MAX_VALUE,
 ): EntitlementRecord {
-    if (existing == null) return candidate
-    val safeExisting = existing.failClosedAt(now)
-    require(safeExisting.googleSub == candidate.googleSub) { "Entitlement owners must match." }
-    if (safeExisting.purchaseTokenHash == candidate.purchaseTokenHash) return candidate
+    val safeCandidate = candidate.failClosedAt(now, maxStaleMillis)
+    if (existing == null) return safeCandidate
+    val safeExisting = existing.failClosedAt(now, maxStaleMillis)
+    require(safeExisting.googleSub == safeCandidate.googleSub) { "Entitlement owners must match." }
+    val existingTokenHash = safeExisting.purchaseTokenHash
+    val candidateTokenHash = safeCandidate.purchaseTokenHash
+    val sameToken = existingTokenHash != null && existingTokenHash == candidateTokenHash
+    val candidateIsSuccessor = safeCandidate.linkedPurchaseTokenHash != null &&
+        safeCandidate.linkedPurchaseTokenHash == existingTokenHash
+    val existingIsSuccessor = safeExisting.linkedPurchaseTokenHash != null &&
+        safeExisting.linkedPurchaseTokenHash == candidateTokenHash
     val existingVerifiedAt = safeExisting.lastVerifiedAt ?: Long.MIN_VALUE
-    val candidateVerifiedAt = candidate.lastVerifiedAt ?: Long.MIN_VALUE
+    val candidateVerifiedAt = safeCandidate.lastVerifiedAt ?: Long.MIN_VALUE
+    val candidateIsTerminalDenial = safeCandidate.status.isTerminalDenial()
+    val existingIsTerminalDenial = safeExisting.status.isTerminalDenial()
     return when {
-        candidateVerifiedAt > existingVerifiedAt -> candidate
+        sameToken -> selectEffectiveEntitlement(safeExisting, safeCandidate)
+        existingIsTerminalDenial && safeCandidate.status.isTransientReplacement() -> safeExisting
+        candidateIsTerminalDenial && safeExisting.status.isTransientReplacement() -> safeCandidate
+        existingIsSuccessor && safeExisting.status.isTransientReplacement() && safeCandidate.hasPremium ->
+            safeCandidate
+        existingIsSuccessor -> safeExisting
+        candidateIsSuccessor && safeCandidate.status.isTransientReplacement() && safeExisting.hasPremium ->
+            safeExisting
+        candidateIsSuccessor -> safeCandidate
+        safeExisting.hasPremium && !safeCandidate.hasPremium && !candidateIsTerminalDenial -> safeExisting
+        safeExisting.status.isTransientReplacement() && safeCandidate.hasPremium -> safeCandidate
+        candidateVerifiedAt > existingVerifiedAt -> safeCandidate
         candidateVerifiedAt < existingVerifiedAt -> safeExisting
-        candidate.hasPremium && !safeExisting.hasPremium -> safeExisting
-        else -> candidate
+        candidateIsTerminalDenial && safeExisting.hasPremium -> safeCandidate
+        existingIsTerminalDenial && safeCandidate.hasPremium -> safeExisting
+        else -> safeCandidate
     }
 }
 
-internal fun EntitlementRecord.failClosedAt(now: Long): EntitlementRecord {
+private fun BackendSubscriptionStatus.isTransientReplacement(): Boolean {
+    return this == BackendSubscriptionStatus.Free ||
+        this == BackendSubscriptionStatus.PendingPurchase ||
+        this == BackendSubscriptionStatus.VerificationPending ||
+        this == BackendSubscriptionStatus.Unknown
+}
+
+private fun BackendSubscriptionStatus.isTerminalDenial(): Boolean {
+    return this == BackendSubscriptionStatus.Revoked ||
+        this == BackendSubscriptionStatus.Expired ||
+        this == BackendSubscriptionStatus.OnHold ||
+        this == BackendSubscriptionStatus.Paused
+}
+
+internal fun EntitlementRecord.failClosedAt(
+    now: Long,
+    maxStaleMillis: Long = Long.MAX_VALUE,
+): EntitlementRecord {
     if (!hasPremium) return this
     val grantable = status == BackendSubscriptionStatus.Active ||
         status == BackendSubscriptionStatus.GracePeriod ||
         status == BackendSubscriptionStatus.CanceledActiveUntilExpiry
     val unexpired = expiryTime?.let { it > now } == true
     val acknowledged = acknowledgementState == BackendAcknowledgementState.Acknowledged
-    if (source == BackendEntitlementSource.BackendVerified && grantable && unexpired && acknowledged) {
+    val withinMaxStale = lastVerifiedAt?.let { verifiedAt ->
+        verifiedAt > now || now - verifiedAt <= maxStaleMillis
+    } == true
+    if (
+        source == BackendEntitlementSource.BackendVerified &&
+        grantable &&
+        unexpired &&
+        acknowledged &&
+        withinMaxStale
+    ) {
         return this
     }
     return copy(
         hasPremium = false,
         status = when {
             grantable && !unexpired -> BackendSubscriptionStatus.Expired
+            !withinMaxStale -> BackendSubscriptionStatus.Unknown
             grantable -> BackendSubscriptionStatus.VerificationPending
             else -> status
         },
