@@ -9,6 +9,9 @@ import com.brianyeh.justnotes.backend.play.GooglePlaySubscriptionAcknowledger
 import com.brianyeh.justnotes.backend.play.GooglePlaySubscriptionVerifier
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionAcknowledger
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerifier
+import com.brianyeh.justnotes.backend.rtdn.FirestoreRtdnEventRepository
+import com.brianyeh.justnotes.backend.rtdn.GoogleCloudFirestoreRtdnEventDocumentStore
+import com.brianyeh.justnotes.backend.rtdn.RtdnEventRepository
 import com.brianyeh.justnotes.backend.security.CachingSecretManagerSecretValueProvider
 import com.brianyeh.justnotes.backend.security.GoogleCloudKmsGateway
 import com.brianyeh.justnotes.backend.security.GoogleCloudSecretManagerGateway
@@ -38,6 +41,7 @@ class ProductionBackendDependencies private constructor(
     val obfuscatedAccountIdDeriver: ObfuscatedAccountIdDeriver,
     val purchaseTokenCipher: PurchaseTokenCipher,
     val emailHashSecretProvider: SecretValueProvider,
+    val rtdnEventRepository: RtdnEventRepository,
     private val firestore: Firestore,
     private val secretManagerClient: SecretManagerServiceClient,
     private val kmsClient: KeyManagementServiceClient,
@@ -96,6 +100,10 @@ class ProductionBackendDependencies private constructor(
                         gateway = GoogleCloudKmsGateway(kmsClient),
                     ),
                     emailHashSecretProvider = emailHashSecretProvider,
+                    rtdnEventRepository = FirestoreRtdnEventRepository(
+                        store = GoogleCloudFirestoreRtdnEventDocumentStore(firestore),
+                        ttlDays = config.rtdnEventTtlDays,
+                    ),
                     firestore = firestore,
                     secretManagerClient = secretManagerClient,
                     kmsClient = kmsClient,

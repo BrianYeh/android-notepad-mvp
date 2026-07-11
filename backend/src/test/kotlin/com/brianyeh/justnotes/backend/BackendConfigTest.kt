@@ -3,9 +3,11 @@ package com.brianyeh.justnotes.backend
 import com.brianyeh.justnotes.backend.config.BackendConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 
 class BackendConfigTest {
     @Test
@@ -137,6 +139,47 @@ class BackendConfigTest {
         assertTrue(
             uuidDatabase.validateForProductionAdapters().any { it.contains("Firestore database ID") },
         )
+    }
+
+    @Test
+    fun rtdnConfigIsDisabledByDefaultAndValidatesExactPrivatePushSettings() {
+        val disabled = BackendConfig.fromEnvironment(emptyMap())
+        val enabled = BackendConfig.fromEnvironment(
+            mapOf(
+                "RTDN_ENABLED" to "true",
+                "RTDN_EXPECTED_SUBSCRIPTION" to
+                    "projects/gen-lang-client-0599059254/subscriptions/just-notes-rtdn-push-dev",
+                "RTDN_EVENT_TTL_DAYS" to "30",
+                "RTDN_PROCESSING_LEASE_SECONDS" to "60",
+            ),
+        )
+
+        assertFalse(disabled.rtdnEnabled)
+        assertEquals(emptyList(), disabled.validateForRtdn())
+        assertTrue(enabled.rtdnEnabled)
+        assertEquals(emptyList(), enabled.validateForRtdn())
+        assertEquals(30, enabled.rtdnEventTtlDays)
+        assertEquals(60, enabled.rtdnProcessingLeaseSeconds)
+    }
+
+    @Test
+    fun enabledRtdnFailsClosedForMissingOrMalformedValues() {
+        val missing = BackendConfig.fromEnvironment(mapOf("RTDN_ENABLED" to "true"))
+        val malformed = BackendConfig.fromEnvironment(
+            mapOf(
+                "RTDN_ENABLED" to "true",
+                "RTDN_EXPECTED_SUBSCRIPTION" to "wrong",
+            ),
+        )
+
+        assertTrue(missing.validateForRtdn().any { it.contains("subscription") })
+        assertTrue(malformed.validateForRtdn().any { it.contains("subscription") })
+        assertFailsWith<IllegalArgumentException> {
+            BackendConfig.fromEnvironment(mapOf("RTDN_ENABLED" to "yes"))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            BackendConfig.fromEnvironment(mapOf("RTDN_EVENT_TTL_DAYS" to "0"))
+        }
     }
 
     private fun productionEnvironment(): Map<String, String> {

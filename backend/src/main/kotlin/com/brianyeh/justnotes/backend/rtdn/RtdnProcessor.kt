@@ -27,6 +27,10 @@ sealed class RtdnProcessResult {
     ) : RtdnProcessResult()
 }
 
+fun interface RtdnNotificationProcessor {
+    suspend fun process(envelope: RtdnEnvelope, notification: RtdnNotification): RtdnProcessResult
+}
+
 class RtdnProcessor(
     private val config: BackendConfig,
     private val eventRepository: RtdnEventRepository,
@@ -37,13 +41,13 @@ class RtdnProcessor(
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val processingLeaseMillis: Long = DEFAULT_PROCESSING_LEASE_MILLIS,
     private val retryDelayMillis: Long = DEFAULT_RETRY_DELAY_MILLIS,
-) {
+) : RtdnNotificationProcessor {
     init {
         require(processingLeaseMillis > 0L) { "RTDN processing lease must be positive." }
         require(retryDelayMillis > 0L) { "RTDN retry delay must be positive." }
     }
 
-    suspend fun process(envelope: RtdnEnvelope, notification: RtdnNotification): RtdnProcessResult {
+    override suspend fun process(envelope: RtdnEnvelope, notification: RtdnNotification): RtdnProcessResult {
         val now = nowMillis()
         val messageIdHash = sha256UrlSafe(envelope.messageId)
         val claim = try {

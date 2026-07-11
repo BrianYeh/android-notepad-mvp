@@ -16,6 +16,10 @@ import com.brianyeh.justnotes.backend.entitlement.BackendSubscriptionStatus
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRecord
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRepository
 import com.brianyeh.justnotes.backend.security.ObfuscatedAccountIdDeriver
+import com.brianyeh.justnotes.backend.rtdn.RtdnJson
+import com.brianyeh.justnotes.backend.rtdn.RtdnNotificationProcessor
+import com.brianyeh.justnotes.backend.rtdn.RtdnParseResult
+import com.brianyeh.justnotes.backend.rtdn.RtdnProcessResult
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -39,6 +43,7 @@ fun Application.justNotesRoutes(
     entitlementRepository: EntitlementRepository,
     billingVerificationOrchestrator: BillingVerificationOrchestrator,
     obfuscatedAccountIdDeriver: ObfuscatedAccountIdDeriver,
+    rtdnProcessor: RtdnNotificationProcessor? = null,
     clock: () -> Long = System::currentTimeMillis,
 ) {
     routing {
@@ -143,14 +148,86 @@ fun Application.justNotesRoutes(
             )
         }
 
+    }
+    justNotesRtdnRoutes(config, rtdnProcessor)
+}
+
+fun Application.justNotesRtdnRoutes(
+    config: BackendConfig,
+    rtdnProcessor: RtdnNotificationProcessor?,
+) {
+    routing {
         post("/v1/play/rtdn") {
-            call.respondText(
-                """{"error":"rtdn_not_enabled"}""",
-                status = HttpStatusCode.NotImplemented,
-                contentType = io.ktor.http.ContentType.Application.Json,
-            )
+            call.response.headers.append(HttpHeaders.CacheControl, NO_STORE)
+            if (!config.rtdnEnabled) {
+                call.respondText(
+                    """{"error":"rtdn_not_enabled"}""",
+                    status = HttpStatusCode.NotImplemented,
+                    contentType = ContentType.Application.Json,
+                )
+                return@post
+            }
+            val requestContentType = runCatching { call.request.contentType() }.getOrNull()
+            if (
+                requestContentType == null ||
+                requestContentType == ContentType.Any ||
+                !requestContentType.match(ContentType.Application.Json)
+            ) {
+                call.respondRtdnError(HttpStatusCode.BadRequest, "invalid_envelope")
+                return@post
+            }
+            val body = call.receiveUtf8BodyWithinLimit(RtdnJson.MAX_HTTP_BODY_BYTES)
+            if (body == null) {
+                call.respondRtdnError(HttpStatusCode.BadRequest, "invalid_envelope")
+                return@post
+            }
+            when (
+                val parsed = RtdnJson.parse(
+                    body = body,
+                    expectedPackageName = config.allowedPackageName,
+                    expectedSubscription = requireNotNull(config.rtdnExpectedSubscription),
+                )
+            ) {
+                is RtdnParseResult.Failure ->
+                    call.respondRtdnError(HttpStatusCode.BadRequest, parsed.errorCode.name.lowercase())
+                is RtdnParseResult.Ignored ->
+                    call.respondText("", status = HttpStatusCode.NoContent)
+                is RtdnParseResult.Success -> {
+                    val result = try {
+                        requireNotNull(rtdnProcessor).process(parsed.envelope, parsed.notification)
+                    } catch (exception: CancellationException) {
+                        throw exception
+                    } catch (_: Exception) {
+                        call.respondRtdnError(HttpStatusCode.InternalServerError, "internal_error")
+                        return@post
+                    }
+                    when (result) {
+                        is RtdnProcessResult.Completed,
+                        is RtdnProcessResult.Ignored,
+                        -> call.respondText("", status = HttpStatusCode.NoContent)
+                        is RtdnProcessResult.RetryableFailure -> {
+                            call.response.headers.append(
+                                HttpHeaders.RetryAfter,
+                                result.retryAfterSeconds.toString(),
+                            )
+                            call.respondRtdnError(
+                                HttpStatusCode.ServiceUnavailable,
+                                result.errorCode.name.lowercase(),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+private suspend fun ApplicationCall.respondRtdnError(status: HttpStatusCode, code: String) {
+    respondText(
+        """{"error":"${json(code)}"}""",
+        status = status,
+        contentType = ContentType.Application.Json,
+    )
 }
 
 private suspend fun ApplicationCall.authenticatedIdentity(

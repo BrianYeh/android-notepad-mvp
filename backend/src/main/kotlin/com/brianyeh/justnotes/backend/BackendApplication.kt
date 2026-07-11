@@ -6,6 +6,7 @@ import com.brianyeh.justnotes.backend.billing.BillingVerificationOrchestrator
 import com.brianyeh.justnotes.backend.config.BackendConfig
 import com.brianyeh.justnotes.backend.entitlement.PurchaseOwnershipValidator
 import com.brianyeh.justnotes.backend.routes.justNotesRoutes
+import com.brianyeh.justnotes.backend.rtdn.RtdnProcessor
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.engine.embeddedServer
@@ -24,6 +25,8 @@ fun Application.justNotesBackendModule(
     config: BackendConfig = BackendConfig.fromEnvironment(),
     dependencies: ProductionBackendDependencies = ProductionBackendDependencies.create(config),
 ) {
+    val rtdnErrors = config.validateForRtdn()
+    require(rtdnErrors.isEmpty()) { rtdnErrors.joinToString(separator = " ") }
     environment.monitor.subscribe(ApplicationStopped) {
         dependencies.close()
     }
@@ -36,12 +39,26 @@ fun Application.justNotesBackendModule(
         ownershipValidator = purchaseOwnershipValidator,
         purchaseTokenCipher = dependencies.purchaseTokenCipher,
     )
+    val rtdnProcessor = if (config.rtdnEnabled) {
+        RtdnProcessor(
+            config = config,
+            eventRepository = dependencies.rtdnEventRepository,
+            entitlementRepository = dependencies.entitlementRepository,
+            tokenHasher = dependencies.purchaseTokenHasher,
+            tokenCipher = dependencies.purchaseTokenCipher,
+            playVerifier = dependencies.playSubscriptionVerifier,
+            processingLeaseMillis = config.rtdnProcessingLeaseSeconds * 1_000L,
+        )
+    } else {
+        null
+    }
     justNotesRoutes(
         config = config,
         idTokenVerifier = productionGoogleIdTokenVerifier(config),
         entitlementRepository = dependencies.entitlementRepository,
         billingVerificationOrchestrator = billingVerificationOrchestrator,
         obfuscatedAccountIdDeriver = dependencies.obfuscatedAccountIdDeriver,
+        rtdnProcessor = rtdnProcessor,
     )
 }
 
