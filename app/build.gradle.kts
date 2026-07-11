@@ -70,6 +70,17 @@ val googleWebClientId = providers
     .map { it.normalizedGoogleWebClientId() }
     .orElse("")
 
+val uploadStoreFile = providers.gradleProperty("justNotes.uploadStoreFile")
+val uploadStorePassword = providers.gradleProperty("justNotes.uploadStorePassword")
+val uploadKeyAlias = providers.gradleProperty("justNotes.uploadKeyAlias")
+val uploadKeyPassword = providers.gradleProperty("justNotes.uploadKeyPassword")
+val uploadSigningConfigured = listOf(
+    uploadStoreFile,
+    uploadStorePassword,
+    uploadKeyAlias,
+    uploadKeyPassword,
+).all { it.isPresent }
+
 android {
     namespace = "com.example.notepad"
     compileSdk = 35
@@ -87,6 +98,17 @@ android {
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", googleWebClientId.quotedBuildConfigString())
     }
 
+    signingConfigs {
+        if (uploadSigningConfigured) {
+            create("releaseUpload") {
+                storeFile = file(uploadStoreFile.get())
+                storePassword = uploadStorePassword.get()
+                keyAlias = uploadKeyAlias.get()
+                keyPassword = uploadKeyPassword.get()
+            }
+        }
+    }
+
     buildTypes {
         debug {
             buildConfigField("boolean", "ENABLE_BACKEND_PURCHASE_FLOW", enableBackendPurchaseFlow.get())
@@ -97,6 +119,9 @@ android {
             )
         }
         release {
+            if (uploadSigningConfigured) {
+                signingConfig = signingConfigs.getByName("releaseUpload")
+            }
             buildConfigField("boolean", "ENABLE_BACKEND_PURCHASE_FLOW", enableBackendPurchaseFlow.get())
             buildConfigField("boolean", "ALLOW_CLIENT_ONLY_BILLING_ENTITLEMENT", "false")
             isMinifyEnabled = false
@@ -127,6 +152,14 @@ android {
                 "META-INF/INDEX.LIST",
                 "META-INF/io.netty.versions.properties",
             )
+        }
+    }
+}
+
+tasks.matching { it.name == "bundleRelease" }.configureEach {
+    doFirst {
+        require(uploadSigningConfigured) {
+            "Release upload signing properties are required for bundleRelease."
         }
     }
 }
