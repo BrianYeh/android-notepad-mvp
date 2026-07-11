@@ -219,6 +219,20 @@ class RtdnProcessorTest {
         )
     }
 
+    @Test
+    fun playObservationTimestampIsCapturedBeforeSlowVerificationCompletes() = runBlocking {
+        var now = NOW
+        val scenario = Scenario(
+            nowMillis = { now },
+            onVerify = { now += 5_000L },
+        )
+        scenario.seedSubscription()
+
+        scenario.processor.process(envelope(), notification())
+
+        assertEquals(NOW, scenario.repository.getSubscription(TOKEN_HASH)?.lastVerifiedAt)
+    }
+
     private class Scenario(
         playResult: PlaySubscriptionVerificationResult = successVerification(),
         claimResult: RtdnClaimResult = RtdnClaimResult.Claimed(1),
@@ -226,10 +240,12 @@ class RtdnProcessorTest {
         decryptedHash: String = TOKEN_HASH,
         decryptFailure: Boolean = false,
         releaseFailure: Boolean = false,
+        nowMillis: () -> Long = { NOW },
+        onVerify: () -> Unit = {},
     ) {
         val repository = InMemoryEntitlementRepository()
         val events = RecordingEventRepository(claimResult, releaseFailure)
-        val verifier = RecordingVerifier(playResult)
+        val verifier = RecordingVerifier(playResult, onVerify)
         val cipher = RecordingCipher(decryptedToken, decryptFailure)
         private val hasher = object : PurchaseTokenHasher {
             override fun hashPurchaseToken(purchaseToken: String) =
@@ -246,7 +262,7 @@ class RtdnProcessorTest {
             tokenHasher = hasher,
             tokenCipher = cipher,
             playVerifier = verifier,
-            nowMillis = { NOW },
+            nowMillis = nowMillis,
         )
 
         suspend fun seedSubscription(status: BackendSubscriptionStatus = BackendSubscriptionStatus.Active) {
@@ -310,11 +326,13 @@ class RtdnProcessorTest {
 
     private class RecordingVerifier(
         private val result: PlaySubscriptionVerificationResult,
+        private val onVerify: () -> Unit,
     ) : PlaySubscriptionVerifier {
         val tokens = mutableListOf<String>()
 
         override suspend fun verify(packageName: String, purchaseToken: String): PlaySubscriptionVerificationResult {
             tokens += purchaseToken
+            onVerify()
             return result
         }
     }

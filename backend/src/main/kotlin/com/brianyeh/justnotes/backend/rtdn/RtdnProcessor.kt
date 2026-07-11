@@ -91,6 +91,7 @@ class RtdnProcessor(
                 return release(messageIdHash, generation, RtdnErrorCode.INTERNAL_ERROR)
             }
 
+            val playObservedAt = nowMillis()
             when (val playResult = playVerifier.verify(config.allowedPackageName, decrypted)) {
                 is PlaySubscriptionVerificationResult.Failure -> {
                     if (playResult.code == PlayVerificationFailureCode.INVALID_INPUT) {
@@ -104,6 +105,7 @@ class RtdnProcessor(
                     generation = generation,
                     existing = existing,
                     verification = playResult.verification,
+                    playObservedAt = playObservedAt,
                 )
             }
         } catch (exception: CancellationException) {
@@ -118,6 +120,7 @@ class RtdnProcessor(
         generation: Long,
         existing: SubscriptionRecord,
         verification: PlaySubscriptionVerification,
+        playObservedAt: Long,
     ): RtdnProcessResult {
         val lineItem = verification.lineItems.singleOrNull()
         if (
@@ -169,7 +172,7 @@ class RtdnProcessor(
             } else {
                 existing.lastAcknowledgementErrorCode
             },
-            lastVerifiedAt = nowMillis(),
+            lastVerifiedAt = playObservedAt,
             status = effectiveStatus,
             expiryTime = lineItem.expiryTime,
         )
