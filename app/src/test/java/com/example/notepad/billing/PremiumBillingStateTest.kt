@@ -1,11 +1,188 @@
 package com.example.notepad.billing
 
+import com.android.billingclient.api.BillingClient
+import com.android.billingclient.api.Purchase
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PremiumBillingStateTest {
+    @Test
+    fun obfuscatedAccountIdAcceptsOnlyPlaySafeOneTo64CharacterValues() {
+        assertTrue(isValidObfuscatedExternalAccountId("a"))
+        assertTrue(isValidObfuscatedExternalAccountId("A_z-9"))
+        assertTrue(isValidObfuscatedExternalAccountId("x".repeat(64)))
+        assertFalse(isValidObfuscatedExternalAccountId(""))
+        assertFalse(isValidObfuscatedExternalAccountId("x".repeat(65)))
+        assertFalse(isValidObfuscatedExternalAccountId("contains space"))
+        assertFalse(isValidObfuscatedExternalAccountId("contains+plus"))
+    }
+
+    @Test
+    fun backendPurchaseLaunchRequiresEveryBackendAndBillingPrerequisite() {
+        val ready = PremiumBillingState(
+            billingAvailable = true,
+            backendPurchaseReady = true,
+            loading = false,
+        )
+
+        assertTrue(ready.canLaunchPurchase(enableBackendPurchaseFlow = true))
+        assertFalse(ready.copy(backendPurchaseReady = false).canLaunchPurchase(true))
+        assertFalse(ready.copy(billingAvailable = false).canLaunchPurchase(true))
+        assertFalse(ready.copy(purchaseLaunching = true).canLaunchPurchase(true))
+        assertFalse(ready.copy(purchaseVerificationInFlight = true).canLaunchPurchase(true))
+        assertFalse(ready.canLaunchPurchase(enableBackendPurchaseFlow = false))
+    }
+
+    @Test
+    fun pendingAndVerificationPendingSubscriptionsBlockAnotherLaunch() {
+        val ready = PremiumBillingState(billingAvailable = true, backendPurchaseReady = true)
+
+        assertFalse(
+            ready.copy(
+                subscription = PremiumSubscriptionSnapshot(status = PremiumSubscriptionStatus.PendingPurchase),
+            ).canLaunchPurchase(true),
+        )
+        assertFalse(
+            ready.copy(
+                subscription = PremiumSubscriptionSnapshot(status = PremiumSubscriptionStatus.VerificationPending),
+            ).canLaunchPurchase(true),
+        )
+    }
+
+    @Test
+    fun purchasedCallbackEmitsBufferedCandidateWithLaunchMetadata() = runBlocking {
+        val channel = Channel<BackendPurchaseCandidate>(Channel.BUFFERED)
+        val emitted = emitBackendPurchaseCandidates(
+            channel = channel,
+            responseCode = BillingClient.BillingResponseCode.OK,
+            purchases = listOf(purchaseObservation()),
+            launchMetadata = PendingLaunchMetadata(
+                productId = PremiumCatalog.PREFERRED_PRODUCT_ID,
+                basePlanId = "monthly",
+                offerId = "trial10d",
+            ),
+            isRestore = false,
+            appVersion = "1.0.7",
+            versionCode = 5L,
+            deviceLocale = "zh-TW",
+        )
+
+        assertEquals(1, emitted)
+        val candidate = channel.receive()
+        assertEquals(RAW_TOKEN, candidate.purchaseToken)
+        assertEquals("monthly", candidate.basePlanId)
+        assertEquals("trial10d", candidate.offerId)
+    }
+
+    @Test
+    fun pendingAndCanceledUpdatesEmitNoVerificationCandidate() {
+        val channel = Channel<BackendPurchaseCandidate>(Channel.BUFFERED)
+        val pending = emitBackendPurchaseCandidates(
+            channel = channel,
+            responseCode = BillingClient.BillingResponseCode.OK,
+            purchases = listOf(purchaseObservation(state = Purchase.PurchaseState.PENDING)),
+            launchMetadata = null,
+            isRestore = false,
+            appVersion = "1.0.7",
+            versionCode = 5L,
+            deviceLocale = "zh-TW",
+        )
+        val canceled = emitBackendPurchaseCandidates(
+            channel = channel,
+            responseCode = BillingClient.BillingResponseCode.USER_CANCELED,
+            purchases = listOf(purchaseObservation()),
+            launchMetadata = null,
+            isRestore = false,
+            appVersion = "1.0.7",
+            versionCode = 5L,
+            deviceLocale = "zh-TW",
+        )
+
+        assertEquals(0, pending)
+        assertEquals(0, canceled)
+        assertTrue(channel.tryReceive().isFailure)
+    }
+
+    @Test
+    fun duplicateCallbacksMayEmitAgainAndRestoreUsesNullPlanHints() = runBlocking {
+        val channel = Channel<BackendPurchaseCandidate>(Channel.BUFFERED)
+        val metadata = PendingLaunchMetadata(
+            productId = PremiumCatalog.PREFERRED_PRODUCT_ID,
+            basePlanId = "monthly",
+            offerId = "trial10d",
+        )
+
+        repeat(2) {
+            assertEquals(
+                1,
+                emitBackendPurchaseCandidates(
+                    channel = channel,
+                    responseCode = BillingClient.BillingResponseCode.OK,
+                    purchases = listOf(purchaseObservation()),
+                    launchMetadata = metadata,
+                    isRestore = false,
+                    appVersion = "1.0.7",
+                    versionCode = 5L,
+                    deviceLocale = "zh-TW",
+                ),
+            )
+        }
+        assertEquals(RAW_TOKEN, channel.receive().purchaseToken)
+        assertEquals(RAW_TOKEN, channel.receive().purchaseToken)
+
+        assertEquals(
+            1,
+            emitBackendPurchaseCandidates(
+                channel = channel,
+                responseCode = BillingClient.BillingResponseCode.OK,
+                purchases = listOf(purchaseObservation()),
+                launchMetadata = metadata,
+                isRestore = true,
+                appVersion = "1.0.7",
+                versionCode = 5L,
+                deviceLocale = "zh-TW",
+            ),
+        )
+        val restored = channel.receive()
+        assertEquals(null, restored.basePlanId)
+        assertEquals(null, restored.offerId)
+    }
+
+    @Test
+    fun oneCallbackAppliesLaunchMetadataToOnlyTheNewestMatchingPurchase() = runBlocking {
+        val channel = Channel<BackendPurchaseCandidate>(Channel.BUFFERED)
+
+        assertEquals(
+            2,
+            emitBackendPurchaseCandidates(
+                channel = channel,
+                responseCode = BillingClient.BillingResponseCode.OK,
+                purchases = listOf(
+                    purchaseObservation(token = "older-token", purchaseTime = 100L),
+                    purchaseObservation(token = "newer-token", purchaseTime = 200L),
+                ),
+                launchMetadata = PendingLaunchMetadata(
+                    productId = PremiumCatalog.PREFERRED_PRODUCT_ID,
+                    basePlanId = "monthly",
+                    offerId = "trial10d",
+                ),
+                isRestore = false,
+                appVersion = "1.0.7",
+                versionCode = 5L,
+                deviceLocale = "zh-TW",
+            ),
+        )
+        val candidates = listOf(channel.receive(), channel.receive()).associateBy { it.purchaseToken }
+
+        assertEquals(null, candidates.getValue("older-token").basePlanId)
+        assertEquals("monthly", candidates.getValue("newer-token").basePlanId)
+        assertEquals("trial10d", candidates.getValue("newer-token").offerId)
+    }
+
     @Test
     fun hasPremiumAccessDefaultsToFalse() {
         assertFalse(PremiumBillingState().hasPremiumAccess)
@@ -18,6 +195,7 @@ class PremiumBillingStateTest {
                 status = PremiumSubscriptionStatus.Active,
                 source = PremiumEntitlementSource.BackendVerified,
                 expiryTime = System.currentTimeMillis() + 60_000L,
+                acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
             ),
         )
 
@@ -31,6 +209,7 @@ class PremiumBillingStateTest {
                 status = PremiumSubscriptionStatus.GracePeriod,
                 source = PremiumEntitlementSource.BackendVerified,
                 expiryTime = System.currentTimeMillis() + 60_000L,
+                acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
             ),
         )
 
@@ -44,10 +223,72 @@ class PremiumBillingStateTest {
                 status = PremiumSubscriptionStatus.Active,
                 source = PremiumEntitlementSource.BackendVerified,
                 expiryTime = System.currentTimeMillis() - 1_000L,
+                acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
             ),
         )
 
         assertFalse(state.hasPremiumAccess)
+    }
+
+    @Test
+    fun backendVerifiedGrantableStatesRequireAcknowledgement() {
+        val grantableStatuses = listOf(
+            PremiumSubscriptionStatus.Active,
+            PremiumSubscriptionStatus.GracePeriod,
+        )
+        val unacknowledgedStatuses = listOf(
+            PremiumAcknowledgementStatus.Pending,
+            PremiumAcknowledgementStatus.Failed,
+            PremiumAcknowledgementStatus.Unknown,
+            PremiumAcknowledgementStatus.NotRequired,
+        )
+
+        grantableStatuses.forEach { status ->
+            unacknowledgedStatuses.forEach { acknowledgementStatus ->
+                val subscription = PremiumSubscriptionSnapshot(
+                    status = status,
+                    source = PremiumEntitlementSource.BackendVerified,
+                    expiryTime = System.currentTimeMillis() + 60_000L,
+                    acknowledgementStatus = acknowledgementStatus,
+                )
+
+                assertFalse(
+                    "$status with $acknowledgementStatus must fail closed",
+                    subscription.hasPremiumAccess(allowClientObservedAccess = false),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun canceledActiveUntilExpiryGrantsOnlyWhileAcknowledgedAndUnexpired() {
+        val now = System.currentTimeMillis()
+        val acknowledged = PremiumSubscriptionSnapshot(
+            status = PremiumSubscriptionStatus.CanceledActiveUntilExpiry,
+            source = PremiumEntitlementSource.BackendVerified,
+            expiryTime = now + 60_000L,
+            acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
+        )
+        val expired = acknowledged.copy(expiryTime = now - 1L)
+        val pending = acknowledged.copy(
+            acknowledgementStatus = PremiumAcknowledgementStatus.Pending,
+        )
+
+        assertTrue(acknowledged.hasPremiumAccess(allowClientObservedAccess = false, now = now))
+        assertFalse(expired.hasPremiumAccess(allowClientObservedAccess = false, now = now))
+        assertFalse(pending.hasPremiumAccess(allowClientObservedAccess = false, now = now))
+    }
+
+    @Test
+    fun pausedBackendVerifiedSubscriptionDoesNotGrantPremium() {
+        val subscription = PremiumSubscriptionSnapshot(
+            status = PremiumSubscriptionStatus.Paused,
+            source = PremiumEntitlementSource.BackendVerified,
+            expiryTime = System.currentTimeMillis() + 60_000L,
+            acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
+        )
+
+        assertFalse(subscription.hasPremiumAccess(allowClientObservedAccess = false))
     }
 
     @Test
@@ -203,7 +444,7 @@ class PremiumBillingStateTest {
     }
 
     @Test
-    fun catalogCanDisplayRecurringPriceFromTrialOfferWithoutSelectingPurchaseOffer() {
+    fun catalogDisplaysAndSelectsTheConfiguredMonthlyTrialOffer() {
         val candidates = listOf(
             PremiumOfferCandidate(
                 productId = "just_notes_premium",
@@ -215,7 +456,10 @@ class PremiumBillingStateTest {
         )
 
         assertEquals("TWD 33/month", PremiumCatalog.selectDisplayPrice(PremiumPlan.Monthly, candidates))
-        assertEquals(null, PremiumCatalog.selectBasePlanOffer(PremiumPlan.Monthly, candidates))
+        assertEquals(
+            "trial-token",
+            PremiumCatalog.selectBasePlanOffer(PremiumPlan.Monthly, candidates)?.offerToken,
+        )
     }
 
     @Test
@@ -239,5 +483,23 @@ class PremiumBillingStateTest {
 
         assertEquals("TWD 330/year", PremiumCatalog.selectDisplayPrice(PremiumPlan.Annual, candidates))
         assertEquals("annual-token", PremiumCatalog.selectBasePlanOffer(PremiumPlan.Annual, candidates)?.offerToken)
+    }
+
+    private fun purchaseObservation(
+        state: Int = Purchase.PurchaseState.PURCHASED,
+        token: String = RAW_TOKEN,
+        purchaseTime: Long = 1_762_000_000_000L,
+    ): PremiumPlayPurchaseObservation {
+        return PremiumPlayPurchaseObservation(
+            purchaseToken = token,
+            products = listOf(PremiumCatalog.PREFERRED_PRODUCT_ID),
+            purchaseState = state,
+            purchaseTime = purchaseTime,
+            isSuspended = false,
+        )
+    }
+
+    private companion object {
+        const val RAW_TOKEN = "transient-raw-token"
     }
 }

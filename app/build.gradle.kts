@@ -17,6 +17,16 @@ val allowClientOnlyBillingEntitlement = providers
     }
     .orElse("false")
 
+val enableBackendPurchaseFlow = providers
+    .gradleProperty("justNotes.enableBackendPurchaseFlow")
+    .map { value ->
+        require(value == "true" || value == "false") {
+            "justNotes.enableBackendPurchaseFlow must be either true or false."
+        }
+        value
+    }
+    .orElse("false")
+
 fun String.normalizedBackendBaseUrl(): String {
     val normalized = trim().trimEnd('/')
     if (normalized.isEmpty()) return normalized
@@ -60,6 +70,28 @@ val googleWebClientId = providers
     .map { it.normalizedGoogleWebClientId() }
     .orElse("")
 
+val uploadStoreFile = providers.gradleProperty("justNotes.uploadStoreFile")
+val uploadStorePassword = providers.gradleProperty("justNotes.uploadStorePassword")
+val uploadKeyAlias = providers.gradleProperty("justNotes.uploadKeyAlias")
+val uploadKeyPassword = providers.gradleProperty("justNotes.uploadKeyPassword")
+val uploadSigningConfigured = listOf(
+    uploadStoreFile,
+    uploadStorePassword,
+    uploadKeyAlias,
+    uploadKeyPassword,
+).all { it.isPresent }
+val injectedUploadStoreFile = providers.gradleProperty("android.injected.signing.store.file")
+val injectedUploadStorePassword = providers.gradleProperty("android.injected.signing.store.password")
+val injectedUploadKeyAlias = providers.gradleProperty("android.injected.signing.key.alias")
+val injectedUploadKeyPassword = providers.gradleProperty("android.injected.signing.key.password")
+val androidStudioSigningConfigured = listOf(
+    injectedUploadStoreFile,
+    injectedUploadStorePassword,
+    injectedUploadKeyAlias,
+    injectedUploadKeyPassword,
+).all { it.isPresent }
+val releaseSigningConfigured = uploadSigningConfigured || androidStudioSigningConfigured
+
 android {
     namespace = "com.example.notepad"
     compileSdk = 35
@@ -68,8 +100,8 @@ android {
         applicationId = "com.brianyeh.justnotes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.0.7"
 
         testInstrumentationRunner = "com.example.notepad.JustNotesTestRunner"
 
@@ -77,8 +109,20 @@ android {
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", googleWebClientId.quotedBuildConfigString())
     }
 
+    signingConfigs {
+        if (uploadSigningConfigured) {
+            create("releaseUpload") {
+                storeFile = file(uploadStoreFile.get())
+                storePassword = uploadStorePassword.get()
+                keyAlias = uploadKeyAlias.get()
+                keyPassword = uploadKeyPassword.get()
+            }
+        }
+    }
+
     buildTypes {
         debug {
+            buildConfigField("boolean", "ENABLE_BACKEND_PURCHASE_FLOW", enableBackendPurchaseFlow.get())
             buildConfigField(
                 "boolean",
                 "ALLOW_CLIENT_ONLY_BILLING_ENTITLEMENT",
@@ -86,6 +130,10 @@ android {
             )
         }
         release {
+            if (uploadSigningConfigured) {
+                signingConfig = signingConfigs.getByName("releaseUpload")
+            }
+            buildConfigField("boolean", "ENABLE_BACKEND_PURCHASE_FLOW", enableBackendPurchaseFlow.get())
             buildConfigField("boolean", "ALLOW_CLIENT_ONLY_BILLING_ENTITLEMENT", "false")
             isMinifyEnabled = false
             proguardFiles(
@@ -115,6 +163,14 @@ android {
                 "META-INF/INDEX.LIST",
                 "META-INF/io.netty.versions.properties",
             )
+        }
+    }
+}
+
+tasks.matching { it.name == "bundleRelease" }.configureEach {
+    doFirst {
+        require(releaseSigningConfigured) {
+            "Release upload signing properties or Android Studio injected signing credentials are required for bundleRelease."
         }
     }
 }
@@ -151,6 +207,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 
     androidTestImplementation("androidx.room:room-testing:$roomVersion")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.10.01"))

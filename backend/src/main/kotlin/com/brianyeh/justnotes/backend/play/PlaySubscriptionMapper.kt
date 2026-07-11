@@ -31,36 +31,39 @@ object PlaySubscriptionMapper {
         googleSub: String,
         verification: PlaySubscriptionVerification,
         now: Long,
-        ownershipVerified: Boolean = false,
-        config: BackendConfig = BackendConfig.fromEnvironment(),
+        ownershipVerified: Boolean,
+        acknowledgementSucceededInRequest: Boolean,
+        config: BackendConfig,
     ): EntitlementRecord {
-        val primaryLineItem = verification.lineItems.maxByOrNull { it.expiryTime ?: Long.MIN_VALUE }
-        val catalogError = config.validateCatalog(
+        val primaryLineItem = verification.lineItems.singleOrNull()
+        val catalogValid = primaryLineItem != null && config.validateCatalog(
             packageName = verification.packageName,
-            productId = primaryLineItem?.productId,
-            basePlanId = primaryLineItem?.basePlanId,
-            offerId = primaryLineItem?.offerId,
-        )
+            productId = primaryLineItem.productId,
+            basePlanId = primaryLineItem.basePlanId,
+            offerId = primaryLineItem.offerId,
+        ) == null
         val rawStatus = when {
-            catalogError != null -> BackendSubscriptionStatus.Unknown
+            !catalogValid -> BackendSubscriptionStatus.Unknown
             verification.canceledButActiveUntilExpiry -> BackendSubscriptionStatus.CanceledActiveUntilExpiry
             else -> verification.subscriptionState
         }
-        val acknowledgementState = verification.toBackendAcknowledgementState()
+        val acknowledgementState = if (acknowledgementSucceededInRequest) {
+            BackendAcknowledgementState.Acknowledged
+        } else {
+            verification.toBackendAcknowledgementState()
+        }
         val grantInputs = EntitlementGrantInputs(
             status = rawStatus,
             expiryTime = primaryLineItem?.expiryTime,
             acknowledgementState = acknowledgementState,
             ownershipVerified = ownershipVerified,
+            acknowledgementSucceededInRequest = acknowledgementSucceededInRequest,
         )
         val hasPremium = EntitlementGrantPolicy.hasPremium(grantInputs, now)
-        val status = if (hasPremium) {
-            when (rawStatus) {
-                BackendSubscriptionStatus.CanceledActiveUntilExpiry -> BackendSubscriptionStatus.Active
-                else -> rawStatus
-            }
-        } else {
-            EntitlementGrantPolicy.nonGrantingStatusFor(grantInputs)
+        val status = when {
+            hasPremium -> rawStatus
+            rawStatus == BackendSubscriptionStatus.PendingPurchase -> BackendSubscriptionStatus.PendingPurchase
+            else -> EntitlementGrantPolicy.nonGrantingStatusFor(grantInputs)
         }
         return EntitlementRecord(
             googleSub = googleSub,
@@ -74,6 +77,7 @@ object PlaySubscriptionMapper {
             expiryTime = primaryLineItem?.expiryTime,
             lastVerifiedAt = now,
             purchaseTokenHash = verification.purchaseTokenHash,
+            linkedPurchaseTokenHash = verification.linkedPurchaseTokenHash,
             acknowledgementState = acknowledgementState,
         )
     }
@@ -87,8 +91,8 @@ object PlaySubscriptionMapper {
             PlaySubscriptionState.SUBSCRIPTION_STATE_PAUSED -> BackendSubscriptionStatus.Paused
             PlaySubscriptionState.SUBSCRIPTION_STATE_EXPIRED -> BackendSubscriptionStatus.Expired
             PlaySubscriptionState.REVOKED -> BackendSubscriptionStatus.Revoked
-            PlaySubscriptionState.SUBSCRIPTION_STATE_PENDING -> BackendSubscriptionStatus.VerificationPending
-            PlaySubscriptionState.PENDING_PURCHASE_CANCELED -> BackendSubscriptionStatus.VerificationPending
+            PlaySubscriptionState.SUBSCRIPTION_STATE_PENDING -> BackendSubscriptionStatus.PendingPurchase
+            PlaySubscriptionState.PENDING_PURCHASE_CANCELED -> BackendSubscriptionStatus.Free
             PlaySubscriptionState.SUBSCRIPTION_STATE_UNSPECIFIED -> BackendSubscriptionStatus.Unknown
             PlaySubscriptionState.UNKNOWN -> BackendSubscriptionStatus.Unknown
         }

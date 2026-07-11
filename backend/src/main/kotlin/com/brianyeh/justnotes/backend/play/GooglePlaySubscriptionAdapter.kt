@@ -42,7 +42,11 @@ class GooglePlaySubscriptionVerifier(
         purchaseToken: String,
     ): PlaySubscriptionVerificationResult {
         if (packageName.isBlank() || purchaseToken.isBlank()) {
-            return PlaySubscriptionVerificationResult.Failure("Package name and purchase token are required.")
+            return PlaySubscriptionVerificationResult.Failure(
+                reason = "Package name and purchase token are required.",
+                retryable = false,
+                code = PlayVerificationFailureCode.INVALID_INPUT,
+            )
         }
         return withContext(Dispatchers.IO) {
             try {
@@ -59,10 +63,28 @@ class GooglePlaySubscriptionVerifier(
                         linkedTokenHash = linkedTokenHash,
                     ),
                 )
+            } catch (exception: GoogleJsonResponseException) {
+                PlaySubscriptionVerificationResult.Failure(
+                    reason = "Google Play subscription verification failed.",
+                    retryable = exception.statusCode == 429 || exception.statusCode >= 500,
+                    code = when {
+                        exception.statusCode == 429 -> PlayVerificationFailureCode.PLAY_API_RATE_LIMITED
+                        exception.statusCode >= 500 -> PlayVerificationFailureCode.PLAY_API_UNAVAILABLE
+                        else -> PlayVerificationFailureCode.PLAY_API_REJECTED
+                    },
+                )
             } catch (_: IOException) {
-                PlaySubscriptionVerificationResult.Failure("Google Play subscription verification failed.")
+                PlaySubscriptionVerificationResult.Failure(
+                    reason = "Google Play subscription verification failed.",
+                    retryable = true,
+                    code = PlayVerificationFailureCode.PLAY_API_UNAVAILABLE,
+                )
             } catch (_: RuntimeException) {
-                PlaySubscriptionVerificationResult.Failure("Google Play subscription verification failed.")
+                PlaySubscriptionVerificationResult.Failure(
+                    reason = "Google Play subscription verification failed.",
+                    retryable = false,
+                    code = PlayVerificationFailureCode.PLAY_RESPONSE_INVALID,
+                )
             }
         }
     }
@@ -80,6 +102,7 @@ class GooglePlaySubscriptionAcknowledger(
             return PlaySubscriptionAcknowledgementResult.Failure(
                 reason = "Subscription acknowledgement inputs are incomplete.",
                 retryable = false,
+                code = PlayAcknowledgementFailureCode.INVALID_INPUT,
             )
         }
         return withContext(Dispatchers.IO) {
@@ -92,16 +115,24 @@ class GooglePlaySubscriptionAcknowledger(
                     retryable = exception.statusCode == 409 ||
                         exception.statusCode == 429 ||
                         exception.statusCode >= 500,
+                    code = when {
+                        exception.statusCode == 409 -> PlayAcknowledgementFailureCode.PLAY_ACK_CONFLICT
+                        exception.statusCode == 429 -> PlayAcknowledgementFailureCode.PLAY_ACK_RATE_LIMITED
+                        exception.statusCode >= 500 -> PlayAcknowledgementFailureCode.PLAY_ACK_UNAVAILABLE
+                        else -> PlayAcknowledgementFailureCode.PLAY_ACK_REJECTED
+                    },
                 )
             } catch (_: IOException) {
                 PlaySubscriptionAcknowledgementResult.Failure(
                     reason = "Google Play subscription acknowledgement failed.",
                     retryable = true,
+                    code = PlayAcknowledgementFailureCode.PLAY_ACK_UNAVAILABLE,
                 )
             } catch (_: RuntimeException) {
                 PlaySubscriptionAcknowledgementResult.Failure(
                     reason = "Google Play subscription acknowledgement failed.",
                     retryable = false,
+                    code = PlayAcknowledgementFailureCode.PLAY_ACK_REJECTED,
                 )
             }
         }

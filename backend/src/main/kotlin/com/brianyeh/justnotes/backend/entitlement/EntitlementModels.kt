@@ -40,10 +40,11 @@ data class EntitlementRecord(
     val lastVerifiedAt: Long? = null,
     val stale: Boolean = false,
     val purchaseTokenHash: String? = null,
+    val linkedPurchaseTokenHash: String? = null,
     val acknowledgementState: BackendAcknowledgementState? = null,
 )
 
-data class SubscriptionBinding(
+data class SubscriptionRecord(
     val purchaseTokenHash: String,
     val hashVersion: String,
     val pepperVersion: String,
@@ -51,10 +52,21 @@ data class SubscriptionBinding(
     val packageName: String,
     val productId: String,
     val basePlanId: String?,
+    val offerId: String?,
+    val linkedPurchaseTokenHash: String?,
     val tokenCiphertext: String,
     val keyVersion: String,
     val encryptedAt: Long,
     val encryptionAlgorithm: String,
+    val acknowledgementState: BackendAcknowledgementState,
+    val acknowledgementAttemptCount: Int,
+    val nextAcknowledgementAttemptAt: Long?,
+    val lastAcknowledgementErrorCode: String?,
+    val lastVerifiedAt: Long,
+    val status: BackendSubscriptionStatus = BackendSubscriptionStatus.Unknown,
+    val expiryTime: Long? = null,
+    val acknowledgementClaimGeneration: Long = 0,
+    val acknowledgementLeaseUntil: Long? = null,
 )
 
 data class EntitlementGrantInputs(
@@ -79,19 +91,16 @@ object EntitlementGrantPolicy {
     }
 
     fun nonGrantingStatusFor(inputs: EntitlementGrantInputs): BackendSubscriptionStatus {
-        if (inputs.acknowledgementState == BackendAcknowledgementState.Pending) {
-            return BackendSubscriptionStatus.VerificationPending
-        }
-        if (!inputs.ownershipVerified) {
-            return BackendSubscriptionStatus.VerificationPending
-        }
-        if (
-            inputs.status == BackendSubscriptionStatus.Active ||
+        val grantable = inputs.status == BackendSubscriptionStatus.Active ||
             inputs.status == BackendSubscriptionStatus.GracePeriod ||
             inputs.status == BackendSubscriptionStatus.CanceledActiveUntilExpiry
+        if (!grantable) return inputs.status
+        if (
+            inputs.acknowledgementState == BackendAcknowledgementState.Pending ||
+            !inputs.ownershipVerified
         ) {
-            return BackendSubscriptionStatus.Expired
+            return BackendSubscriptionStatus.VerificationPending
         }
-        return inputs.status
+        return BackendSubscriptionStatus.Expired
     }
 }

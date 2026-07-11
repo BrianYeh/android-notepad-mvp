@@ -1,57 +1,12 @@
 package com.example.notepad.billing
 
-enum class PremiumBackendSubscriptionState {
-    PendingPurchase,
-    Active,
-    GracePeriod,
-    OnHold,
-    Expired,
-    Revoked,
-}
-
 enum class PremiumBackendAcknowledgementState {
     NotRequired,
     Pending,
     Acknowledged,
     Failed,
+    Unknown,
 }
-
-enum class PremiumRtdnNotificationType {
-    Purchased,
-    Renewed,
-    Canceled,
-    Revoked,
-    Expired,
-    GracePeriod,
-    OnHold,
-    Recovered,
-    Restarted,
-    Deferred,
-    PendingPurchaseCanceled,
-}
-
-data class PremiumBackendPurchaseVerification(
-    val packageName: String,
-    val productId: String,
-    val basePlanId: String?,
-    val offerId: String? = null,
-    val purchaseToken: String,
-    val linkedPurchaseToken: String? = null,
-    val purchaseTime: Long? = null,
-    val expiryTime: Long? = null,
-    val subscriptionState: PremiumBackendSubscriptionState,
-    val acknowledgementState: PremiumBackendAcknowledgementState,
-    val acknowledgementAttemptCount: Int = 0,
-    val nextAcknowledgementAttemptAt: Long? = null,
-    val lastAcknowledgementError: String? = null,
-)
-
-data class PremiumRtdnEvent(
-    val messageId: String,
-    val purchaseToken: String,
-    val eventTime: Long,
-    val notificationType: PremiumRtdnNotificationType,
-)
 
 data class PremiumBackendVerificationResult(
     val snapshot: PremiumSubscriptionSnapshot,
@@ -71,14 +26,11 @@ data class PremiumBackendEntitlementResponse(
     val expiryTime: Long? = null,
     val lastVerifiedAt: Long? = null,
     val purchaseTokenHash: String? = null,
-)
-
-data class PremiumRtdnSimulationState(
-    val snapshot: PremiumSubscriptionSnapshot = PremiumSubscriptionSnapshot(
-        status = PremiumSubscriptionStatus.Free,
-        source = PremiumEntitlementSource.None,
-    ),
-    val processedMessageIds: Set<String> = emptySet(),
+    val acknowledgementState: PremiumBackendAcknowledgementState? = null,
+    val retryable: Boolean = false,
+    val retryAfterSeconds: Long? = null,
+    val errorCode: String? = null,
+    val reason: String? = null,
 )
 
 object PremiumBackendEntitlementMapper {
@@ -100,11 +52,14 @@ object PremiumBackendEntitlementMapper {
                 ),
             )
         }
-        val rejectionReason = rejectReason(expectedPackageName, response)
+
+        val acknowledgementStatus = response.acknowledgementState.toSnapshotStatus()
+        val rejectionReason = rejectReason(expectedPackageName, response, now)
         if (rejectionReason != null) {
             return PremiumBackendVerificationResult(
                 accepted = false,
                 rejectionReason = rejectionReason,
+                shouldApplySnapshot = response.errorCode == null,
                 snapshot = PremiumSubscriptionSnapshot(
                     status = PremiumSubscriptionStatus.Error,
                     source = PremiumEntitlementSource.None,
@@ -115,11 +70,13 @@ object PremiumBackendEntitlementMapper {
                     expiryTime = response.expiryTime,
                     lastBackendVerifiedAt = now,
                     lastEntitlementChangeAt = now,
-                    acknowledgementStatus = PremiumAcknowledgementStatus.NotRequired,
-                    lastAcknowledgementError = rejectionReason,
+                    acknowledgementStatus = acknowledgementStatus,
+                    nextAcknowledgementAttemptAt = response.nextAcknowledgementAttemptAt(now),
+                    lastAcknowledgementError = response.reason ?: response.errorCode ?: rejectionReason,
                 ),
             )
         }
+
         return PremiumBackendVerificationResult(
             accepted = true,
             snapshot = PremiumSubscriptionSnapshot(
@@ -132,115 +89,36 @@ object PremiumBackendEntitlementMapper {
                 expiryTime = response.expiryTime,
                 lastBackendVerifiedAt = response.lastVerifiedAt ?: now,
                 lastEntitlementChangeAt = now,
-                acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
-            ),
-        )
-    }
-
-    fun fromVerification(
-        expectedPackageName: String,
-        verification: PremiumBackendPurchaseVerification,
-        now: Long,
-    ): PremiumBackendVerificationResult {
-        val rejectionReason = rejectReason(expectedPackageName, verification)
-        if (rejectionReason != null) {
-            return PremiumBackendVerificationResult(
-                accepted = false,
-                rejectionReason = rejectionReason,
-                snapshot = PremiumSubscriptionSnapshot(
-                    status = PremiumSubscriptionStatus.Error,
-                    source = PremiumEntitlementSource.None,
-                    productId = verification.productId,
-                    basePlanId = verification.basePlanId,
-                    offerId = verification.offerId,
-                    purchaseTokenHash = PremiumEntitlementStore.hashPurchaseToken(verification.purchaseToken),
-                    purchaseTime = verification.purchaseTime,
-                    lastBackendVerifiedAt = now,
-                    lastEntitlementChangeAt = now,
-                    acknowledgementStatus = PremiumAcknowledgementStatus.NotRequired,
-                    lastAcknowledgementError = rejectionReason,
-                ),
-            )
-        }
-
-        val acknowledgementStatus = verification.acknowledgementState.toSnapshotStatus()
-        val verifiedStatus = verification.subscriptionState.toSnapshotStatus()
-        val status = when {
-            acknowledgementStatus == PremiumAcknowledgementStatus.BackendRequired ||
-                acknowledgementStatus == PremiumAcknowledgementStatus.RetryScheduled ->
-                PremiumSubscriptionStatus.VerificationPending
-            else -> verifiedStatus
-        }
-
-        return PremiumBackendVerificationResult(
-            accepted = true,
-            snapshot = PremiumSubscriptionSnapshot(
-                status = status,
-                source = PremiumEntitlementSource.BackendVerified,
-                productId = verification.productId,
-                basePlanId = verification.basePlanId,
-                offerId = verification.offerId,
-                purchaseTokenHash = PremiumEntitlementStore.hashPurchaseToken(verification.purchaseToken),
-                purchaseTime = verification.purchaseTime,
-                expiryTime = verification.expiryTime,
-                lastBackendVerifiedAt = now,
-                lastEntitlementChangeAt = now,
                 acknowledgementStatus = acknowledgementStatus,
-                acknowledgementAttemptCount = verification.acknowledgementAttemptCount,
-                nextAcknowledgementAttemptAt = verification.nextAcknowledgementAttemptAt,
-                lastAcknowledgementError = verification.lastAcknowledgementError,
+                nextAcknowledgementAttemptAt = response.nextAcknowledgementAttemptAt(now),
+                lastAcknowledgementError = response.reason ?: response.errorCode,
             ),
         )
-    }
-
-    fun applyRtdnRequery(
-        state: PremiumRtdnSimulationState,
-        event: PremiumRtdnEvent,
-        requeryResult: PremiumBackendPurchaseVerification,
-        expectedPackageName: String,
-        now: Long,
-    ): PremiumRtdnSimulationState {
-        if (event.messageId in state.processedMessageIds) return state
-        val verification = fromVerification(
-            expectedPackageName = expectedPackageName,
-            verification = requeryResult,
-            now = now,
-        )
-        return PremiumRtdnSimulationState(
-            snapshot = verification.snapshot,
-            processedMessageIds = state.processedMessageIds + event.messageId,
-        )
-    }
-
-    private fun rejectReason(
-        expectedPackageName: String,
-        verification: PremiumBackendPurchaseVerification,
-    ): String? {
-        if (verification.packageName != expectedPackageName) {
-            return "Purchase token package does not match this app."
-        }
-        if (!PremiumCatalog.isPremiumProduct(verification.productId)) {
-            return "Purchase token is not for a known Premium product."
-        }
-        if (!verification.matchesKnownBasePlan()) {
-            return "Purchase token base plan does not match the Premium catalog."
-        }
-        return null
     }
 
     private fun rejectReason(
         expectedPackageName: String,
         response: PremiumBackendEntitlementResponse,
+        now: Long,
     ): String? {
         if (response.isNoBackendRecord()) return null
+        if (
+            response.errorCode != null &&
+            response.errorCode !in PENDING_VERIFICATION_ERROR_CODES
+        ) {
+            return "Purchase verification did not complete."
+        }
         if (response.source != PremiumEntitlementSource.BackendVerified) {
             return "Entitlement response is not backend verified."
         }
-        val premiumStatus = response.status == PremiumSubscriptionStatus.Active ||
-            response.status == PremiumSubscriptionStatus.GracePeriod
-        if (response.hasPremium != premiumStatus) {
-            return "Entitlement response premium flag does not match subscription status."
+
+        val shouldHavePremium = response.status.isGrantable() &&
+            response.acknowledgementState == PremiumBackendAcknowledgementState.Acknowledged &&
+            response.expiryTime?.let { it > now } == true
+        if (response.hasPremium != shouldHavePremium) {
+            return "Entitlement response premium flag does not match subscription state."
         }
+
         if (response.productId == null && !response.hasPremium) return null
         if (response.packageName != expectedPackageName) {
             return "Entitlement response package does not match this app."
@@ -248,8 +126,8 @@ object PremiumBackendEntitlementMapper {
         if (response.productId == null || !PremiumCatalog.isPremiumProduct(response.productId)) {
             return "Entitlement response product is not for a known Premium product."
         }
-        if (!response.matchesKnownBasePlan()) {
-            return "Entitlement response base plan does not match the Premium catalog."
+        if (!response.matchesKnownCatalogTuple()) {
+            return "Entitlement response plan or offer does not match the Premium catalog."
         }
         return null
     }
@@ -263,41 +141,51 @@ object PremiumBackendEntitlementMapper {
             basePlanId == null &&
             offerId == null &&
             expiryTime == null &&
-            purchaseTokenHash == null
+            purchaseTokenHash == null &&
+            acknowledgementState == null &&
+            !retryable &&
+            retryAfterSeconds == null &&
+            errorCode == null &&
+            reason == null
     }
 
-    private fun PremiumBackendPurchaseVerification.matchesKnownBasePlan(): Boolean {
-        val basePlan = basePlanId ?: return true
-        return PremiumPlan.entries.any { plan ->
-            productId in plan.productIdsInPreferenceOrder && plan.basePlanId == basePlan
+    private fun PremiumBackendEntitlementResponse.matchesKnownCatalogTuple(): Boolean {
+        if (productId != PremiumCatalog.PREFERRED_PRODUCT_ID) return false
+        return when (basePlanId) {
+            "monthly" -> offerId == null || offerId == "trial10d"
+            "annual" -> offerId == null
+            else -> false
         }
     }
 
-    private fun PremiumBackendEntitlementResponse.matchesKnownBasePlan(): Boolean {
-        val basePlan = basePlanId ?: return true
-        val product = productId ?: return false
-        return PremiumPlan.entries.any { plan ->
-            product in plan.productIdsInPreferenceOrder && plan.basePlanId == basePlan
-        }
+    private fun PremiumSubscriptionStatus.isGrantable(): Boolean {
+        return this == PremiumSubscriptionStatus.Active ||
+            this == PremiumSubscriptionStatus.GracePeriod ||
+            this == PremiumSubscriptionStatus.CanceledActiveUntilExpiry
     }
 
-    private fun PremiumBackendSubscriptionState.toSnapshotStatus(): PremiumSubscriptionStatus {
-        return when (this) {
-            PremiumBackendSubscriptionState.PendingPurchase -> PremiumSubscriptionStatus.PendingPurchase
-            PremiumBackendSubscriptionState.Active -> PremiumSubscriptionStatus.Active
-            PremiumBackendSubscriptionState.GracePeriod -> PremiumSubscriptionStatus.GracePeriod
-            PremiumBackendSubscriptionState.OnHold -> PremiumSubscriptionStatus.OnHold
-            PremiumBackendSubscriptionState.Expired -> PremiumSubscriptionStatus.Expired
-            PremiumBackendSubscriptionState.Revoked -> PremiumSubscriptionStatus.Revoked
-        }
-    }
-
-    private fun PremiumBackendAcknowledgementState.toSnapshotStatus(): PremiumAcknowledgementStatus {
+    private fun PremiumBackendAcknowledgementState?.toSnapshotStatus(): PremiumAcknowledgementStatus {
         return when (this) {
             PremiumBackendAcknowledgementState.NotRequired -> PremiumAcknowledgementStatus.NotRequired
-            PremiumBackendAcknowledgementState.Pending -> PremiumAcknowledgementStatus.BackendRequired
+            PremiumBackendAcknowledgementState.Pending -> PremiumAcknowledgementStatus.Pending
             PremiumBackendAcknowledgementState.Acknowledged -> PremiumAcknowledgementStatus.Acknowledged
-            PremiumBackendAcknowledgementState.Failed -> PremiumAcknowledgementStatus.RetryScheduled
+            PremiumBackendAcknowledgementState.Failed -> PremiumAcknowledgementStatus.Failed
+            PremiumBackendAcknowledgementState.Unknown,
+            null,
+            -> PremiumAcknowledgementStatus.Unknown
         }
     }
+
+    private fun PremiumBackendEntitlementResponse.nextAcknowledgementAttemptAt(now: Long): Long? {
+        if (!retryable) return null
+        val seconds = retryAfterSeconds?.takeIf { it >= 0L } ?: return null
+        return runCatching {
+            Math.addExact(now, Math.multiplyExact(seconds, 1_000L))
+        }.getOrNull()
+    }
+
+    private val PENDING_VERIFICATION_ERROR_CODES = setOf(
+        "PURCHASE_PENDING",
+        "ACKNOWLEDGEMENT_RETRY",
+    )
 }

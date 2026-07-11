@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.widget.Toast
+import com.example.notepad.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -327,8 +328,14 @@ internal fun shouldShowPremiumSubscribeButton(
 ): Boolean {
     return displayMode == PremiumUiMode.CommerceReady &&
         selectedPriceAvailable &&
-        !billingState.hasPremiumAccess &&
-        billingState.canLaunchPurchase
+        !billingState.hasPremiumAccess
+}
+
+internal fun shouldEnablePremiumSubscribeButton(
+    billingState: PremiumBillingState,
+    backendPurchaseFlowEnabled: Boolean = BuildConfig.ENABLE_BACKEND_PURCHASE_FLOW,
+): Boolean {
+    return billingState.canLaunchPurchase(backendPurchaseFlowEnabled)
 }
 
 internal fun shouldShowGoogleAccountSyncUi(syncMetadata: SyncMetadata): Boolean {
@@ -834,9 +841,7 @@ fun NotepadApp(
             billingState = billingState,
             onSubscribe = { plan ->
                 val activity = context as? Activity
-                if (activity == null) {
-                    false
-                } else {
+                if (activity != null) {
                     viewModel.launchPremiumPurchase(activity, plan)
                 }
             },
@@ -982,7 +987,7 @@ private fun MainNavigationBar(
 private fun PremiumScreen(
     text: UiText,
     billingState: PremiumBillingState,
-    onSubscribe: (PremiumPlan) -> Boolean,
+    onSubscribe: (PremiumPlan) -> Unit,
     onRefreshPurchaseStatus: () -> Unit,
     onBack: () -> Unit,
     onOpenNotes: () -> Unit,
@@ -1081,17 +1086,25 @@ private fun PremiumScreen(
                 }
                 if (shouldShowPremiumSubscribeButton(billingState, effectiveDisplayMode, selectedPriceAvailable)) {
                     Button(
-                        onClick = {
-                            if (!onSubscribe(selectedBillingPlan)) {
-                                Toast.makeText(context, text.premiumBillingUnavailable, Toast.LENGTH_SHORT).show()
-                            }
-                        },
+                        onClick = { onSubscribe(selectedBillingPlan) },
+                        enabled = shouldEnablePremiumSubscribeButton(billingState),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("premium_subscribe_button"),
                     ) {
                         Text(if (billingState.hasPremiumAccess) text.premiumActive else text.premiumSubscribe)
                     }
+                    Text(
+                        text = if (
+                            selectedBillingPlan == PremiumPlan.Monthly && billingState.monthlyTrialAvailable
+                        ) {
+                            text.premiumTrial
+                        } else {
+                            text.premiumRenewal
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             when (effectiveDisplayMode) {

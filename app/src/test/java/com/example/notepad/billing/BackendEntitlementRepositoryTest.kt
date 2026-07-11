@@ -426,6 +426,255 @@ class BackendEntitlementRepositoryTest {
     }
 
     @Test
+    fun billingContextResponseIsStaleAfterAccountSwitch() = runBlocking {
+        var currentAccountKey = "account-a"
+        val repository = BackendEntitlementRepository(
+            client = object : BackendEntitlementClient {
+                override suspend fun fetchEntitlement(idToken: String?): BackendEntitlementFetchResult {
+                    error("Entitlement GET is not expected.")
+                }
+
+                override suspend fun fetchBillingContext(idToken: String?): BackendBillingContextFetchResult {
+                    assertEquals("old-token", idToken)
+                    currentAccountKey = "account-b"
+                    return BackendBillingContextFetchResult.Success(
+                        BackendBillingContext("a".repeat(43)),
+                    )
+                }
+            },
+            authProvider = { BackendEntitlementAuth("old-token", currentAccountKey) },
+            currentAccountKeyProvider = { currentAccountKey },
+            applyBackendEntitlement = { true },
+        )
+
+        val result = repository.fetchBillingContext()
+
+        assertEquals(BackendBillingContextFetchResult.Stale, result)
+    }
+
+    @Test
+    fun outOfOrderBillingContextsOnlyExposeTheNewestSuccessfulResponse() = runBlocking {
+        val firstStarted = CompletableDeferred<Unit>()
+        val secondStarted = CompletableDeferred<Unit>()
+        val firstCanReturn = CompletableDeferred<Unit>()
+        val secondCanReturn = CompletableDeferred<Unit>()
+        var requestCount = 0
+        val repository = BackendEntitlementRepository(
+            client = object : BackendEntitlementClient {
+                override suspend fun fetchEntitlement(idToken: String?): BackendEntitlementFetchResult {
+                    error("Entitlement GET is not expected.")
+                }
+
+                override suspend fun fetchBillingContext(idToken: String?): BackendBillingContextFetchResult {
+                    requestCount += 1
+                    return when (requestCount) {
+                        1 -> {
+                            firstStarted.complete(Unit)
+                            firstCanReturn.await()
+                            BackendBillingContextFetchResult.Success(BackendBillingContext("a".repeat(43)))
+                        }
+                        2 -> {
+                            secondStarted.complete(Unit)
+                            secondCanReturn.await()
+                            BackendBillingContextFetchResult.Success(BackendBillingContext("b".repeat(43)))
+                        }
+                        else -> error("Unexpected context request $requestCount")
+                    }
+                }
+            },
+            authProvider = { BackendEntitlementAuth("id-token", "account-a") },
+            currentAccountKeyProvider = { "account-a" },
+            applyBackendEntitlement = { true },
+        )
+
+        val first = async { repository.fetchBillingContext() }
+        firstStarted.await()
+        val second = async { repository.fetchBillingContext() }
+        secondStarted.await()
+
+        secondCanReturn.complete(Unit)
+        assertEquals(
+            BackendBillingContextFetchResult.Success(BackendBillingContext("b".repeat(43))),
+            second.await(),
+        )
+        firstCanReturn.complete(Unit)
+        assertEquals(BackendBillingContextFetchResult.Stale, first.await())
+    }
+
+    @Test
+    fun olderBillingContextFailureIsStaleAfterNewerSuccess() = runBlocking {
+        val firstStarted = CompletableDeferred<Unit>()
+        val firstCanReturn = CompletableDeferred<Unit>()
+        var requestCount = 0
+        val repository = BackendEntitlementRepository(
+            client = object : BackendEntitlementClient {
+                override suspend fun fetchEntitlement(idToken: String?): BackendEntitlementFetchResult {
+                    error("Entitlement GET is not expected.")
+                }
+
+                override suspend fun fetchBillingContext(idToken: String?): BackendBillingContextFetchResult {
+                    requestCount += 1
+                    return when (requestCount) {
+                        1 -> {
+                            firstStarted.complete(Unit)
+                            firstCanReturn.await()
+                            BackendBillingContextFetchResult.Unavailable
+                        }
+                        2 -> BackendBillingContextFetchResult.Success(
+                            BackendBillingContext("b".repeat(43)),
+                        )
+                        else -> error("Unexpected context request $requestCount")
+                    }
+                }
+            },
+            authProvider = { BackendEntitlementAuth("id-token", "account-a") },
+            currentAccountKeyProvider = { "account-a" },
+            applyBackendEntitlement = { true },
+        )
+
+        val olderFailure = async { repository.fetchBillingContext() }
+        firstStarted.await()
+        val newerSuccess = repository.fetchBillingContext()
+
+        assertEquals(
+            BackendBillingContextFetchResult.Success(BackendBillingContext("b".repeat(43))),
+            newerSuccess,
+        )
+        firstCanReturn.complete(Unit)
+        assertEquals(BackendBillingContextFetchResult.Stale, olderFailure.await())
+    }
+
+    @Test
+    fun purchaseVerificationResponseIsStaleAfterAccountSwitch() = runBlocking {
+        var currentAccountKey = "account-a"
+        val repository = BackendEntitlementRepository(
+            client = object : BackendEntitlementClient {
+                override suspend fun fetchEntitlement(idToken: String?): BackendEntitlementFetchResult {
+                    error("Entitlement GET is not expected.")
+                }
+
+                override suspend fun verifyPurchase(
+                    idToken: String?,
+                    candidate: BackendPurchaseCandidate,
+                ): BackendPurchaseVerificationResult {
+                    assertEquals("old-token", idToken)
+                    currentAccountKey = "account-b"
+                    return BackendPurchaseVerificationResult.Verified(activeBackendResponse())
+                }
+            },
+            authProvider = { BackendEntitlementAuth("old-token", currentAccountKey) },
+            currentAccountKeyProvider = { currentAccountKey },
+            applyBackendEntitlement = { true },
+        )
+
+        val result = repository.verifyPurchase(purchaseCandidate())
+
+        assertEquals(BackendPurchaseVerificationResult.Stale, result)
+    }
+
+    @Test
+    fun outOfOrderPurchaseVerificationsOnlyExposeTheNewestSuccessfulResponse() = runBlocking {
+        val firstStarted = CompletableDeferred<Unit>()
+        val secondStarted = CompletableDeferred<Unit>()
+        val firstCanReturn = CompletableDeferred<Unit>()
+        val secondCanReturn = CompletableDeferred<Unit>()
+        val olderResponse = activeBackendResponse(purchaseTokenHash = "older-token-hash")
+        val newerResponse = activeBackendResponse(purchaseTokenHash = "newer-token-hash")
+        var requestCount = 0
+        val repository = BackendEntitlementRepository(
+            client = object : BackendEntitlementClient {
+                override suspend fun fetchEntitlement(idToken: String?): BackendEntitlementFetchResult {
+                    error("Entitlement GET is not expected.")
+                }
+
+                override suspend fun verifyPurchase(
+                    idToken: String?,
+                    candidate: BackendPurchaseCandidate,
+                ): BackendPurchaseVerificationResult {
+                    requestCount += 1
+                    return when (requestCount) {
+                        1 -> {
+                            firstStarted.complete(Unit)
+                            firstCanReturn.await()
+                            BackendPurchaseVerificationResult.Verified(olderResponse)
+                        }
+                        2 -> {
+                            secondStarted.complete(Unit)
+                            secondCanReturn.await()
+                            BackendPurchaseVerificationResult.Verified(newerResponse)
+                        }
+                        else -> error("Unexpected verify request $requestCount")
+                    }
+                }
+            },
+            authProvider = { BackendEntitlementAuth("id-token", "account-a") },
+            currentAccountKeyProvider = { "account-a" },
+            applyBackendEntitlement = { true },
+        )
+
+        val first = async { repository.verifyPurchase(purchaseCandidate()) }
+        firstStarted.await()
+        val second = async { repository.verifyPurchase(purchaseCandidate()) }
+        secondStarted.await()
+
+        secondCanReturn.complete(Unit)
+        assertEquals(BackendPurchaseVerificationResult.Verified(newerResponse), second.await())
+        firstCanReturn.complete(Unit)
+        assertEquals(BackendPurchaseVerificationResult.Stale, first.await())
+    }
+
+    @Test
+    fun olderVerificationFailureIsStaleAfterNewerSuccess() = runBlocking {
+        val firstStarted = CompletableDeferred<Unit>()
+        val firstCanReturn = CompletableDeferred<Unit>()
+        val newerResponse = activeBackendResponse(purchaseTokenHash = "newer-token-hash")
+        var requestCount = 0
+        val repository = BackendEntitlementRepository(
+            client = object : BackendEntitlementClient {
+                override suspend fun fetchEntitlement(idToken: String?): BackendEntitlementFetchResult {
+                    error("Entitlement GET is not expected.")
+                }
+
+                override suspend fun verifyPurchase(
+                    idToken: String?,
+                    candidate: BackendPurchaseCandidate,
+                ): BackendPurchaseVerificationResult {
+                    requestCount += 1
+                    return when (requestCount) {
+                        1 -> {
+                            firstStarted.complete(Unit)
+                            firstCanReturn.await()
+                            BackendPurchaseVerificationResult.Unavailable(
+                                PremiumBackendEntitlementResponse(
+                                    hasPremium = false,
+                                    status = PremiumSubscriptionStatus.VerificationPending,
+                                    source = PremiumEntitlementSource.BackendVerified,
+                                    acknowledgementState = PremiumBackendAcknowledgementState.Pending,
+                                    retryable = true,
+                                    errorCode = "DEPENDENCY_UNAVAILABLE",
+                                ),
+                            )
+                        }
+                        2 -> BackendPurchaseVerificationResult.Verified(newerResponse)
+                        else -> error("Unexpected verify request $requestCount")
+                    }
+                }
+            },
+            authProvider = { BackendEntitlementAuth("id-token", "account-a") },
+            currentAccountKeyProvider = { "account-a" },
+            applyBackendEntitlement = { true },
+        )
+
+        val olderFailure = async { repository.verifyPurchase(purchaseCandidate()) }
+        firstStarted.await()
+        val newerSuccess = repository.verifyPurchase(purchaseCandidate())
+
+        assertEquals(BackendPurchaseVerificationResult.Verified(newerResponse), newerSuccess)
+        firstCanReturn.complete(Unit)
+        assertEquals(BackendPurchaseVerificationResult.Stale, olderFailure.await())
+    }
+
+    @Test
     fun malformedJsonFailsClosedWithoutApplyingEntitlement() = runBlocking {
         val client = HttpBackendEntitlementClient(
             config = BackendEntitlementClientConfig(
@@ -471,6 +720,19 @@ class BackendEntitlementRepositoryTest {
             expiryTime = 1_762_000_000_000L,
             lastVerifiedAt = 1_761_000_000_000L,
             purchaseTokenHash = purchaseTokenHash,
+        )
+    }
+
+    private fun purchaseCandidate(): BackendPurchaseCandidate {
+        return BackendPurchaseCandidate(
+            purchaseToken = "transient-token",
+            packageName = "com.brianyeh.justnotes",
+            productId = PremiumCatalog.PREFERRED_PRODUCT_ID,
+            basePlanId = "monthly",
+            offerId = "trial10d",
+            appVersion = "1.0.7",
+            versionCode = 5,
+            deviceLocale = "zh-TW",
         )
     }
 

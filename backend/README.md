@@ -1,7 +1,7 @@
 # Just Notes Entitlement Backend
 
-This module contains the v1.0.6-C production adapters and the intentionally
-non-granting HTTP boundary for the future v1.0.7 purchase flow.
+This module contains the production adapters and active v1.0.7
+backend-authoritative purchase flow for Just Notes internal testing.
 
 Implemented production adapters:
 
@@ -17,15 +17,52 @@ runtime service account. No service-account JSON key, OAuth client secret,
 Secret Manager payload, KMS key material, Google ID token, or raw purchase token
 belongs in source control or deployment environment variables.
 
-## v1.0.6-C Safety Boundary
+## v1.0.7 Purchase Boundary
 
-`POST /v1/billing/verify` deliberately does not call the Play verifier,
-acknowledge a purchase, persist a subscription, or grant Premium. It returns
-HTTP `202`, `hasPremium=false`, `VerificationPending`, and
-`POST_VERIFY_DISABLED`. The real purchase lifecycle remains deferred to the
-separately reviewed v1.0.7 flow.
+Both billing endpoints require a Google ID token verified against the exact
+configured Web client audience and issuer allowlist. Billing responses use
+`Cache-Control: no-store`.
+
+- `GET /v1/billing/context` derives the Play obfuscated external account ID
+  from the authenticated Google subject. It returns `503` if the backing secret
+  is unavailable.
+- `POST /v1/billing/verify` accepts at most 8 KiB of JSON and transiently passes
+  the raw purchase token through this order: Play verification, authoritative
+  catalog selection, obfuscated-account ownership proof, KMS encryption,
+  owner-bound Firestore persistence, backend acknowledgement, and final
+  entitlement reconciliation.
+- `GET /v1/entitlement` remains an owner-only read and clamps expired,
+  unacknowledged, invalid-catalog, or excessively stale records to
+  non-Premium.
+
+Premium is written only by the final Firestore reconciliation transaction. It
+uses the newest stored Play lifecycle plus the current acknowledgement state;
+the client never grants from Play state alone. Concurrent acknowledgement uses
+a lease and monotonically increasing claim generation so a stale worker cannot
+overwrite a newer completion.
+
+`subscriptions/{purchaseTokenHash}` stores only backend-owned identity and
+encrypted verification state:
+
+- `purchaseTokenHash`, `hashVersion`, and `pepperVersion`;
+- `ownerGoogleSub`, package/product/base-plan/offer, linked-token hash,
+  authoritative status, expiry, and Play observation time;
+- `tokenCiphertext`, KMS key version, encryption time, and algorithm;
+- acknowledgement state, attempt count, next retry, redacted error code,
+  claim generation, and lease expiry.
+
+It must never contain a raw purchase token, Google ID token, email address,
+secret payload, or exported key material.
+
+Retryable acknowledgement failures start at 15 minutes, double per failed
+attempt, and cap at 6 hours. There is no background token cache: a later Android
+refresh/restore reacquires the purchase from Play and invokes
+`POST /v1/billing/verify` again. That request is the retry trigger.
 
 `POST /v1/play/rtdn` remains disabled with HTTP `501`.
+Until a separately reviewed RTDN flow is deployed, refunds, renewals, and
+off-device cancellations become visible only when the client performs another
+verified query.
 
 ## Local Verification
 

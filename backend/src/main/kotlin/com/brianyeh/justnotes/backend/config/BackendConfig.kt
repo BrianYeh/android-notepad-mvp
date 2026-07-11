@@ -16,6 +16,10 @@ data class BackendConfig(
     val kmsTokenEncryptionKeyResource: String?,
     val entitlementReverifyTtlMillis: Long,
     val entitlementMaxStaleMillis: Long,
+    val rtdnEnabled: Boolean = false,
+    val rtdnExpectedSubscription: String? = null,
+    val rtdnEventTtlDays: Int = 30,
+    val rtdnProcessingLeaseSeconds: Long = 60L,
 ) {
     fun validateForIdTokenVerification(): String? {
         val clientId = googleWebClientId?.trim()
@@ -41,6 +45,21 @@ data class BackendConfig(
             validateSecretResource("Email hash secret", emailHashSecretResource)?.let(::add)
             if (kmsTokenEncryptionKeyResource?.matches(KMS_KEY_RESOURCE_PATTERN) != true) {
                 add("KMS token encryption key resource is not configured or malformed.")
+            }
+        }
+    }
+
+    fun validateForRtdn(): List<String> {
+        if (!rtdnEnabled) return emptyList()
+        return buildList {
+            if (rtdnExpectedSubscription?.matches(PUBSUB_SUBSCRIPTION_RESOURCE_PATTERN) != true) {
+                add("RTDN expected Pub/Sub subscription resource is not configured or malformed.")
+            }
+            if (rtdnEventTtlDays !in 1..365) {
+                add("RTDN event TTL days must be between 1 and 365.")
+            }
+            if (rtdnProcessingLeaseSeconds !in 10L..600L) {
+                add("RTDN processing lease seconds must be between 10 and 600.")
             }
         }
     }
@@ -76,6 +95,8 @@ data class BackendConfig(
         private val UUID_LIKE_PATTERN =
             Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
         private val RESTRICTED_PROJECT_ID_PARTS = setOf("google", "ssl", "undefined", "null")
+        private val PUBSUB_SUBSCRIPTION_RESOURCE_PATTERN =
+            Regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/subscriptions/[A-Za-z][A-Za-z0-9._~+%-]{2,254}$")
 
         fun fromEnvironment(environment: Map<String, String> = System.getenv()): BackendConfig {
             return BackendConfig(
@@ -97,7 +118,60 @@ data class BackendConfig(
                 kmsTokenEncryptionKeyResource = environment["KMS_TOKEN_ENCRYPTION_KEY_RESOURCE"]?.trim()?.takeIf { it.isNotBlank() },
                 entitlementReverifyTtlMillis = 6L * 60L * 60L * 1_000L,
                 entitlementMaxStaleMillis = 24L * 60L * 60L * 1_000L,
+                rtdnEnabled = parseBoolean(environment, "RTDN_ENABLED", default = false),
+                rtdnExpectedSubscription = environment["RTDN_EXPECTED_SUBSCRIPTION"]
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() },
+                rtdnEventTtlDays = parseIntInRange(
+                    environment,
+                    "RTDN_EVENT_TTL_DAYS",
+                    default = 30,
+                    range = 1..365,
+                ),
+                rtdnProcessingLeaseSeconds = parseLongInRange(
+                    environment,
+                    "RTDN_PROCESSING_LEASE_SECONDS",
+                    default = 60L,
+                    range = 10L..600L,
+                ),
             )
+        }
+
+        private fun parseBoolean(
+            environment: Map<String, String>,
+            name: String,
+            default: Boolean,
+        ): Boolean {
+            val value = environment[name]?.trim()?.lowercase() ?: return default
+            return when (value) {
+                "true" -> true
+                "false" -> false
+                else -> throw IllegalArgumentException("$name must be true or false.")
+            }
+        }
+
+        private fun parseIntInRange(
+            environment: Map<String, String>,
+            name: String,
+            default: Int,
+            range: IntRange,
+        ): Int {
+            val raw = environment[name]?.trim() ?: return default
+            val value = raw.toIntOrNull()
+            require(value != null && value in range) { "$name is outside its allowed range." }
+            return value
+        }
+
+        private fun parseLongInRange(
+            environment: Map<String, String>,
+            name: String,
+            default: Long,
+            range: LongRange,
+        ): Long {
+            val raw = environment[name]?.trim() ?: return default
+            val value = raw.toLongOrNull()
+            require(value != null && value in range) { "$name is outside its allowed range." }
+            return value
         }
 
         private fun validateSecretResource(label: String, resource: String?): String? {

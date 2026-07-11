@@ -5,6 +5,10 @@ object NoopPlaySubscriptionVerifier : PlaySubscriptionVerifier {
         packageName: String,
         purchaseToken: String,
     ): PlaySubscriptionVerificationResult {
-        return PlaySubscriptionVerificationResult.Failure("Test verifier is intentionally disabled.")
+        return PlaySubscriptionVerificationResult.Failure(
+            reason = "Test verifier is intentionally disabled.",
+            retryable = false,
+            code = PlayVerificationFailureCode.INVALID_INPUT,
+        )
     }
 }

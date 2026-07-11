@@ -155,11 +155,44 @@ class NoteUiPureFunctionTest {
 
         assertEquals(PremiumUiMode.CommerceReady, premiumUiMode(state))
         assertEquals(
-            false,
+            true,
             shouldShowPremiumSubscribeButton(
                 billingState = state,
                 displayMode = PremiumUiMode.CommerceReady,
                 selectedPriceAvailable = true,
+            ),
+        )
+        assertEquals(false, shouldEnablePremiumSubscribeButton(state, backendPurchaseFlowEnabled = true))
+    }
+
+    @Test
+    fun subscribeDisablesDuringContextOrVerificationAndReenablesAfterSafeFailure() {
+        val ready = PremiumBillingState(
+            billingAvailable = true,
+            backendPurchaseReady = true,
+            monthlyPrice = "$3.99",
+        )
+
+        assertEquals(true, shouldEnablePremiumSubscribeButton(ready, backendPurchaseFlowEnabled = true))
+        assertEquals(
+            false,
+            shouldEnablePremiumSubscribeButton(
+                ready.copy(purchaseLaunching = true),
+                backendPurchaseFlowEnabled = true,
+            ),
+        )
+        assertEquals(
+            false,
+            shouldEnablePremiumSubscribeButton(
+                ready.copy(purchaseVerificationInFlight = true),
+                backendPurchaseFlowEnabled = true,
+            ),
+        )
+        assertEquals(
+            true,
+            shouldEnablePremiumSubscribeButton(
+                ready.copy(lastError = "Purchase verification is temporarily unavailable."),
+                backendPurchaseFlowEnabled = true,
             ),
         )
     }
