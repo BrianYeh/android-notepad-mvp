@@ -11,6 +11,7 @@ import com.brianyeh.justnotes.backend.play.PlaySubscriptionMapper
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerification
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerificationResult
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerifier
+import com.brianyeh.justnotes.backend.play.PlayVerificationFailureCode
 import com.brianyeh.justnotes.backend.security.PurchaseTokenCipher
 import com.brianyeh.justnotes.backend.security.PurchaseTokenHasher
 import com.brianyeh.justnotes.backend.security.TokenCiphertext
@@ -58,9 +59,8 @@ class RtdnProcessor(
             return retryableWithoutClaim(RtdnErrorCode.DEPENDENCY_UNAVAILABLE)
         }
         return when (claim) {
-            RtdnClaimResult.AlreadyCompleted,
-            RtdnClaimResult.InFlight,
-            -> RtdnProcessResult.Completed(OUTCOME_DUPLICATE)
+            RtdnClaimResult.AlreadyCompleted -> RtdnProcessResult.Completed(OUTCOME_DUPLICATE)
+            RtdnClaimResult.InFlight -> retryableWithoutClaim(RtdnErrorCode.DEPENDENCY_UNAVAILABLE)
             is RtdnClaimResult.Claimed -> processClaimed(
                 messageIdHash = messageIdHash,
                 generation = claim.generation,
@@ -93,10 +93,10 @@ class RtdnProcessor(
 
             when (val playResult = playVerifier.verify(config.allowedPackageName, decrypted)) {
                 is PlaySubscriptionVerificationResult.Failure -> {
-                    if (playResult.retryable) {
-                        release(messageIdHash, generation, RtdnErrorCode.DEPENDENCY_UNAVAILABLE)
-                    } else {
+                    if (playResult.code == PlayVerificationFailureCode.INVALID_INPUT) {
                         completeIgnored(messageIdHash, generation, RtdnErrorCode.UNSUPPORTED_NOTIFICATION)
+                    } else {
+                        release(messageIdHash, generation, RtdnErrorCode.DEPENDENCY_UNAVAILABLE)
                     }
                 }
                 is PlaySubscriptionVerificationResult.Success -> reconcile(

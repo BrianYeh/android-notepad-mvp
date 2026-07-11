@@ -92,6 +92,20 @@ class RtdnProcessorTest {
     }
 
     @Test
+    fun inFlightDeliveryRemainsRetryableUntilOriginalClaimCompletes() = runBlocking {
+        val scenario = Scenario(claimResult = RtdnClaimResult.InFlight)
+
+        val result = scenario.processor.process(envelope(), notification())
+
+        assertEquals(
+            RtdnErrorCode.DEPENDENCY_UNAVAILABLE,
+            assertIs<RtdnProcessResult.RetryableFailure>(result).errorCode,
+        )
+        assertTrue(scenario.verifier.tokens.isEmpty())
+        assertEquals(0, scenario.cipher.decryptCount)
+    }
+
+    @Test
     fun mismatchedDecryptedTokenHashFailsClosedWithoutCallingPlay() = runBlocking {
         val scenario = Scenario(decryptedToken = "different-token", decryptedHash = "different-hash")
         scenario.seedSubscription()
@@ -139,12 +153,12 @@ class RtdnProcessorTest {
     }
 
     @Test
-    fun terminalPlayRejectionIsCompletedWithoutChangingEntitlement() = runBlocking {
+    fun impossibleInvalidPlayInputIsCompletedWithoutChangingEntitlement() = runBlocking {
         val scenario = Scenario(
             playResult = PlaySubscriptionVerificationResult.Failure(
                 reason = "redacted",
                 retryable = false,
-                code = PlayVerificationFailureCode.PLAY_API_REJECTED,
+                code = PlayVerificationFailureCode.INVALID_INPUT,
             ),
         )
         scenario.seedSubscription(status = BackendSubscriptionStatus.Active)
@@ -154,6 +168,27 @@ class RtdnProcessorTest {
         assertIs<RtdnProcessResult.Ignored>(result)
         assertEquals("IGNORED", scenario.events.completedOutcome)
         assertEquals(BackendSubscriptionStatus.Active, scenario.repository.getSubscription(TOKEN_HASH)?.status)
+    }
+
+    @Test
+    fun nonRetryablePlayRejectionStillRedeliversForIamRecoveryOrDeadLetterInspection() = runBlocking {
+        val scenario = Scenario(
+            playResult = PlaySubscriptionVerificationResult.Failure(
+                reason = "redacted",
+                retryable = false,
+                code = PlayVerificationFailureCode.PLAY_API_REJECTED,
+            ),
+        )
+        scenario.seedSubscription()
+
+        val result = scenario.processor.process(envelope(), notification())
+
+        assertEquals(
+            RtdnErrorCode.DEPENDENCY_UNAVAILABLE,
+            assertIs<RtdnProcessResult.RetryableFailure>(result).errorCode,
+        )
+        assertEquals("DEPENDENCY_UNAVAILABLE", scenario.events.releasedErrorCode)
+        assertEquals(null, scenario.events.completedOutcome)
     }
 
     @Test
