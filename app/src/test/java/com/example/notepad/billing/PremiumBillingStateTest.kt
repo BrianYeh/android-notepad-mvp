@@ -18,6 +18,7 @@ class PremiumBillingStateTest {
                 status = PremiumSubscriptionStatus.Active,
                 source = PremiumEntitlementSource.BackendVerified,
                 expiryTime = System.currentTimeMillis() + 60_000L,
+                acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
             ),
         )
 
@@ -31,6 +32,7 @@ class PremiumBillingStateTest {
                 status = PremiumSubscriptionStatus.GracePeriod,
                 source = PremiumEntitlementSource.BackendVerified,
                 expiryTime = System.currentTimeMillis() + 60_000L,
+                acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
             ),
         )
 
@@ -44,10 +46,72 @@ class PremiumBillingStateTest {
                 status = PremiumSubscriptionStatus.Active,
                 source = PremiumEntitlementSource.BackendVerified,
                 expiryTime = System.currentTimeMillis() - 1_000L,
+                acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
             ),
         )
 
         assertFalse(state.hasPremiumAccess)
+    }
+
+    @Test
+    fun backendVerifiedGrantableStatesRequireAcknowledgement() {
+        val grantableStatuses = listOf(
+            PremiumSubscriptionStatus.Active,
+            PremiumSubscriptionStatus.GracePeriod,
+        )
+        val unacknowledgedStatuses = listOf(
+            PremiumAcknowledgementStatus.Pending,
+            PremiumAcknowledgementStatus.Failed,
+            PremiumAcknowledgementStatus.Unknown,
+            PremiumAcknowledgementStatus.NotRequired,
+        )
+
+        grantableStatuses.forEach { status ->
+            unacknowledgedStatuses.forEach { acknowledgementStatus ->
+                val subscription = PremiumSubscriptionSnapshot(
+                    status = status,
+                    source = PremiumEntitlementSource.BackendVerified,
+                    expiryTime = System.currentTimeMillis() + 60_000L,
+                    acknowledgementStatus = acknowledgementStatus,
+                )
+
+                assertFalse(
+                    "$status with $acknowledgementStatus must fail closed",
+                    subscription.hasPremiumAccess(allowClientObservedAccess = false),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun canceledActiveUntilExpiryGrantsOnlyWhileAcknowledgedAndUnexpired() {
+        val now = System.currentTimeMillis()
+        val acknowledged = PremiumSubscriptionSnapshot(
+            status = PremiumSubscriptionStatus.CanceledActiveUntilExpiry,
+            source = PremiumEntitlementSource.BackendVerified,
+            expiryTime = now + 60_000L,
+            acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
+        )
+        val expired = acknowledged.copy(expiryTime = now - 1L)
+        val pending = acknowledged.copy(
+            acknowledgementStatus = PremiumAcknowledgementStatus.Pending,
+        )
+
+        assertTrue(acknowledged.hasPremiumAccess(allowClientObservedAccess = false, now = now))
+        assertFalse(expired.hasPremiumAccess(allowClientObservedAccess = false, now = now))
+        assertFalse(pending.hasPremiumAccess(allowClientObservedAccess = false, now = now))
+    }
+
+    @Test
+    fun pausedBackendVerifiedSubscriptionDoesNotGrantPremium() {
+        val subscription = PremiumSubscriptionSnapshot(
+            status = PremiumSubscriptionStatus.Paused,
+            source = PremiumEntitlementSource.BackendVerified,
+            expiryTime = System.currentTimeMillis() + 60_000L,
+            acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged,
+        )
+
+        assertFalse(subscription.hasPremiumAccess(allowClientObservedAccess = false))
     }
 
     @Test

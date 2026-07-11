@@ -8,6 +8,8 @@ enum class PremiumSubscriptionStatus {
     VerificationPending,
     Active,
     GracePeriod,
+    CanceledActiveUntilExpiry,
+    Paused,
     OnHold,
     Expired,
     Revoked,
@@ -29,6 +31,7 @@ enum class PremiumAcknowledgementStatus {
     RetryScheduled,
     Failed,
     BackendRequired,
+    Unknown,
 }
 
 data class PremiumSubscriptionSnapshot(
@@ -55,7 +58,9 @@ data class PremiumSubscriptionSnapshot(
         return when (source) {
             PremiumEntitlementSource.BackendVerified ->
                 (status == PremiumSubscriptionStatus.Active ||
-                    status == PremiumSubscriptionStatus.GracePeriod) &&
+                    status == PremiumSubscriptionStatus.GracePeriod ||
+                    status == PremiumSubscriptionStatus.CanceledActiveUntilExpiry) &&
+                    acknowledgementStatus == PremiumAcknowledgementStatus.Acknowledged &&
                     expiryTime?.let { it > now } == true
             PremiumEntitlementSource.ClientObserved ->
                 allowClientObservedAccess &&

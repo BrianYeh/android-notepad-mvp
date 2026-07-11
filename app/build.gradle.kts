@@ -151,6 +151,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 
     androidTestImplementation("androidx.room:room-testing:$roomVersion")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.10.01"))
