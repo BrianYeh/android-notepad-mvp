@@ -15,7 +15,7 @@
   <main>
     <h1>Delete Just Notes account data</h1>
     <p class="updated">Updated July 12, 2026</p>
-    <p>This page deletes eligible Just Notes backend entitlement and subscription records associated with the Google account you authenticate. It does not delete local notes on your device, a backup in your Google Drive account, or the Google account itself.</p>
+    <p>This page deletes eligible Just Notes backend entitlement and subscription records associated with the Google account you authenticate. To prevent an already-running billing update from recreating those records, a one-way hashed coordination guard remains for up to 15 minutes and is then removed by Firestore TTL. It does not delete local notes on your device, a backup in your Google Drive account, or the Google account itself.</p>
 
     <h2>Before you continue</h2>
     <ol>

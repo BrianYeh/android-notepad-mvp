@@ -31,7 +31,7 @@
     <p>Google, Google Play, Google Cloud, and GitHub process data as service providers under their own terms. Just Notes does not sell personal data and does not share data for advertising.</p>
 
     <h2>Retention and deletion</h2>
-    <p>Entitlement and subscription records are retained while needed to provide Premium, prevent fraud, comply with legal obligations, or complete a deletion request. Reviewer grants expire at their configured time. Security and delivery-deduplication records follow their configured retention period.</p>
+    <p>Entitlement and subscription records are retained while needed to provide Premium, prevent fraud, comply with legal obligations, or complete a deletion request. Reviewer grants expire at their configured time. After an eligible deletion, the backend keeps only a one-way hashed coordination guard for up to 15 minutes so an already-running billing update cannot recreate deleted records; Firestore TTL then removes it. Security and delivery-deduplication records follow their configured retention period.</p>
     <p>You can request deletion at <a href="../account-deletion/">the Just Notes account-deletion page</a>. Active Google Play subscriptions must be canceled separately and may need to reach expiry before backend subscription records can be deleted safely. Local notes remain under your device control, and Drive backups remain under your Google account control.</p>
 
     <h2>Contact</h2>

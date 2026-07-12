@@ -392,6 +392,7 @@ class BillingVerificationOrchestrator(
         return try {
             when (entitlementRepository.upsertSubscriptionForOwner(record)) {
                 SubscriptionWriteResult.OwnedByAnotherUser -> SubscriptionPersistenceResult.Conflict
+                SubscriptionWriteResult.AccountDeletionInProgress -> SubscriptionPersistenceResult.Failure
                 SubscriptionWriteResult.Created,
                 SubscriptionWriteResult.UpdatedForSameOwner,
                 -> loadSubscription(record.purchaseTokenHash, record.ownerGoogleSub).toPersistenceResult()

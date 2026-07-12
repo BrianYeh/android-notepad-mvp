@@ -179,6 +179,8 @@ class RtdnProcessor(
         when (entitlementRepository.upsertSubscriptionForOwner(updated)) {
             SubscriptionWriteResult.OwnedByAnotherUser ->
                 return release(messageIdHash, generation, RtdnErrorCode.INTERNAL_ERROR)
+            SubscriptionWriteResult.AccountDeletionInProgress ->
+                return release(messageIdHash, generation, RtdnErrorCode.DEPENDENCY_UNAVAILABLE)
             SubscriptionWriteResult.Created,
             SubscriptionWriteResult.UpdatedForSameOwner,
             -> Unit

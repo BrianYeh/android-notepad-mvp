@@ -15,6 +15,8 @@ import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
 import com.example.notepad.BuildConfig
 import java.util.Locale
+import java.util.Timer
+import java.util.TimerTask
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.flow.Flow
@@ -87,10 +89,47 @@ internal fun emitBackendPurchaseCandidates(
     return emitted
 }
 
-class PremiumBilling(
+internal interface ReviewerGrantExpiryScheduler {
+    fun replaceDeadline(delayMillis: Long?, task: () -> Unit)
+    fun close()
+}
+
+internal class TimerReviewerGrantExpiryScheduler : ReviewerGrantExpiryScheduler {
+    private val timer = Timer("reviewer-grant-expiry", true)
+    private var scheduledTask: TimerTask? = null
+    private var closed = false
+
+    override fun replaceDeadline(delayMillis: Long?, task: () -> Unit) {
+        synchronized(this) {
+            if (closed) return
+            scheduledTask?.cancel()
+            scheduledTask = null
+            if (delayMillis == null) return
+            scheduledTask = object : TimerTask() {
+                override fun run() = task()
+            }.also { timerTask ->
+                timer.schedule(timerTask, delayMillis.coerceAtLeast(0L))
+            }
+        }
+    }
+
+    override fun close() {
+        synchronized(this) {
+            if (closed) return
+            closed = true
+            scheduledTask?.cancel()
+            scheduledTask = null
+            timer.cancel()
+        }
+    }
+}
+
+internal class PremiumBilling(
     private val application: Application,
     private val clock: () -> Long = System::currentTimeMillis,
     private val connectToPlay: Boolean = true,
+    private val reviewerGrantExpiryScheduler: ReviewerGrantExpiryScheduler =
+        TimerReviewerGrantExpiryScheduler(),
 ) : PurchasesUpdatedListener {
     private val store = PremiumEntitlementStore(
         application.getSharedPreferences(PremiumEntitlementStore.PREFERENCES_NAME, Context.MODE_PRIVATE),
@@ -116,6 +155,10 @@ class PremiumBilling(
                 .build(),
         )
         .build()
+
+    init {
+        scheduleReviewerGrantExpiry(_state.value.subscription)
+    }
 
     fun start() {
         if (!connectToPlay) {
@@ -252,6 +295,7 @@ class PremiumBilling(
 
     fun close() {
         purchaseCandidateChannel.close()
+        reviewerGrantExpiryScheduler.close()
         if (billingClient.isReady) billingClient.endConnection()
     }
 
@@ -453,9 +497,48 @@ class PremiumBilling(
         return true
     }
 
+    @Synchronized
     private fun saveSubscription(snapshot: PremiumSubscriptionSnapshot) {
         store.saveSubscription(snapshot)
         _state.update { it.copy(subscription = snapshot) }
+        scheduleReviewerGrantExpiry(snapshot)
+    }
+
+    private fun scheduleReviewerGrantExpiry(snapshot: PremiumSubscriptionSnapshot) {
+        val expiryTime = snapshot.expiryTime.takeIf {
+            snapshot.source == PremiumEntitlementSource.ReviewerGrant
+        }
+        val now = clock()
+        val delayMillis = expiryTime?.let { expiry ->
+            if (expiry > now) expiry - now else 0L
+        }
+        reviewerGrantExpiryScheduler.replaceDeadline(delayMillis) {
+            expireReviewerGrantIfDue()
+        }
+    }
+
+    @Synchronized
+    private fun expireReviewerGrantIfDue() {
+        val current = _state.value.subscription
+        if (current.source != PremiumEntitlementSource.ReviewerGrant) {
+            reviewerGrantExpiryScheduler.replaceDeadline(null) {}
+            return
+        }
+        val expiryTime = current.expiryTime
+        val now = clock()
+        if (expiryTime != null && expiryTime > now) {
+            scheduleReviewerGrantExpiry(current)
+            return
+        }
+        saveSubscription(
+            current.copy(
+                status = PremiumSubscriptionStatus.Expired,
+                source = PremiumEntitlementSource.None,
+                expiryTime = null,
+                lastEntitlementChangeAt = now,
+                acknowledgementStatus = PremiumAcknowledgementStatus.NotRequired,
+            ),
+        )
     }
 
     private fun billingMessage(result: BillingResult, fallback: String): String {

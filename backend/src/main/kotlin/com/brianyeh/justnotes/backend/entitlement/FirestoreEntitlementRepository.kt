@@ -1,5 +1,8 @@
 package com.brianyeh.justnotes.backend.entitlement
 
+import com.brianyeh.justnotes.backend.account.ACCOUNT_DELETION_GUARDS_COLLECTION
+import com.brianyeh.justnotes.backend.account.accountDeletionGuardDocumentId
+import com.brianyeh.justnotes.backend.account.isAccountDeletionGuardActive
 import com.google.cloud.firestore.Firestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -44,6 +47,7 @@ interface FirestoreEntitlementDocumentStore {
 
 class GoogleCloudFirestoreEntitlementDocumentStore(
     private val firestore: Firestore,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
 ) : FirestoreEntitlementDocumentStore {
     override suspend fun getEntitlementDocument(documentId: String): Map<String, Any?>? {
         return withContext(Dispatchers.IO) {
@@ -84,9 +88,16 @@ class GoogleCloudFirestoreEntitlementDocumentStore(
     ): SubscriptionWriteResult {
         return withContext(Dispatchers.IO) {
             val reference = firestore.collection(SUBSCRIPTIONS_COLLECTION).document(documentId)
+            val guardReference = firestore.collection(ACCOUNT_DELETION_GUARDS_COLLECTION)
+                .document(accountDeletionGuardDocumentId(ownerGoogleSub))
             firestore.runTransaction { transaction ->
+                val guardSnapshot = transaction.get(guardReference).get()
+                if (isAccountDeletionGuardActive(guardSnapshot.data, nowMillis())) {
+                    return@runTransaction SubscriptionWriteResult.AccountDeletionInProgress
+                }
                 val snapshot = transaction.get(reference).get()
                 val existingOwner = snapshot.getString(OWNER_GOOGLE_SUB_FIELD)
+                if (guardSnapshot.exists()) transaction.delete(guardReference)
                 when {
                     !snapshot.exists() -> {
                         transaction.create(reference, fields)

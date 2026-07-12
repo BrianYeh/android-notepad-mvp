@@ -47,6 +47,7 @@ class AccountDeletionRepositoryTest {
     fun expiredAndRevokedSubscriptionsAreDeletedWithEntitlement() = runSuspend {
         val store = FakeDeletionStore(
             entitlement = mapOf(
+                "googleSub" to GOOGLE_SUB,
                 "hasPremium" to false,
                 "status" to BackendSubscriptionStatus.Expired.name,
                 "expiryTime" to NOW - 1L,
@@ -86,9 +87,40 @@ class AccountDeletionRepositoryTest {
     }
 
     @Test
-    fun moreThan499OwnedSubscriptionsFailsClosed() = runSuspend {
+    fun entitlementOwnedByDifferentSubjectFailsClosed() = runSuspend {
         val store = FakeDeletionStore(
-            subscriptions = MutableList(500) { index ->
+            entitlement = mapOf(
+                "googleSub" to "different-subject",
+                "hasPremium" to false,
+                "status" to BackendSubscriptionStatus.Expired.name,
+            ),
+        )
+
+        val result = FirestoreAccountDeletionRepository(store).deleteAccountData(GOOGLE_SUB, NOW)
+
+        assertEquals(AccountDeletionResult.FailedClosed, result)
+        assertEquals(emptyList(), store.deletions)
+    }
+
+    @Test
+    fun subscriptionCreatedBetweenEligibilityReadAndDeleteBlocksDeletion() = runSuspend {
+        lateinit var store: FakeDeletionStore
+        store = FakeDeletionStore(
+            mutateBeforeDelete = {
+                store.subscriptions += subscription("concurrent-token-hash", BackendSubscriptionStatus.Active)
+            },
+        )
+
+        val result = FirestoreAccountDeletionRepository(store).deleteAccountData(GOOGLE_SUB, NOW)
+
+        assertEquals(AccountDeletionResult.BlockedByNonterminalSubscription, result)
+        assertEquals(emptyList(), store.deletions)
+    }
+
+    @Test
+    fun moreThan498OwnedSubscriptionsFailsClosed() = runSuspend {
+        val store = FakeDeletionStore(
+            subscriptions = MutableList(499) { index ->
                 subscription("token-hash-$index", BackendSubscriptionStatus.Expired)
             },
         )
@@ -129,21 +161,28 @@ class AccountDeletionRepositoryTest {
     private class FakeDeletionStore(
         var entitlement: Map<String, Any?>? = null,
         val subscriptions: MutableList<OwnedSubscriptionDocument> = mutableListOf(),
+        val mutateBeforeDelete: (() -> Unit)? = null,
     ) : AccountDeletionDocumentStore {
         val deletions = mutableListOf<Pair<String, List<String>>>()
 
-        override suspend fun getEntitlementDocument(documentId: String): Map<String, Any?>? = entitlement
-
-        override suspend fun getOwnedSubscriptionDocuments(
-            ownerGoogleSub: String,
-            limit: Int,
-        ): List<OwnedSubscriptionDocument> = subscriptions.take(limit)
-
-        override suspend fun deleteAccountDocuments(
+        override suspend fun deleteAccountDocumentsAtomically(
             entitlementDocumentId: String,
-            subscriptionDocumentIds: List<String>,
-        ) {
-            deletions += entitlementDocumentId to subscriptionDocumentIds
+            guardDocumentId: String,
+            guardExpiresAt: Long,
+            ownerGoogleSub: String,
+            subscriptionLimit: Int,
+            deletionDecision: (
+                entitlement: Map<String, Any?>?,
+                subscriptions: List<OwnedSubscriptionDocument>,
+            ) -> AccountDeletionResult,
+        ): AccountDeletionResult {
+            mutateBeforeDelete?.invoke()
+            val visibleSubscriptions = subscriptions.take(subscriptionLimit)
+            val decision = deletionDecision(entitlement, visibleSubscriptions)
+            if (decision == AccountDeletionResult.Deleted) {
+                deletions += entitlementDocumentId to visibleSubscriptions.map { it.documentId }
+            }
+            return decision
         }
     }
 

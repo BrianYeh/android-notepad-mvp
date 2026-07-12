@@ -4,6 +4,7 @@ sealed class SubscriptionWriteResult {
     data object Created : SubscriptionWriteResult()
     data object UpdatedForSameOwner : SubscriptionWriteResult()
     data object OwnedByAnotherUser : SubscriptionWriteResult()
+    data object AccountDeletionInProgress : SubscriptionWriteResult()
 }
 
 sealed class AcknowledgementClaimResult {
