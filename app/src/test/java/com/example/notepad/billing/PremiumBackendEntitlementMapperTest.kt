@@ -7,6 +7,65 @@ import org.junit.Test
 
 class PremiumBackendEntitlementMapperTest {
     @Test
+    fun validReviewerGrantUnlocksUntilExpiry() {
+        val result = mapResponse(reviewerResponse())
+
+        assertTrue(result.accepted)
+        assertEquals(PremiumEntitlementSource.ReviewerGrant, result.snapshot.source)
+        assertEquals(PremiumSubscriptionStatus.Active, result.snapshot.status)
+        assertEquals(PremiumAcknowledgementStatus.NotRequired, result.snapshot.acknowledgementStatus)
+        assertEquals(NOW + 60_000L, result.snapshot.expiryTime)
+        assertTrue(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
+    }
+
+    @Test
+    fun reviewerGrantRejectsCatalogOrPurchaseFields() {
+        val responses = listOf(
+            reviewerResponse().copy(packageName = PACKAGE_NAME),
+            reviewerResponse().copy(productId = PremiumCatalog.PREFERRED_PRODUCT_ID),
+            reviewerResponse().copy(basePlanId = "monthly"),
+            reviewerResponse().copy(offerId = "trial10d"),
+            reviewerResponse().copy(purchaseTokenHash = "must-not-exist"),
+        )
+
+        responses.forEach { response ->
+            val result = mapResponse(response)
+            assertFalse(result.accepted)
+            assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
+        }
+    }
+
+    @Test
+    fun reviewerGrantRejectsMissingOrPastExpiry() {
+        listOf(null, NOW, NOW - 1L).forEach { expiry ->
+            val result = mapResponse(reviewerResponse().copy(expiryTime = expiry))
+            assertFalse(result.accepted)
+            assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
+        }
+    }
+
+    @Test
+    fun reviewerGrantRejectsAcknowledgedInsteadOfNotRequired() {
+        val result = mapResponse(
+            reviewerResponse().copy(
+                acknowledgementState = PremiumBackendAcknowledgementState.Acknowledged,
+            ),
+        )
+
+        assertFalse(result.accepted)
+        assertFalse(result.snapshot.hasPremiumAccess(allowClientObservedAccess = false, now = NOW))
+    }
+
+    @Test
+    fun signOutClearsReviewerGrant() {
+        assertTrue(
+            shouldClearBackendEntitlement(
+                PremiumSubscriptionSnapshot(source = PremiumEntitlementSource.ReviewerGrant),
+            ),
+        )
+    }
+
+    @Test
     fun acknowledgedGrantableBackendResponsesMapWithoutFlatteningStatus() {
         val grantableStatuses = listOf(
             PremiumSubscriptionStatus.Active,
@@ -372,6 +431,17 @@ class PremiumBackendEntitlementMapperTest {
                 status = PremiumSubscriptionStatus.Unknown,
                 source = PremiumEntitlementSource.None,
             ),
+        )
+    }
+
+    private fun reviewerResponse(): PremiumBackendEntitlementResponse {
+        return PremiumBackendEntitlementResponse(
+            hasPremium = true,
+            status = PremiumSubscriptionStatus.Active,
+            source = PremiumEntitlementSource.ReviewerGrant,
+            expiryTime = NOW + 60_000L,
+            lastVerifiedAt = NOW,
+            acknowledgementState = PremiumBackendAcknowledgementState.NotRequired,
         )
     }
 

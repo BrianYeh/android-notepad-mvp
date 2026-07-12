@@ -217,6 +217,25 @@ class PremiumBillingStateTest {
     }
 
     @Test
+    fun reviewerGrantRequiresActiveFutureExpiryAndNotRequiredAcknowledgement() {
+        val now = System.currentTimeMillis()
+        val valid = PremiumSubscriptionSnapshot(
+            status = PremiumSubscriptionStatus.Active,
+            source = PremiumEntitlementSource.ReviewerGrant,
+            expiryTime = now + 60_000L,
+            acknowledgementStatus = PremiumAcknowledgementStatus.NotRequired,
+        )
+
+        assertTrue(valid.hasPremiumAccess(allowClientObservedAccess = false, now = now))
+        assertFalse(valid.copy(status = PremiumSubscriptionStatus.GracePeriod)
+            .hasPremiumAccess(allowClientObservedAccess = false, now = now))
+        assertFalse(valid.copy(expiryTime = now)
+            .hasPremiumAccess(allowClientObservedAccess = false, now = now))
+        assertFalse(valid.copy(acknowledgementStatus = PremiumAcknowledgementStatus.Acknowledged)
+            .hasPremiumAccess(allowClientObservedAccess = false, now = now))
+    }
+
+    @Test
     fun hasPremiumAccessRejectsExpiredBackendVerifiedCache() {
         val state = PremiumBillingState(
             subscription = PremiumSubscriptionSnapshot(

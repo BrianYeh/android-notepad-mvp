@@ -228,6 +228,7 @@ class BackendBillingClientTest {
             verifyEnvelope(status = "FutureState"),
             verifyEnvelope(status = "Error"),
             verifyEnvelope(acknowledgementState = "FutureAck"),
+            verifyEnvelope(source = "ReviewerGrant"),
             verifyEnvelope(errorCode = "INVALID_REQUEST"),
             JSONObject(verifyEnvelope()).put("extra", true).toString(),
             JSONObject(verifyEnvelope()).put("retryable", "false").toString(),
@@ -420,6 +421,7 @@ class BackendBillingClientTest {
         schemaVersion: Int = 1,
         hasPremium: Boolean = true,
         status: String = "Active",
+        source: String = "BackendVerified",
         acknowledgementState: String? = "Acknowledged",
         retryable: Boolean = false,
         retryAfterSeconds: Long? = null,
@@ -430,7 +432,7 @@ class BackendBillingClientTest {
             put("schemaVersion", schemaVersion)
             put("hasPremium", hasPremium)
             put("status", status)
-            put("source", "BackendVerified")
+            put("source", source)
             put("packageName", "com.brianyeh.justnotes")
             put("productId", PremiumCatalog.PREFERRED_PRODUCT_ID)
             put("basePlanId", "monthly")

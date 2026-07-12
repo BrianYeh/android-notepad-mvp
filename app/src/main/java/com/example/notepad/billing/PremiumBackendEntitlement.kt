@@ -53,6 +53,10 @@ object PremiumBackendEntitlementMapper {
             )
         }
 
+        if (response.source == PremiumEntitlementSource.ReviewerGrant) {
+            return mapReviewerGrant(response, now)
+        }
+
         val acknowledgementStatus = response.acknowledgementState.toSnapshotStatus()
         val rejectionReason = rejectReason(expectedPackageName, response, now)
         if (rejectionReason != null) {
@@ -92,6 +96,49 @@ object PremiumBackendEntitlementMapper {
                 acknowledgementStatus = acknowledgementStatus,
                 nextAcknowledgementAttemptAt = response.nextAcknowledgementAttemptAt(now),
                 lastAcknowledgementError = response.reason ?: response.errorCode,
+            ),
+        )
+    }
+
+    private fun mapReviewerGrant(
+        response: PremiumBackendEntitlementResponse,
+        now: Long,
+    ): PremiumBackendVerificationResult {
+        val valid = response.hasPremium &&
+            response.status == PremiumSubscriptionStatus.Active &&
+            response.acknowledgementState == PremiumBackendAcknowledgementState.NotRequired &&
+            response.expiryTime?.let { it > now } == true &&
+            response.packageName == null &&
+            response.productId == null &&
+            response.basePlanId == null &&
+            response.offerId == null &&
+            response.purchaseTokenHash == null &&
+            !response.retryable &&
+            response.retryAfterSeconds == null &&
+            response.errorCode == null &&
+            response.reason == null
+        if (!valid) {
+            return PremiumBackendVerificationResult(
+                accepted = false,
+                rejectionReason = "Reviewer entitlement response is invalid.",
+                snapshot = PremiumSubscriptionSnapshot(
+                    status = PremiumSubscriptionStatus.Error,
+                    source = PremiumEntitlementSource.None,
+                    lastBackendVerifiedAt = now,
+                    lastEntitlementChangeAt = now,
+                    acknowledgementStatus = PremiumAcknowledgementStatus.Unknown,
+                ),
+            )
+        }
+        return PremiumBackendVerificationResult(
+            accepted = true,
+            snapshot = PremiumSubscriptionSnapshot(
+                status = PremiumSubscriptionStatus.Active,
+                source = PremiumEntitlementSource.ReviewerGrant,
+                expiryTime = response.expiryTime,
+                lastBackendVerifiedAt = response.lastVerifiedAt ?: now,
+                lastEntitlementChangeAt = now,
+                acknowledgementStatus = PremiumAcknowledgementStatus.NotRequired,
             ),
         )
     }

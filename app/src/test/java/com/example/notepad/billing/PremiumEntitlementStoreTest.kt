@@ -66,6 +66,24 @@ class PremiumEntitlementStoreTest {
         assertTrue(preferences.all.values.contains("backend-hmac-hash"))
     }
 
+    @Test
+    fun storedReviewerGrantStopsGrantingAfterExpiry() {
+        val now = 1_900_000_000_000L
+        val store = PremiumEntitlementStore(FakeSharedPreferences())
+        store.saveSubscription(
+            PremiumSubscriptionSnapshot(
+                status = PremiumSubscriptionStatus.Active,
+                source = PremiumEntitlementSource.ReviewerGrant,
+                expiryTime = now + 1_000L,
+                acknowledgementStatus = PremiumAcknowledgementStatus.NotRequired,
+            ),
+        )
+
+        val stored = store.loadSubscription()
+        assertTrue(stored.hasPremiumAccess(allowClientObservedAccess = false, now = now))
+        assertFalse(stored.hasPremiumAccess(allowClientObservedAccess = false, now = now + 1_000L))
+    }
+
     private class FakeSharedPreferences(
         private val values: MutableMap<String, Any?> = mutableMapOf(),
     ) : SharedPreferences {

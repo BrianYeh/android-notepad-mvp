@@ -185,7 +185,7 @@ class PremiumBilling(
 
     fun clearBackendEntitlement() {
         val current = _state.value.subscription
-        if (current.source != PremiumEntitlementSource.BackendVerified) return
+        if (!shouldClearBackendEntitlement(current)) return
         saveSubscription(
             PremiumSubscriptionSnapshot(
                 status = PremiumSubscriptionStatus.Free,
@@ -446,7 +446,7 @@ class PremiumBilling(
 
     private fun preserveBackendVerifiedEntitlement(now: Long): Boolean {
         val current = _state.value.subscription
-        if (current.source != PremiumEntitlementSource.BackendVerified) return false
+        if (!current.source.isBackendAuthoritative()) return false
         saveSubscription(current.copy(lastPlayQueryAt = now))
         purchaseStatusError = null
         _state.update { it.copy(loading = false, lastError = visibleBillingError()) }
@@ -492,5 +492,11 @@ internal fun shouldPersistBackendEntitlementResult(
     result: PremiumBackendVerificationResult,
 ): Boolean {
     if (result.shouldApplySnapshot) return true
-    return result.accepted && current.source == PremiumEntitlementSource.BackendVerified
+    return result.accepted && current.source.isBackendAuthoritative()
 }
+
+internal fun shouldClearBackendEntitlement(snapshot: PremiumSubscriptionSnapshot): Boolean =
+    snapshot.source.isBackendAuthoritative()
+
+private fun PremiumEntitlementSource.isBackendAuthoritative(): Boolean =
+    this == PremiumEntitlementSource.BackendVerified || this == PremiumEntitlementSource.ReviewerGrant

@@ -695,6 +695,32 @@ class BackendEntitlementRepositoryTest {
         assertTrue(result is BackendEntitlementFetchResult.Failure)
     }
 
+    @Test
+    fun backendParserAcceptsReviewerGrantButStillRejectsClientObserved() = runBlocking {
+        fun clientFor(source: String) = HttpBackendEntitlementClient(
+            config = BackendEntitlementClientConfig(
+                baseUrl = "https://backend.example",
+                googleWebClientId = TEST_WEB_CLIENT_ID,
+            ),
+            openConnection = { url ->
+                FakeHttpURLConnection(
+                    url = url,
+                    responseCode = 200,
+                    body = reviewerEntitlementEnvelope(source),
+                )
+            },
+        )
+
+        val reviewer = clientFor("ReviewerGrant").fetchEntitlement("id-token")
+        val clientObserved = clientFor("ClientObserved").fetchEntitlement("id-token")
+
+        assertEquals(
+            PremiumEntitlementSource.ReviewerGrant,
+            (reviewer as BackendEntitlementFetchResult.Success).response.source,
+        )
+        assertTrue(clientObserved is BackendEntitlementFetchResult.Failure)
+    }
+
     private class FakeHttpURLConnection(
         url: URL,
         private val responseCode: Int,
@@ -734,6 +760,24 @@ class BackendEntitlementRepositoryTest {
             versionCode = 5,
             deviceLocale = "zh-TW",
         )
+    }
+
+    private fun reviewerEntitlementEnvelope(source: String): String {
+        return """{
+            "schemaVersion":1,
+            "hasPremium":true,
+            "status":"Active",
+            "source":"$source",
+            "packageName":null,
+            "productId":null,
+            "basePlanId":null,
+            "offerId":null,
+            "expiryTime":1900000000000,
+            "lastVerifiedAt":1800000000000,
+            "stale":false,
+            "purchaseTokenHash":null,
+            "acknowledgementState":"NotRequired"
+        }""".trimIndent()
     }
 
     private companion object {

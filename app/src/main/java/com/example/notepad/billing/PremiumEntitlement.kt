@@ -21,6 +21,7 @@ enum class PremiumSubscriptionStatus {
 enum class PremiumEntitlementSource {
     None,
     BackendVerified,
+    ReviewerGrant,
     ClientObserved,
 }
 
@@ -61,6 +62,10 @@ data class PremiumSubscriptionSnapshot(
                     status == PremiumSubscriptionStatus.GracePeriod ||
                     status == PremiumSubscriptionStatus.CanceledActiveUntilExpiry) &&
                     acknowledgementStatus == PremiumAcknowledgementStatus.Acknowledged &&
+                    expiryTime?.let { it > now } == true
+            PremiumEntitlementSource.ReviewerGrant ->
+                status == PremiumSubscriptionStatus.Active &&
+                    acknowledgementStatus == PremiumAcknowledgementStatus.NotRequired &&
                     expiryTime?.let { it > now } == true
             PremiumEntitlementSource.ClientObserved ->
                 allowClientObservedAccess &&

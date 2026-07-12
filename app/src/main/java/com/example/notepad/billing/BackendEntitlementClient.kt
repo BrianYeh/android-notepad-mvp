@@ -364,6 +364,10 @@ internal class HttpBackendEntitlementClient(
         val root = JSONObject(json)
         root.requireExactFields(VERIFY_RESPONSE_FIELDS)
         root.requireSchemaVersion()
+        val source = root.requiredBackendSource()
+        require(source != PremiumEntitlementSource.ReviewerGrant) {
+            "Purchase verification cannot return a reviewer grant."
+        }
         val errorCode = root.requiredNullableString("errorCode")
         require(errorCode == null || errorCode in VERIFY_ERROR_CODES) {
             "Verify response error code is invalid."
@@ -371,7 +375,7 @@ internal class HttpBackendEntitlementClient(
         return PremiumBackendEntitlementResponse(
             hasPremium = root.requiredBoolean("hasPremium"),
             status = root.requiredBackendStatus(),
-            source = root.requiredBackendSource(),
+            source = source,
             packageName = root.requiredNullableString("packageName"),
             productId = root.requiredNullableString("productId"),
             basePlanId = root.requiredNullableString("basePlanId"),
@@ -728,7 +732,9 @@ private inline fun <reified T : Enum<T>> JSONObject.requiredNullableEnum(name: S
 private fun JSONObject.requiredBackendSource(): PremiumEntitlementSource {
     val source = requiredEnum<PremiumEntitlementSource>("source")
     require(
-        source == PremiumEntitlementSource.None || source == PremiumEntitlementSource.BackendVerified,
+        source == PremiumEntitlementSource.None ||
+            source == PremiumEntitlementSource.BackendVerified ||
+            source == PremiumEntitlementSource.ReviewerGrant,
     ) { "Backend response source is invalid." }
     return source
 }
