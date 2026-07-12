@@ -12,6 +12,9 @@ import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerifier
 import com.brianyeh.justnotes.backend.rtdn.FirestoreRtdnEventRepository
 import com.brianyeh.justnotes.backend.rtdn.GoogleCloudFirestoreRtdnEventDocumentStore
 import com.brianyeh.justnotes.backend.rtdn.RtdnEventRepository
+import com.brianyeh.justnotes.backend.reviewer.NoReviewerGrantPolicy
+import com.brianyeh.justnotes.backend.reviewer.ReviewerGrantPolicy
+import com.brianyeh.justnotes.backend.reviewer.SecretBackedReviewerGrantPolicy
 import com.brianyeh.justnotes.backend.security.CachingSecretManagerSecretValueProvider
 import com.brianyeh.justnotes.backend.security.GoogleCloudKmsGateway
 import com.brianyeh.justnotes.backend.security.GoogleCloudSecretManagerGateway
@@ -41,6 +44,7 @@ class ProductionBackendDependencies private constructor(
     val obfuscatedAccountIdDeriver: ObfuscatedAccountIdDeriver,
     val purchaseTokenCipher: PurchaseTokenCipher,
     val emailHashSecretProvider: SecretValueProvider,
+    val reviewerGrantPolicy: ReviewerGrantPolicy,
     val rtdnEventRepository: RtdnEventRepository,
     private val firestore: Firestore,
     private val secretManagerClient: SecretManagerServiceClient,
@@ -79,6 +83,14 @@ class ProductionBackendDependencies private constructor(
                     resourceName = requireNotNull(config.emailHashSecretResource),
                     gateway = secretGateway,
                 )
+                val reviewerGrantPolicy = config.reviewerGrantSecretResource?.let { resourceName ->
+                    SecretBackedReviewerGrantPolicy(
+                        CachingSecretManagerSecretValueProvider(
+                            resourceName = resourceName,
+                            gateway = secretGateway,
+                        ),
+                    )
+                } ?: NoReviewerGrantPolicy
                 val purchaseTokenHasher = HmacSha256PurchaseTokenHasher(tokenHashSecretProvider)
                 val publisherGateway = GoogleAndroidPublisherGateway(createAndroidPublisher())
 
@@ -100,6 +112,7 @@ class ProductionBackendDependencies private constructor(
                         gateway = GoogleCloudKmsGateway(kmsClient),
                     ),
                     emailHashSecretProvider = emailHashSecretProvider,
+                    reviewerGrantPolicy = reviewerGrantPolicy,
                     rtdnEventRepository = FirestoreRtdnEventRepository(
                         store = GoogleCloudFirestoreRtdnEventDocumentStore(firestore),
                         ttlDays = config.rtdnEventTtlDays,

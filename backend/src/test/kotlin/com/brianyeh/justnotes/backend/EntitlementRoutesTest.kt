@@ -8,6 +8,7 @@ import com.brianyeh.justnotes.backend.config.BackendConfig
 import com.brianyeh.justnotes.backend.entitlement.AcknowledgementCompletionResult
 import com.brianyeh.justnotes.backend.entitlement.AcknowledgementClaimResult
 import com.brianyeh.justnotes.backend.entitlement.BackendAcknowledgementState
+import com.brianyeh.justnotes.backend.entitlement.BackendEntitlementSource
 import com.brianyeh.justnotes.backend.entitlement.BackendSubscriptionStatus
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRecord
 import com.brianyeh.justnotes.backend.entitlement.EntitlementReconciliationResult
@@ -28,6 +29,8 @@ import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerification
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerificationResult
 import com.brianyeh.justnotes.backend.play.PlaySubscriptionVerifier
 import com.brianyeh.justnotes.backend.routes.justNotesRoutes as productionJustNotesRoutes
+import com.brianyeh.justnotes.backend.reviewer.NoReviewerGrantPolicy
+import com.brianyeh.justnotes.backend.reviewer.ReviewerGrantPolicy
 import com.brianyeh.justnotes.backend.security.ObfuscatedAccountIdDeriver
 import com.brianyeh.justnotes.backend.security.PurchaseTokenCipher
 import com.brianyeh.justnotes.backend.security.TokenCiphertext
@@ -221,6 +224,141 @@ class EntitlementRoutesTest {
         assertContains(response.bodyAsText(), """"hasPremium":false""")
         assertContains(response.bodyAsText(), """"status":"Unknown"""")
         assertContains(response.bodyAsText(), """"source":"None"""")
+    }
+
+    @Test
+    fun matchingReviewerIdentityReturnsNoStoreReviewerEntitlementWithoutRepositoryRead() = testApplication {
+        var repositoryReads = 0
+        val repository = object : EntitlementRepository by EmptyRepository {
+            override suspend fun getEntitlement(googleSub: String): EntitlementRecord? {
+                repositoryReads += 1
+                return null
+            }
+        }
+        val reviewerPolicy = ReviewerGrantPolicy { identity, now ->
+            assertEquals("reviewer-hash", identity.emailHash)
+            EntitlementRecord(
+                googleSub = identity.googleSub,
+                hasPremium = true,
+                status = BackendSubscriptionStatus.Active,
+                source = BackendEntitlementSource.ReviewerGrant,
+                expiryTime = now + 3_600_000L,
+                lastVerifiedAt = now,
+                acknowledgementState = BackendAcknowledgementState.NotRequired,
+            )
+        }
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(emailHash = "reviewer-hash"),
+                entitlementRepository = repository,
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                reviewerGrantPolicy = reviewerPolicy,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.get("/v1/entitlement") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("no-store", response.headers[HttpHeaders.CacheControl])
+        assertEquals(0, repositoryReads)
+        assertEquals(
+            """{"schemaVersion":1,"hasPremium":true,"status":"Active","source":"ReviewerGrant","packageName":null,"productId":null,"basePlanId":null,"offerId":null,"expiryTime":1762003600000,"lastVerifiedAt":1762000000000,"stale":false,"purchaseTokenHash":null,"acknowledgementState":"NotRequired"}""",
+            response.bodyAsText(),
+        )
+    }
+
+    @Test
+    fun nonmatchingReviewerFallsBackToRepository() = testApplication {
+        var repositoryReads = 0
+        val repository = object : EntitlementRepository by EmptyRepository {
+            override suspend fun getEntitlement(googleSub: String): EntitlementRecord? {
+                repositoryReads += 1
+                return null
+            }
+        }
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(emailHash = "other-hash"),
+                entitlementRepository = repository,
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                reviewerGrantPolicy = ReviewerGrantPolicy { _, _ -> null },
+                clock = { NOW },
+            )
+        }
+
+        val response = client.get("/v1/entitlement") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(1, repositoryReads)
+        assertContains(response.bodyAsText(), """"source":"None"""")
+    }
+
+    @Test
+    fun persistedReviewerSourceCannotBypassReadSanitization() = testApplication {
+        val repository = object : EntitlementRepository by EmptyRepository {
+            override suspend fun getEntitlement(googleSub: String): EntitlementRecord {
+                return EntitlementRecord(
+                    googleSub = googleSub,
+                    hasPremium = true,
+                    status = BackendSubscriptionStatus.Active,
+                    source = BackendEntitlementSource.ReviewerGrant,
+                    expiryTime = NOW + 3_600_000L,
+                    lastVerifiedAt = NOW,
+                    acknowledgementState = BackendAcknowledgementState.NotRequired,
+                )
+            }
+        }
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = repository,
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                clock = { NOW },
+            )
+        }
+
+        val response = client.get("/v1/entitlement") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertContains(response.bodyAsText(), """"hasPremium":false""")
+    }
+
+    @Test
+    fun billingVerifyAndDisabledRtdnDoNotConsultReviewerPolicy() = testApplication {
+        var reviewerCalls = 0
+        val policy = ReviewerGrantPolicy { _, _ ->
+            reviewerCalls += 1
+            error("Reviewer policy must not run outside entitlement GET.")
+        }
+        application {
+            justNotesRoutes(
+                config = testConfig(),
+                idTokenVerifier = FakeVerifier(),
+                entitlementRepository = EmptyRepository,
+                playSubscriptionVerifier = NoopPlaySubscriptionVerifier,
+                reviewerGrantPolicy = policy,
+                clock = { NOW },
+            )
+        }
+
+        client.post("/v1/billing/verify") {
+            header(HttpHeaders.Authorization, "Bearer id-token")
+            contentType(ContentType.Application.Json)
+            setBody(validVerifyJson())
+        }
+        client.post("/v1/play/rtdn")
+
+        assertEquals(0, reviewerCalls)
     }
 
     @Test
@@ -801,6 +939,7 @@ private fun Application.justNotesRoutes(
     ),
     obfuscatedAccountIdDeriver: ObfuscatedAccountIdDeriver = RouteAccountIdDeriver(),
     purchaseTokenCipher: PurchaseTokenCipher = RoutePurchaseTokenCipher,
+    reviewerGrantPolicy: ReviewerGrantPolicy = NoReviewerGrantPolicy,
     clock: () -> Long,
 ) {
     val orchestrator = BillingVerificationOrchestrator(
@@ -818,6 +957,7 @@ private fun Application.justNotesRoutes(
         entitlementRepository = entitlementRepository,
         billingVerificationOrchestrator = orchestrator,
         obfuscatedAccountIdDeriver = obfuscatedAccountIdDeriver,
+        reviewerGrantPolicy = reviewerGrantPolicy,
         clock = clock,
     )
 }
@@ -926,9 +1066,16 @@ private object RoutePurchaseTokenCipher : PurchaseTokenCipher {
 private const val ROUTE_NOW = 1_762_000_000_000L
 private const val ROUTE_ACCOUNT_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-private class FakeVerifier : GoogleIdTokenVerifier {
+private class FakeVerifier(
+    private val emailHash: String? = null,
+) : GoogleIdTokenVerifier {
     override suspend fun verify(idToken: String): GoogleIdTokenVerificationResult {
-        return GoogleIdTokenVerificationResult.Success(VerifiedGoogleIdentity("google-sub"))
+        return GoogleIdTokenVerificationResult.Success(
+            VerifiedGoogleIdentity(
+                googleSub = "google-sub",
+                emailHash = emailHash,
+            ),
+        )
     }
 }
 

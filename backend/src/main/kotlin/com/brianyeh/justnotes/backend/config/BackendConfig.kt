@@ -13,6 +13,7 @@ data class BackendConfig(
     val tokenHashSecretResource: String?,
     val obfuscatedAccountSecretResource: String?,
     val emailHashSecretResource: String?,
+    val reviewerGrantSecretResource: String? = null,
     val kmsTokenEncryptionKeyResource: String?,
     val entitlementReverifyTtlMillis: Long,
     val entitlementMaxStaleMillis: Long,
@@ -43,6 +44,9 @@ data class BackendConfig(
             validateSecretResource("Token hash secret", tokenHashSecretResource)?.let(::add)
             validateSecretResource("Obfuscated account secret", obfuscatedAccountSecretResource)?.let(::add)
             validateSecretResource("Email hash secret", emailHashSecretResource)?.let(::add)
+            reviewerGrantSecretResource?.let { resource ->
+                validateSecretResource("Reviewer grant secret", resource)?.let(::add)
+            }
             if (kmsTokenEncryptionKeyResource?.matches(KMS_KEY_RESOURCE_PATTERN) != true) {
                 add("KMS token encryption key resource is not configured or malformed.")
             }
@@ -115,6 +119,7 @@ data class BackendConfig(
                 tokenHashSecretResource = environment["TOKEN_HASH_SECRET_RESOURCE"]?.trim()?.takeIf { it.isNotBlank() },
                 obfuscatedAccountSecretResource = environment["OBFUSCATED_ACCOUNT_SECRET_RESOURCE"]?.trim()?.takeIf { it.isNotBlank() },
                 emailHashSecretResource = environment["EMAIL_HASH_SECRET_RESOURCE"]?.trim()?.takeIf { it.isNotBlank() },
+                reviewerGrantSecretResource = environment["REVIEWER_GRANT_SECRET_RESOURCE"]?.trim()?.takeIf { it.isNotBlank() },
                 kmsTokenEncryptionKeyResource = environment["KMS_TOKEN_ENCRYPTION_KEY_RESOURCE"]?.trim()?.takeIf { it.isNotBlank() },
                 entitlementReverifyTtlMillis = 6L * 60L * 60L * 1_000L,
                 entitlementMaxStaleMillis = 24L * 60L * 60L * 1_000L,

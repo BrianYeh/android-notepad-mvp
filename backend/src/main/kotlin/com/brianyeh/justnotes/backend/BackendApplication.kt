@@ -7,6 +7,8 @@ import com.brianyeh.justnotes.backend.config.BackendConfig
 import com.brianyeh.justnotes.backend.entitlement.PurchaseOwnershipValidator
 import com.brianyeh.justnotes.backend.routes.justNotesRoutes
 import com.brianyeh.justnotes.backend.rtdn.RtdnProcessor
+import com.brianyeh.justnotes.backend.security.HmacSha256EmailHashDeriver
+import com.brianyeh.justnotes.backend.security.SecretValueProvider
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.engine.embeddedServer
@@ -54,16 +56,26 @@ fun Application.justNotesBackendModule(
     }
     justNotesRoutes(
         config = config,
-        idTokenVerifier = productionGoogleIdTokenVerifier(config),
+        idTokenVerifier = productionGoogleIdTokenVerifier(
+            config = config,
+            emailHashSecretProvider = dependencies.emailHashSecretProvider,
+        ),
         entitlementRepository = dependencies.entitlementRepository,
         billingVerificationOrchestrator = billingVerificationOrchestrator,
         obfuscatedAccountIdDeriver = dependencies.obfuscatedAccountIdDeriver,
+        reviewerGrantPolicy = dependencies.reviewerGrantPolicy,
         rtdnProcessor = rtdnProcessor,
     )
 }
 
-private fun productionGoogleIdTokenVerifier(config: BackendConfig): GoogleIdTokenVerifier {
+private fun productionGoogleIdTokenVerifier(
+    config: BackendConfig,
+    emailHashSecretProvider: SecretValueProvider,
+): GoogleIdTokenVerifier {
     val validationError = config.validateForIdTokenVerification()
     require(validationError == null) { validationError ?: "Google ID token configuration is invalid." }
-    return OfficialGoogleIdTokenVerifier(config)
+    return OfficialGoogleIdTokenVerifier(
+        config = config,
+        emailHashDeriver = HmacSha256EmailHashDeriver(emailHashSecretProvider),
+    )
 }

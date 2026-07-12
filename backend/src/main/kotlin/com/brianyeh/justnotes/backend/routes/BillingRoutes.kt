@@ -20,6 +20,8 @@ import com.brianyeh.justnotes.backend.rtdn.RtdnJson
 import com.brianyeh.justnotes.backend.rtdn.RtdnNotificationProcessor
 import com.brianyeh.justnotes.backend.rtdn.RtdnParseResult
 import com.brianyeh.justnotes.backend.rtdn.RtdnProcessResult
+import com.brianyeh.justnotes.backend.reviewer.NoReviewerGrantPolicy
+import com.brianyeh.justnotes.backend.reviewer.ReviewerGrantPolicy
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -43,6 +45,7 @@ fun Application.justNotesRoutes(
     entitlementRepository: EntitlementRepository,
     billingVerificationOrchestrator: BillingVerificationOrchestrator,
     obfuscatedAccountIdDeriver: ObfuscatedAccountIdDeriver,
+    reviewerGrantPolicy: ReviewerGrantPolicy = NoReviewerGrantPolicy,
     rtdnProcessor: RtdnNotificationProcessor? = null,
     clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -55,6 +58,7 @@ fun Application.justNotesRoutes(
         }
 
         get("/v1/entitlement") {
+            call.response.headers.append(HttpHeaders.CacheControl, NO_STORE)
             val idToken = call.request.headers["Authorization"]
                 ?.removePrefix("Bearer ")
                 ?.takeIf { it.isNotBlank() }
@@ -75,7 +79,10 @@ fun Application.justNotesRoutes(
                     )
                 }
                 is GoogleIdTokenVerificationResult.Success -> {
-                    val entitlement = entitlementRepository.getEntitlement(result.identity.googleSub)
+                    val now = clock()
+                    val reviewerEntitlement = reviewerGrantPolicy.entitlementFor(result.identity, now)
+                    val entitlement = reviewerEntitlement
+                        ?: entitlementRepository.getEntitlement(result.identity.googleSub)
                         ?: EntitlementRecord(
                             googleSub = result.identity.googleSub,
                             hasPremium = false,
@@ -83,7 +90,11 @@ fun Application.justNotesRoutes(
                             source = BackendEntitlementSource.None,
                         )
                     call.respondText(
-                        entitlement.sanitizedForGet(clock(), config).toJson(),
+                        entitlement.sanitizedForGet(
+                            now = now,
+                            config = config,
+                            allowReviewerGrant = reviewerEntitlement != null,
+                        ).toJson(),
                         contentType = io.ktor.http.ContentType.Application.Json,
                     )
                 }
@@ -302,7 +313,33 @@ private suspend fun ApplicationCall.respondInvalidVerifyRequest(now: Long) {
     )
 }
 
-private fun EntitlementRecord.sanitizedForGet(now: Long, config: BackendConfig): EntitlementRecord {
+private fun EntitlementRecord.sanitizedForGet(
+    now: Long,
+    config: BackendConfig,
+    allowReviewerGrant: Boolean = false,
+): EntitlementRecord {
+    if (source == BackendEntitlementSource.ReviewerGrant) {
+        val validReviewerGrant = allowReviewerGrant &&
+            hasPremium &&
+            status == BackendSubscriptionStatus.Active &&
+            expiryTime?.let { it > now } == true &&
+            acknowledgementState == BackendAcknowledgementState.NotRequired &&
+            packageName == null &&
+            productId == null &&
+            basePlanId == null &&
+            offerId == null &&
+            purchaseTokenHash == null &&
+            linkedPurchaseTokenHash == null
+        return copy(
+            hasPremium = validReviewerGrant,
+            status = if (validReviewerGrant) {
+                BackendSubscriptionStatus.Active
+            } else {
+                BackendSubscriptionStatus.Unknown
+            },
+            stale = false,
+        )
+    }
     val catalogValid = config.validateCatalog(
         packageName = packageName,
         productId = productId,

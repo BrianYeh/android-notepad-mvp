@@ -89,6 +89,35 @@ class BackendConfigTest {
     }
 
     @Test
+    fun absentReviewerGrantResourceKeepsFeatureDisabledWithoutBreakingProductionAdapters() {
+        val config = BackendConfig.fromEnvironment(productionEnvironment())
+
+        assertNull(config.reviewerGrantSecretResource)
+        assertEquals(emptyList(), config.validateForProductionAdapters())
+    }
+
+    @Test
+    fun malformedReviewerGrantResourceFailsProductionValidation() {
+        val malformed = BackendConfig.fromEnvironment(
+            productionEnvironment() + ("REVIEWER_GRANT_SECRET_RESOURCE" to "raw-secret-value"),
+        )
+        val valid = BackendConfig.fromEnvironment(
+            productionEnvironment() +
+                ("REVIEWER_GRANT_SECRET_RESOURCE" to
+                    "projects/project-id/secrets/reviewer-grants/versions/1"),
+        )
+
+        assertTrue(
+            malformed.validateForProductionAdapters().any { it.contains("Reviewer grant secret") },
+        )
+        assertEquals(emptyList(), valid.validateForProductionAdapters())
+        assertEquals(
+            "projects/project-id/secrets/reviewer-grants/versions/1",
+            valid.reviewerGrantSecretResource,
+        )
+    }
+
+    @Test
     fun malformedSecretAndKmsResourcesFailClosed() {
         val config = BackendConfig.fromEnvironment(
             productionEnvironment() + mapOf(
