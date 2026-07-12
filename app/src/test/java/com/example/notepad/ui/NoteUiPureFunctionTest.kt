@@ -11,8 +11,28 @@ import com.example.notepad.data.SyncMetadata
 import com.example.notepad.data.SyncStatus
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.net.URI
 
 class NoteUiPureFunctionTest {
+    @Test
+    fun complianceUrlsAreExactPublicHttpsPages() {
+        assertEquals(
+            "https://brianyeh.github.io/android-notepad-mvp/privacy-policy/",
+            PRIVACY_POLICY_URL,
+        )
+        assertEquals(
+            "https://brianyeh.github.io/android-notepad-mvp/terms-of-service/",
+            TERMS_OF_SERVICE_URL,
+        )
+        assertEquals(
+            "https://brianyeh.github.io/android-notepad-mvp/account-deletion/",
+            ACCOUNT_DELETION_URL,
+        )
+        listOf(PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, ACCOUNT_DELETION_URL).forEach { url ->
+            assertEquals("https", URI(url).scheme)
+        }
+    }
+
     @Test
     fun googleAccountSyncUiShowsOnFreshInstall() {
         assertEquals(

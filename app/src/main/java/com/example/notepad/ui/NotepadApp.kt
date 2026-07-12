@@ -848,6 +848,7 @@ fun NotepadApp(
             onRefreshPurchaseStatus = viewModel::refreshPremiumEntitlement,
             onBack = { screen = currentScreen.returnTo },
             onOpenNotes = { screen = currentScreen.returnTo },
+            onOpenComplianceUrl = { url -> openComplianceUrl(context, url) },
         )
 
         is AppScreen.TextEditor -> TextEditorScreen(
@@ -984,15 +985,15 @@ private fun MainNavigationBar(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PremiumScreen(
+internal fun PremiumScreen(
     text: UiText,
     billingState: PremiumBillingState,
     onSubscribe: (PremiumPlan) -> Unit,
     onRefreshPurchaseStatus: () -> Unit,
     onBack: () -> Unit,
     onOpenNotes: () -> Unit,
+    onOpenComplianceUrl: (String) -> Unit,
 ) {
-    val context = LocalContext.current
     var selectedPlan by remember { mutableStateOf(PremiumPlanSelection.Annual) }
     val uiMode = premiumUiMode(billingState)
     var availabilityCheckTimedOut by remember { mutableStateOf(false) }
@@ -1165,20 +1166,6 @@ private fun PremiumScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Text(
-                            text = text.privacyPolicy,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textDecoration = TextDecoration.Underline,
-                        )
-                        Text(
-                            text = text.termsOfService,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textDecoration = TextDecoration.Underline,
-                        )
-                    }
                 }
                 PremiumUiMode.PreviewUnavailable -> {
                     Text(
@@ -1195,6 +1182,10 @@ private fun PremiumScreen(
                     )
                 }
             }
+            ComplianceLinksRow(
+                text = text,
+                onOpenComplianceUrl = onOpenComplianceUrl,
+            )
             Text(
                 text = text.premiumFeatures,
                 style = MaterialTheme.typography.headlineSmall,
@@ -1215,6 +1206,66 @@ private fun PremiumScreen(
         }
     }
 }
+
+@Composable
+internal fun ComplianceLinksRow(
+    text: UiText,
+    onOpenComplianceUrl: (String) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        TextButton(
+            onClick = { onOpenComplianceUrl(PRIVACY_POLICY_URL) },
+            modifier = Modifier.testTag("privacy_policy_link"),
+        ) {
+            Text(
+                text = text.privacyPolicy,
+                textDecoration = TextDecoration.Underline,
+            )
+        }
+        TextButton(
+            onClick = { onOpenComplianceUrl(TERMS_OF_SERVICE_URL) },
+            modifier = Modifier.testTag("terms_of_service_link"),
+        ) {
+            Text(
+                text = text.termsOfService,
+                textDecoration = TextDecoration.Underline,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun AccountDeletionLink(
+    text: UiText,
+    onOpenComplianceUrl: (String) -> Unit,
+) {
+    Column {
+        TextButton(
+            onClick = { onOpenComplianceUrl(ACCOUNT_DELETION_URL) },
+            modifier = Modifier.testTag("account_deletion_link"),
+        ) {
+            Text(
+                text = text.accountDeletionLabel(),
+                textDecoration = TextDecoration.Underline,
+            )
+        }
+        Text(
+            text = text.accountDeletionHelp(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun UiText.accountDeletionLabel(): String =
+    if (this === TraditionalChineseText) "刪除帳號資料" else "Delete account data"
+
+private fun UiText.accountDeletionHelp(): String =
+    if (this === TraditionalChineseText) {
+        "請先取消仍有效的訂閱，再前往安全刪除頁面。"
+    } else {
+        "Cancel active subscriptions first, then use the secure deletion page."
+    }
 
 private fun premiumStatusText(text: UiText, billingState: PremiumBillingState): String {
     if (billingState.hasPremiumAccess) return text.premiumActive
@@ -2436,6 +2487,10 @@ private fun SettingsScreen(
                     }
                 }
             }
+            AccountDeletionLink(
+                text = text,
+                onOpenComplianceUrl = { url -> openComplianceUrl(context, url) },
+            )
             HorizontalDivider()
             Text(
                 text = text.googleDriveBackup,

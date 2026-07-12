@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -2482,6 +2483,10 @@ class TextInputTest {
         assertTagAbsent("google_sync_error")
         composeRule.onNodeWithTag("google_sync_button").performScrollTo().assertTextContains("Sign in with Google")
         assertTagAbsent("google_sign_out_button")
+        composeRule.onNodeWithTag("account_deletion_link")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertHasClickAction()
 
         composeRule.onNodeWithTag("online_sync_title").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("online_sync_target_status").performScrollTo().assertIsDisplayed()
@@ -2525,8 +2530,14 @@ class TextInputTest {
         assertEquals(0, composeRule.onAllNodesWithText("Price not available").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Subscribe (setup pending)").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("No trial or introductory offer is configured.").fetchSemanticsNodes().size)
-        assertEquals(0, composeRule.onAllNodesWithText("Privacy Policy").fetchSemanticsNodes().size)
-        assertEquals(0, composeRule.onAllNodesWithText("Terms of Service").fetchSemanticsNodes().size)
+        composeRule.onNodeWithTag("privacy_policy_link")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertHasClickAction()
+        composeRule.onNodeWithTag("terms_of_service_link")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertHasClickAction()
         assertEquals(0, composeRule.onAllNodesWithText("Google Play", substring = true).fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("backend verification", substring = true).fetchSemanticsNodes().size)
         composeRule.onNodeWithText("Folders").performScrollTo().assertIsDisplayed()
