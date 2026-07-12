@@ -1,5 +1,8 @@
 package com.brianyeh.justnotes.backend.routes
 
+import com.brianyeh.justnotes.backend.account.AccountDeletionRepository
+import com.brianyeh.justnotes.backend.account.AccountDeletionResult
+import com.brianyeh.justnotes.backend.account.UnavailableAccountDeletionRepository
 import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerificationResult
 import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerifier
 import com.brianyeh.justnotes.backend.auth.VerifiedGoogleIdentity
@@ -32,12 +35,16 @@ import io.ktor.server.request.contentType
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
+import io.ktor.server.routing.options
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 fun Application.justNotesRoutes(
     config: BackendConfig,
@@ -45,6 +52,7 @@ fun Application.justNotesRoutes(
     entitlementRepository: EntitlementRepository,
     billingVerificationOrchestrator: BillingVerificationOrchestrator,
     obfuscatedAccountIdDeriver: ObfuscatedAccountIdDeriver,
+    accountDeletionRepository: AccountDeletionRepository = UnavailableAccountDeletionRepository,
     reviewerGrantPolicy: ReviewerGrantPolicy = NoReviewerGrantPolicy,
     rtdnProcessor: RtdnNotificationProcessor? = null,
     clock: () -> Long = System::currentTimeMillis,
@@ -55,6 +63,56 @@ fun Application.justNotesRoutes(
                 """{"ok":true,"environment":"${json(config.environment)}"}""",
                 contentType = io.ktor.http.ContentType.Application.Json,
             )
+        }
+
+        options(ACCOUNT_DELETION_PATH) {
+            val origin = call.request.headers[HttpHeaders.Origin]
+            call.appendAccountDeletionHeaders(origin)
+            if (origin != ACCOUNT_DELETION_ORIGIN) {
+                call.respondAccountDeletionError(HttpStatusCode.Forbidden, "origin_forbidden")
+                return@options
+            }
+            call.response.headers.append(HttpHeaders.AccessControlAllowMethods, "POST, OPTIONS")
+            call.response.headers.append(
+                HttpHeaders.AccessControlAllowHeaders,
+                "Authorization, Content-Type",
+            )
+            call.respondText("", status = HttpStatusCode.NoContent)
+        }
+
+        post(ACCOUNT_DELETION_PATH) {
+            val origin = call.request.headers[HttpHeaders.Origin]
+            call.appendAccountDeletionHeaders(origin)
+            if (origin != ACCOUNT_DELETION_ORIGIN) {
+                call.respondAccountDeletionError(HttpStatusCode.Forbidden, "origin_forbidden")
+                return@post
+            }
+            val identity = call.authenticatedIdentity(idTokenVerifier) ?: return@post
+            val requestContentType = runCatching { call.request.contentType() }.getOrNull()
+            if (
+                requestContentType == null ||
+                requestContentType == ContentType.Any ||
+                !requestContentType.match(ContentType.Application.Json)
+            ) {
+                call.respondAccountDeletionError(HttpStatusCode.BadRequest, "invalid_request")
+                return@post
+            }
+            val body = call.receiveUtf8BodyWithinLimit(MAX_ACCOUNT_DELETION_BODY_BYTES)
+            if (body == null || !body.hasValidAccountDeletionConfirmation()) {
+                call.respondAccountDeletionError(HttpStatusCode.BadRequest, "invalid_request")
+                return@post
+            }
+            when (accountDeletionRepository.deleteAccountData(identity.googleSub, clock())) {
+                AccountDeletionResult.Deleted -> call.respondText("", status = HttpStatusCode.NoContent)
+                AccountDeletionResult.BlockedByNonterminalSubscription -> call.respondAccountDeletionError(
+                    HttpStatusCode.Conflict,
+                    "active_subscription",
+                )
+                AccountDeletionResult.FailedClosed -> call.respondAccountDeletionError(
+                    HttpStatusCode.ServiceUnavailable,
+                    "deletion_unavailable",
+                )
+            }
         }
 
         get("/v1/entitlement") {
@@ -161,6 +219,29 @@ fun Application.justNotesRoutes(
 
     }
     justNotesRtdnRoutes(config, rtdnProcessor)
+}
+
+private fun ApplicationCall.appendAccountDeletionHeaders(origin: String?) {
+    response.headers.append(HttpHeaders.CacheControl, NO_STORE)
+    response.headers.append(HttpHeaders.Vary, HttpHeaders.Origin)
+    if (origin == ACCOUNT_DELETION_ORIGIN) {
+        response.headers.append(HttpHeaders.AccessControlAllowOrigin, ACCOUNT_DELETION_ORIGIN)
+    }
+}
+
+private suspend fun ApplicationCall.respondAccountDeletionError(status: HttpStatusCode, code: String) {
+    respondText(
+        """{"error":"${json(code)}"}""",
+        status = status,
+        contentType = ContentType.Application.Json,
+    )
+}
+
+private fun String.hasValidAccountDeletionConfirmation(): Boolean {
+    val root = runCatching { Json.parseToJsonElement(this).jsonObject }.getOrNull() ?: return false
+    if (root.keys != setOf("confirmation")) return false
+    val confirmation = root["confirmation"] as? JsonPrimitive ?: return false
+    return confirmation.isString && confirmation.content == "DELETE"
 }
 
 fun Application.justNotesRtdnRoutes(
@@ -421,7 +502,10 @@ private fun json(value: String): String {
 }
 
 private const val MAX_VERIFY_BODY_BYTES = 8 * 1024
+private const val MAX_ACCOUNT_DELETION_BODY_BYTES = 64
 private const val READ_BUFFER_BYTES = 1024
 private const val BEARER_PREFIX = "Bearer "
 private const val NO_STORE = "no-store"
 private const val INVALID_REQUEST_REASON = "Request is invalid."
+private const val ACCOUNT_DELETION_PATH = "/v1/account/delete"
+private const val ACCOUNT_DELETION_ORIGIN = "https://brianyeh.github.io"

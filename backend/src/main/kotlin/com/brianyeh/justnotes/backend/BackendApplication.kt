@@ -61,6 +61,7 @@ fun Application.justNotesBackendModule(
             emailHashSecretProvider = dependencies.emailHashSecretProvider,
         ),
         entitlementRepository = dependencies.entitlementRepository,
+        accountDeletionRepository = dependencies.accountDeletionRepository,
         billingVerificationOrchestrator = billingVerificationOrchestrator,
         obfuscatedAccountIdDeriver = dependencies.obfuscatedAccountIdDeriver,
         reviewerGrantPolicy = dependencies.reviewerGrantPolicy,

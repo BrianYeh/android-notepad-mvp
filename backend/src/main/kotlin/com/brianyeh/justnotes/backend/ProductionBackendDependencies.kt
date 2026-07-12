@@ -1,5 +1,9 @@
 package com.brianyeh.justnotes.backend
 
+import com.brianyeh.justnotes.backend.account.AccountDeletionRepository
+import com.brianyeh.justnotes.backend.account.FirestoreAccountDeletionRepository
+import com.brianyeh.justnotes.backend.account.GoogleCloudFirestoreAccountDeletionDocumentStore
+
 import com.brianyeh.justnotes.backend.config.BackendConfig
 import com.brianyeh.justnotes.backend.entitlement.EntitlementRepository
 import com.brianyeh.justnotes.backend.entitlement.FirestoreEntitlementRepository
@@ -38,6 +42,7 @@ import com.google.cloud.secretmanager.v1.SecretManagerServiceClient
 
 class ProductionBackendDependencies private constructor(
     val entitlementRepository: EntitlementRepository,
+    val accountDeletionRepository: AccountDeletionRepository,
     val playSubscriptionVerifier: PlaySubscriptionVerifier,
     val playSubscriptionAcknowledger: PlaySubscriptionAcknowledger,
     val purchaseTokenHasher: PurchaseTokenHasher,
@@ -97,6 +102,9 @@ class ProductionBackendDependencies private constructor(
                 return ProductionBackendDependencies(
                     entitlementRepository = FirestoreEntitlementRepository(
                         GoogleCloudFirestoreEntitlementDocumentStore(firestore),
+                    ),
+                    accountDeletionRepository = FirestoreAccountDeletionRepository(
+                        GoogleCloudFirestoreAccountDeletionDocumentStore(firestore),
                     ),
                     playSubscriptionVerifier = GooglePlaySubscriptionVerifier(
                         gateway = publisherGateway,
