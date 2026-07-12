@@ -7,10 +7,12 @@ import com.brianyeh.justnotes.backend.auth.GoogleIdTokenVerificationResult
 import com.brianyeh.justnotes.backend.auth.OfficialGoogleIdTokenVerifier
 import com.brianyeh.justnotes.backend.auth.VerifiedGoogleIdTokenPayload
 import com.brianyeh.justnotes.backend.config.BackendConfig
+import com.brianyeh.justnotes.backend.security.EmailHashDeriver
 import kotlinx.coroutines.runBlocking
 import java.security.GeneralSecurityException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class GoogleIdTokenVerifierTest {
@@ -20,6 +22,42 @@ class GoogleIdTokenVerifierTest {
 
         assertTrue(result is GoogleIdTokenVerificationResult.Success)
         assertEquals("google-sub", result.identity.googleSub)
+    }
+
+    @Test
+    fun verifiedEmailIsNormalizedAndHashedWithoutLeavingRawEmailInIdentity() = runBlocking {
+        val seen = mutableListOf<String>()
+        val result = verifier(
+            payload = validPayload(
+                email = " Reviewer@Example.COM ",
+                emailVerified = true,
+            ),
+            emailHashDeriver = EmailHashDeriver { normalized ->
+                seen += normalized
+                "h".repeat(43)
+            },
+        ).verify("id-token")
+
+        assertTrue(result is GoogleIdTokenVerificationResult.Success)
+        assertEquals(listOf("reviewer@example.com"), seen)
+        assertEquals("h".repeat(43), result.identity.emailHash)
+        assertFalse(result.identity.toString().contains("Reviewer@Example.COM"))
+    }
+
+    @Test
+    fun unverifiedOrMissingEmailNeverProducesEmailHash() = runBlocking {
+        listOf(
+            validPayload(email = "reviewer@example.com", emailVerified = false),
+            validPayload(email = null, emailVerified = true),
+        ).forEach { payload ->
+            val result = verifier(
+                payload = payload,
+                emailHashDeriver = EmailHashDeriver { "h".repeat(43) },
+            ).verify("id-token")
+
+            assertTrue(result is GoogleIdTokenVerificationResult.Success)
+            assertEquals(null, result.identity.emailHash)
+        }
     }
 
     @Test
@@ -89,6 +127,7 @@ class GoogleIdTokenVerifierTest {
     private fun verifier(
         payload: VerifiedGoogleIdTokenPayload = validPayload(),
         delegate: GoogleIdTokenDelegate = PayloadDelegate(payload),
+        emailHashDeriver: EmailHashDeriver? = null,
     ): OfficialGoogleIdTokenVerifier {
         return OfficialGoogleIdTokenVerifier(
             config = BackendConfig.fromEnvironment(
@@ -96,6 +135,7 @@ class GoogleIdTokenVerifierTest {
             ),
             clock = { NOW },
             delegate = delegate,
+            emailHashDeriver = emailHashDeriver,
         )
     }
 
@@ -104,12 +144,16 @@ class GoogleIdTokenVerifierTest {
         issuer: String? = "accounts.google.com",
         expirationTimeMillis: Long = NOW + 60_000L,
         subject: String? = "google-sub",
+        email: String? = null,
+        emailVerified: Boolean = false,
     ): VerifiedGoogleIdTokenPayload {
         return VerifiedGoogleIdTokenPayload(
             audience = audience,
             issuer = issuer,
             expirationTimeMillis = expirationTimeMillis,
             subject = subject,
+            email = email,
+            emailVerified = emailVerified,
         )
     }
 

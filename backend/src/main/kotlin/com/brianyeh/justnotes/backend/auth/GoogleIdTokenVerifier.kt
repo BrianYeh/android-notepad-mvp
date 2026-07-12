@@ -5,6 +5,8 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier.Builde
 import com.google.api.client.http.javanet.NetHttpTransport
 import com.google.api.client.json.gson.GsonFactory
 import com.brianyeh.justnotes.backend.config.BackendConfig
+import com.brianyeh.justnotes.backend.security.EmailHashDeriver
+import com.brianyeh.justnotes.backend.security.normalizeGoogleEmail
 import java.io.IOException
 import java.security.GeneralSecurityException
 
@@ -53,6 +55,7 @@ class OfficialGoogleIdTokenVerifier(
     private val config: BackendConfig,
     private val clock: () -> Long = System::currentTimeMillis,
     private val delegate: GoogleIdTokenDelegate = GoogleApiClientIdTokenDelegate(config),
+    private val emailHashDeriver: EmailHashDeriver? = null,
 ) : GoogleIdTokenVerifier {
     override suspend fun verify(idToken: String): GoogleIdTokenVerificationResult {
         if (idToken.isBlank()) {
@@ -105,7 +108,18 @@ class OfficialGoogleIdTokenVerifier(
         val subject = payload.subject?.takeIf { it.isNotBlank() }
             ?: return GoogleIdTokenVerificationResult.Failure("Google ID token subject is missing.", GoogleIdTokenErrorCode.INVALID_SUBJECT)
 
-        return GoogleIdTokenVerificationResult.Success(VerifiedGoogleIdentity(googleSub = subject))
+        val emailHash = payload.email
+            ?.takeIf { payload.emailVerified }
+            ?.let(::normalizeGoogleEmail)
+            ?.takeIf(String::isNotBlank)
+            ?.let { normalized -> runCatching { emailHashDeriver?.derive(normalized) }.getOrNull() }
+
+        return GoogleIdTokenVerificationResult.Success(
+            VerifiedGoogleIdentity(
+                googleSub = subject,
+                emailHash = emailHash,
+            ),
+        )
     }
 }
 
@@ -114,6 +128,8 @@ data class VerifiedGoogleIdTokenPayload(
     val issuer: String?,
     val expirationTimeMillis: Long,
     val subject: String?,
+    val email: String?,
+    val emailVerified: Boolean,
 )
 
 interface GoogleIdTokenDelegate {
@@ -142,6 +158,8 @@ class GoogleApiClientIdTokenDelegate(
             issuer = payload.issuer,
             expirationTimeMillis = payload.expirationTimeSeconds * 1_000L,
             subject = payload.subject,
+            email = payload.email,
+            emailVerified = payload.emailVerified == true,
         )
     }
 }
