@@ -76,11 +76,14 @@ const combined = requiredPages.map(read).join("\n") + read("site/account-deletio
 [
   [/TODO|TBD|lorem ipsum|coming soon/i, "unfinished marker"],
   [/google-analytics|googletagmanager|segment\.com|mixpanel/i, "analytics script"],
-  [/brianyeh621010/i, "reviewer credential"],
   [/raw[-_ ]?purchase[-_ ]?token\s*[:=]\s*["'][^"']+/i, "raw token example"],
 ].forEach(([pattern, label]) => {
   if (pattern.test(combined)) failures.push(`Forbidden ${label}`);
 });
+const publicEmailAddresses = combined.match(/[A-Z0-9._%+-]+@gmail\.com/gi) ?? [];
+if (publicEmailAddresses.some((address) => address.toLowerCase() !== "yeh.shibang@gmail.com")) {
+  failures.push("Forbidden non-support Gmail address");
+}
 
 const workflow = read(".github/workflows/pages.yml");
 requireText(workflow, /path:\s*site\s*$/m, "Pages workflow must upload site/");
