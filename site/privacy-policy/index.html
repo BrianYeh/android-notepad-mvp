@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Just Notes Privacy Policy.">
+  <title>Privacy Policy — Just Notes</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <header><nav aria-label="Legal navigation"><a href="../">Home</a><a href="./">Privacy Policy</a><a href="../terms-of-service/">Terms</a><a href="../account-deletion/">Account Deletion</a></nav></header>
+  <main>
+    <h1>Just Notes Privacy Policy</h1>
+    <p class="updated">Effective July 12, 2026</p>
+    <p>Just Notes is a note-taking application developed by Brian Yeh. This policy explains the data Just Notes accesses, why it is used, how it is protected, and how you can request deletion.</p>
+
+    <h2>Notes and Google Drive</h2>
+    <p>Notes are stored locally on your device by default. If you choose Google Drive sync, Just Notes uploads and reads your backup in the private <code>appDataFolder</code> of your own Google Drive account for sync and restore. The developer does not use note content for advertising, analytics, profiling, or sale. Deleting the app does not automatically delete a backup stored in your Google Drive account.</p>
+
+    <h2>Google Sign-In and account ownership</h2>
+    <p>Google Sign-In provides a Google account identifier and may provide a verified email address. The backend uses the account identifier to bind subscription entitlements to the correct account. A verified email is processed ephemerally and may be transformed with HMAC-SHA-256 for limited security, reviewer-access, or deletion purposes. Raw email addresses and Google ID tokens are not intentionally stored in application logs.</p>
+
+    <h2>Google Play Billing and Premium</h2>
+    <p>When you use Premium, Just Notes processes Google Play purchase history and subscription state. The backend receives a purchase token transiently, stores only a keyed hash and encrypted purchase token ciphertext, verifies the purchase with the Google Play Developer API, records acknowledgement and entitlement state in Firestore, and processes Real-time Developer Notifications (RTDN). Raw purchase tokens are not stored. RTDN deduplication records expire after 30 days.</p>
+    <p>Just Notes may process an app-generated device identifier inside a Drive sync snapshot so updates from the same installation can be reconciled. The app does not use the Android Advertising ID and contains no advertising SDK.</p>
+
+    <h2>Security</h2>
+    <p>Data in transit uses HTTPS/TLS. Purchase-token ciphertext is protected by Google Cloud KMS. Backend access uses service identities and least-privilege IAM. Sensitive tokens, Google subjects, email addresses, ciphertext, and ID tokens are excluded from normal application logging.</p>
+
+    <h2>Service providers and sale of data</h2>
+    <p>Google, Google Play, Google Cloud, and GitHub process data as service providers under their own terms. Just Notes does not sell personal data and does not share data for advertising.</p>
+
+    <h2>Retention and deletion</h2>
+    <p>Entitlement and subscription records are retained while needed to provide Premium, prevent fraud, comply with legal obligations, or complete a deletion request. Reviewer grants expire at their configured time. Security and delivery-deduplication records follow their configured retention period.</p>
+    <p>You can request deletion at <a href="../account-deletion/">the Just Notes account-deletion page</a>. Active Google Play subscriptions must be canceled separately and may need to reach expiry before backend subscription records can be deleted safely. Local notes remain under your device control, and Drive backups remain under your Google account control.</p>
+
+    <h2>Contact</h2>
+    <p>Questions or deletion support: <a href="mailto:yeh.shibang@gmail.com">yeh.shibang@gmail.com</a></p>
+  </main>
+  <footer><a href="../">Just Notes legal home</a></footer>
+</body>
+</html>

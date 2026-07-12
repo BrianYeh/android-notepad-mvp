@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Secure Just Notes account-data deletion request.">
+  <title>Account Deletion — Just Notes</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="./delete-account.js" defer></script>
+</head>
+<body>
+  <header><nav aria-label="Legal navigation"><a href="../">Home</a><a href="../privacy-policy/">Privacy Policy</a><a href="../terms-of-service/">Terms</a><a href="./">Account Deletion</a></nav></header>
+  <main>
+    <h1>Delete Just Notes account data</h1>
+    <p class="updated">Updated July 12, 2026</p>
+    <p>This page deletes eligible Just Notes backend entitlement and subscription records associated with the Google account you authenticate. It does not delete local notes on your device, a backup in your Google Drive account, or the Google account itself.</p>
+
+    <h2>Before you continue</h2>
+    <ol>
+      <li>Cancel any active Just Notes subscription in Google Play. Deleting data does not cancel billing.</li>
+      <li>Wait until any paid or trial entitlement reaches expiry. Active or nonterminal subscriptions block deletion for safety.</li>
+      <li>Delete local notes in the app and remove any Google Drive backup separately if you also want those copies removed.</li>
+    </ol>
+
+    <h2>Authenticate and confirm</h2>
+    <p>Use Google Identity Services to sign in with the same Google account used in Just Notes. Your sign-in credential is used only for this deletion request and is cleared from page memory after the request completes.</p>
+    <div id="google-signin" aria-label="Sign in with Google"></div>
+
+    <label class="check-row"><input id="understand" type="checkbox"> <span>I understand that this action cannot be undone and does not cancel a Google Play subscription.</span></label>
+    <label for="confirmation">Type <strong>DELETE</strong> as explicit confirmation</label>
+    <input id="confirmation" type="text" autocomplete="off" spellcheck="false" aria-describedby="confirmation-help">
+    <p id="confirmation-help" class="muted">The delete button is enabled only after Google authentication, the checkbox, and the exact word DELETE.</p>
+    <button id="delete-account" type="button" disabled>Delete eligible backend data</button>
+    <p id="status" class="status" role="status" aria-live="polite">Sign in to begin.</p>
+
+    <h2>Need help?</h2>
+    <p>If authentication or deletion cannot be completed, contact <a href="mailto:yeh.shibang@gmail.com">yeh.shibang@gmail.com</a>. Do not email passwords, Google tokens, or purchase tokens.</p>
+  </main>
+  <footer><a href="../">Just Notes legal home</a></footer>
+</body>
+</html>
