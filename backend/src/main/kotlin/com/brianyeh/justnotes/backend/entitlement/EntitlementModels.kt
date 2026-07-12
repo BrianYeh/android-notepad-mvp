@@ -3,6 +3,7 @@ package com.brianyeh.justnotes.backend.entitlement
 enum class BackendEntitlementSource {
     None,
     BackendVerified,
+    ReviewerGrant,
 }
 
 enum class BackendSubscriptionStatus {
