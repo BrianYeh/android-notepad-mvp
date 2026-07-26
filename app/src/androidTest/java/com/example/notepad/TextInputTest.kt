@@ -111,6 +111,17 @@ class TextInputTest {
         }
     }
 
+    private fun waitForDrawingEditorToReturnHome(
+        additionalCondition: () -> Boolean = { true },
+    ) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("add_note_button").assertIsDisplayed()
+                additionalCondition()
+            }.getOrDefault(false)
+        }
+    }
+
     private fun waitForFocusedTag(tag: String, timeoutMillis: Long = 10_000) {
         composeRule.waitUntil(timeoutMillis = timeoutMillis) {
             runCatching {
@@ -2082,6 +2093,7 @@ class TextInputTest {
 
         openSearchPanel()
         composeRule.onNodeWithTag("note_search_input").performTextInput("device back")
+        composeRule.waitUntil(timeoutMillis = 5_000) { isImeVisible() }
         pressDeviceBackAtMostTwiceUntilTagAbsent("note_search_input")
         composeRule.waitUntil(timeoutMillis = 5_000) {
             tagCount("note_search_input") == 0 && tagCount("add_note_button") > 0
@@ -2421,6 +2433,7 @@ class TextInputTest {
         val suffix = System.currentTimeMillis()
         val title = "Find flow title $suffix"
         val body = "banana alpha banana beta banana"
+        val beforeIds = noteIds()
 
         openAddMenuItem("new_text_note_menu_item")
         showTextNoteMetadata()
@@ -2428,11 +2441,15 @@ class TextInputTest {
         composeRule.onNodeWithTag("text_note_content").performTextInput(body)
         composeRule.onNodeWithTag("back_button").performClick()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        waitForDisplayedTag("note_card_$noteId", timeoutMillis = 10_000)
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            noteById(noteId)?.title == title
         }
 
-        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("note_card_$noteId")
+            .assertIsDisplayed()
+            .performClick()
         composeRule.onNodeWithTag("find_in_note_button").performClick()
         composeRule.onNodeWithTag("find_in_note_input").assertIsDisplayed().performTextInput("banana")
         composeRule.onNodeWithTag("find_match_status").assertTextEquals("1/3")
@@ -2448,6 +2465,7 @@ class TextInputTest {
         val suffix = System.currentTimeMillis()
         val title = "Find menu title $suffix"
         val body = "menu search target"
+        val beforeIds = noteIds()
 
         openAddMenuItem("new_text_note_menu_item")
         showTextNoteMetadata()
@@ -2455,13 +2473,15 @@ class TextInputTest {
         composeRule.onNodeWithTag("text_note_content").performTextInput(body)
         composeRule.onNodeWithTag("back_button").performClick()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithTag("add_note_button").fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        waitForDisplayedTag("note_card_$noteId", timeoutMillis = 10_000)
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            noteById(noteId)?.title == title
         }
-        composeRule.onNodeWithText(title).assertIsDisplayed()
 
-        composeRule.onNodeWithText(title).performClick()
+        composeRule.onNodeWithTag("note_card_$noteId")
+            .assertIsDisplayed()
+            .performClick()
         composeRule.onNodeWithTag("more_note_button").performClick()
         composeRule.onNodeWithTag("find_in_note_menu_item").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("find_in_note_input").assertIsDisplayed().performTextInput("target")
@@ -2682,9 +2702,7 @@ class TextInputTest {
         composeRule.activityRule.scenario.onActivity { activity ->
             activity.onBackPressedDispatcher.onBackPressed()
         }
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("add_note_button") > 0 && noteIds() == beforeIds
-        }
+        waitForDrawingEditorToReturnHome { noteIds() == beforeIds }
 
         assertNull(noteById(draftId))
         assertEquals(beforeTombstones, noteTombstoneCount())
@@ -2703,9 +2721,7 @@ class TextInputTest {
             .performTextInput(title)
         composeRule.onNodeWithTag("back_button").performClick()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("add_note_button") > 0 && noteById(noteId)?.title == title
-        }
+        waitForDrawingEditorToReturnHome { noteById(noteId)?.title == title }
         composeRule.onNodeWithText(title).assertIsDisplayed()
     }
 
@@ -2723,10 +2739,9 @@ class TextInputTest {
         waitForTag("drawing_note_title")
         composeRule.onNodeWithTag("back_button").performClick()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        waitForDrawingEditorToReturnHome {
             val savedStrokes = drawingStrokes(noteId)
-            tagCount("add_note_button") > 0 &&
-                savedStrokes.isNotEmpty() &&
+            savedStrokes.isNotEmpty() &&
                 savedStrokes.all { it.tool == DrawingTools.ERASER }
         }
     }
@@ -2744,9 +2759,7 @@ class TextInputTest {
         waitForTag("drawing_note_title")
         composeRule.onNodeWithTag("back_button").performClick()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("add_note_button") > 0 && noteById(noteId) != null
-        }
+        waitForDrawingEditorToReturnHome { noteById(noteId) != null }
         assertEquals(emptyList<DrawingStroke>(), drawingStrokes(noteId))
     }
 
@@ -2823,9 +2836,7 @@ class TextInputTest {
             activity.onBackPressedDispatcher.onBackPressed()
         }
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("add_note_button") > 0
-        }
+        waitForDrawingEditorToReturnHome()
     }
 
     @Test
@@ -2844,9 +2855,7 @@ class TextInputTest {
         waitForNoteFolder(noteId, folderId)
 
         composeRule.onNodeWithTag("back_button").performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("add_note_button") > 0 && noteById(noteId)?.folderId == folderId
-        }
+        waitForDrawingEditorToReturnHome { noteById(noteId)?.folderId == folderId }
         assertEquals("", noteById(noteId)?.title)
         assertEquals(emptyList<DrawingStroke>(), drawingStrokes(noteId))
     }
@@ -2867,9 +2876,7 @@ class TextInputTest {
         composeRule.onNodeWithTag("drawing_note_title").performClick()
 
         composeRule.onNodeWithTag("back_button").performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("add_note_button") > 0 && noteIds() == beforeIds
-        }
+        waitForDrawingEditorToReturnHome { noteIds() == beforeIds }
 
         assertNull(noteById(noteId))
     }
@@ -2891,9 +2898,7 @@ class TextInputTest {
         }
         composeRule.onNodeWithTag("drawing_note_save_status").assertTextContains("Saved", substring = true)
         composeRule.onNodeWithTag("back_button").performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("add_note_button") > 0
-        }
+        waitForDrawingEditorToReturnHome()
 
         composeRule.onNodeWithTag("note_card_$noteId").performClick()
         waitForTag("fullscreen_drawing_mode")
@@ -2961,9 +2966,7 @@ class TextInputTest {
         composeRule.onNodeWithTag("export_drawing_png_button").assertIsDisplayed()
 
         composeRule.onNodeWithTag("back_button").performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("add_note_button") > 0 && noteIds() == beforeIds
-        }
+        waitForDrawingEditorToReturnHome { noteIds() == beforeIds }
         assertNull(noteById(noteId))
     }
 
@@ -3055,9 +3058,7 @@ class TextInputTest {
         }
         waitForTag("drawing_note_title")
         composeRule.onNodeWithTag("back_button").performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            tagCount("add_note_button") > 0 && noteIds() == beforeIds
-        }
+        waitForDrawingEditorToReturnHome { noteIds() == beforeIds }
         assertNull(noteById(firstDraftId))
 
         openAddMenuItem("new_drawing_note_menu_item")
