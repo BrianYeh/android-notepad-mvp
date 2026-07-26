@@ -41,7 +41,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -5065,8 +5065,8 @@ private fun TextEditorScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
+                    .consumeWindowInsets(padding)
                     .background(NOTE_PAPER_BACKGROUND)
-                    .navigationBarsPadding()
                     .imePadding()
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -5373,7 +5373,6 @@ private fun TextEditorScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .background(NOTE_PAPER_BACKGROUND)
-                    .navigationBarsPadding()
                     .padding(horizontal = 20.dp, vertical = 18.dp)
                     .testTag("text_note_read_mode"),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -6355,6 +6354,7 @@ private fun ChecklistEditorScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
+                    .consumeWindowInsets(padding)
                     .imePadding()
                     .testTag("checklist_editor"),
                 contentPadding = PaddingValues(16.dp),

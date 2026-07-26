@@ -1,6 +1,7 @@
 package com.example.notepad
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.os.Build
 import androidx.compose.ui.geometry.Offset
@@ -29,6 +30,8 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -278,10 +281,35 @@ class TextInputTest {
     }
 
     private fun pressDeviceBack() {
-        InstrumentationRegistry.getInstrumentation().uiAutomation
-            .executeShellCommand("input keyevent KEYCODE_BACK")
-            .close()
+        assertTrue(
+            InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
+                AccessibilityService.GLOBAL_ACTION_BACK,
+            ),
+        )
         composeRule.waitForIdle()
+    }
+
+    private fun pressDeviceBackAtMostTwiceUntilTagAbsent(tag: String) {
+        val imeWasVisible = isImeVisible()
+        pressDeviceBack()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount(tag) == 0 || (imeWasVisible && !isImeVisible())
+        }
+        if (tagCount(tag) == 0) return
+
+        assertTrue("Second system back requires a pre-action visible IME", imeWasVisible)
+        assertFalse("IME must finish hiding before the second system back", isImeVisible())
+        pressDeviceBack()
+    }
+
+    private fun isImeVisible(): Boolean {
+        var isVisible = false
+        composeRule.runOnUiThread {
+            isVisible = ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        }
+        return isVisible
     }
 
     private fun pressActivityBack() {
@@ -2041,6 +2069,42 @@ class TextInputTest {
         }
         composeRule.onNodeWithTag("add_note_button").assertIsDisplayed()
         composeRule.onNodeWithText(title).assertIsDisplayed()
+    }
+
+    @Test
+    fun dispatcherAndDeviceBackCloseSearchBeforeLeavingHome() {
+        openSearchPanel()
+        composeRule.onNodeWithTag("note_search_input").performTextInput("dispatcher back")
+        pressActivityBack()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("note_search_input") == 0 && tagCount("add_note_button") > 0
+        }
+
+        openSearchPanel()
+        composeRule.onNodeWithTag("note_search_input").performTextInput("device back")
+        pressDeviceBackAtMostTwiceUntilTagAbsent("note_search_input")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("note_search_input") == 0 && tagCount("add_note_button") > 0
+        }
+    }
+
+    @Test
+    fun backDismissesDeleteDialogBeforeLeavingEditor() {
+        openAddMenuItem("new_text_note_menu_item")
+        composeRule.onNodeWithTag("text_note_content").performTextInput("Keep this draft")
+        composeRule.onNodeWithTag("more_note_button").performClick()
+        waitForTag("delete_text_note_menu_item")
+        composeRule.onNodeWithTag("delete_text_note_menu_item").performClick()
+        waitForTag("confirm_dialog_cancel_button")
+
+        pressDeviceBackAtMostTwiceUntilTagAbsent("confirm_dialog_cancel_button")
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            tagCount("confirm_dialog_cancel_button") == 0
+        }
+        composeRule.onNodeWithTag("text_note_content")
+            .assertIsDisplayed()
+            .assertTextContains("Keep this draft")
     }
 
     @Test

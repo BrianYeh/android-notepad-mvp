@@ -94,12 +94,12 @@ val releaseSigningConfigured = uploadSigningConfigured || androidStudioSigningCo
 
 android {
     namespace = "com.example.notepad"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.brianyeh.justnotes"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 6
         versionName = "1.0.8"
 
