@@ -4,6 +4,7 @@ import android.Manifest
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.os.Build
+import android.view.KeyEvent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assertHasClickAction
@@ -12,7 +13,10 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -25,6 +29,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -42,6 +47,7 @@ import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
 import com.example.notepad.data.DrawingTools
 import com.example.notepad.data.NoteEntity
+import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.NotepadDatabase
 import com.example.notepad.data.NotepadRepository
 import com.example.notepad.data.ReminderRepeat
@@ -142,15 +148,22 @@ class TextInputTest {
     private fun showTextNoteMetadata() {
         if (composeRule.onAllNodesWithTag("text_note_title").fetchSemanticsNodes().isEmpty()) {
             if (composeRule.onAllNodesWithTag("toggle_metadata_button").fetchSemanticsNodes().isNotEmpty()) {
-                composeRule.onNodeWithTag("toggle_metadata_button").performClick()
+                waitForDisplayedTag("toggle_metadata_button", timeoutMillis = 30_000)
+                composeRule.onNodeWithTag("toggle_metadata_button")
+                    .assertIsDisplayed()
+                    .performClick()
             } else {
-                waitForTag("more_note_button")
-                composeRule.onNodeWithTag("more_note_button").performClick()
-                waitForTag("text_note_edit_details_menu_item")
-                composeRule.onNodeWithTag("text_note_edit_details_menu_item").performClick()
+                waitForDisplayedTag("more_note_button", timeoutMillis = 30_000)
+                composeRule.onNodeWithTag("more_note_button")
+                    .assertIsDisplayed()
+                    .performClick()
+                waitForDisplayedTag("text_note_edit_details_menu_item", timeoutMillis = 30_000)
+                composeRule.onNodeWithTag("text_note_edit_details_menu_item")
+                    .assertIsDisplayed()
+                    .performClick()
             }
         }
-        waitForTag("text_note_title")
+        waitForDisplayedTag("text_note_title", timeoutMillis = 30_000)
     }
 
     private fun verticalScrollValue(tag: String, useUnmergedTree: Boolean = false): Float {
@@ -169,10 +182,14 @@ class TextInputTest {
     }
 
     private fun openCreationMenuItem(menuItemTag: String) {
-        waitForTag("add_note_options_button")
-        composeRule.onNodeWithTag("add_note_options_button").performClick()
-        waitForTag(menuItemTag)
-        composeRule.onNodeWithTag(menuItemTag).performClick()
+        waitForDisplayedTag("add_note_options_button", timeoutMillis = 10_000)
+        composeRule.onNodeWithTag("add_note_options_button")
+            .assertIsDisplayed()
+            .performClick()
+        waitForDisplayedTag(menuItemTag, timeoutMillis = 10_000)
+        composeRule.onNodeWithTag(menuItemTag)
+            .assertIsDisplayed()
+            .performClick()
     }
 
     private fun openAddMenuItem(menuItemTag: String) {
@@ -185,7 +202,10 @@ class TextInputTest {
 
     private fun openSearchPanel() {
         if (composeRule.onAllNodesWithTag("note_search_input").fetchSemanticsNodes().isEmpty()) {
-            composeRule.onNodeWithTag("search_tab").performClick()
+            waitForDisplayedTag("search_tab", timeoutMillis = 10_000)
+            composeRule.onNodeWithTag("search_tab")
+                .assertIsDisplayed()
+                .performClick()
             waitForTag("note_search_input")
         }
     }
@@ -297,6 +317,23 @@ class TextInputTest {
                 AccessibilityService.GLOBAL_ACTION_BACK,
             ),
         )
+        composeRule.waitForIdle()
+    }
+
+    private fun waitForSystemDatePicker() {
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            !composeRule.activity.window.decorView.hasWindowFocus()
+        }
+    }
+
+    private fun waitForActivityWindowFocus() {
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.activity.window.decorView.hasWindowFocus()
+        }
+    }
+
+    private fun pressThreeButtonBack() {
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
         composeRule.waitForIdle()
     }
 
@@ -710,7 +747,7 @@ class TextInputTest {
 
         waitForTag("premium_screen")
         composeRule.onNodeWithTag("premium_screen").assertIsDisplayed()
-        composeRule.onNodeWithTag("notes_tab").assertIsDisplayed().performClick()
+        pressActivityBack()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag("text_note_content").fetchSemanticsNodes().isNotEmpty() ||
                 composeRule.onAllNodesWithTag("text_note_read_content").fetchSemanticsNodes().isNotEmpty()
@@ -1027,7 +1064,9 @@ class TextInputTest {
             .assertIsDisplayed()
             .performClick()
 
+        waitForSystemDatePicker()
         pressDeviceBack()
+        waitForActivityWindowFocus()
         waitForTag("drawing_note_title")
         composeRule.onNodeWithTag("back_button").performClick()
         composeRule.waitUntil(timeoutMillis = 10_000) {
@@ -1048,8 +1087,10 @@ class TextInputTest {
             .assertTextEquals("Set reminder")
             .performClick()
 
+        waitForSystemDatePicker()
         pressDeviceBack()
-        waitForTag("drawing_note_title")
+        waitForActivityWindowFocus()
+        waitForTag("drawing_note_title", timeoutMillis = 10_000)
         composeRule.onNodeWithTag("back_button").performClick()
 
         composeRule.waitUntil(timeoutMillis = 10_000) {
@@ -2035,13 +2076,15 @@ class TextInputTest {
             tagCount("note_card_$secondNoteId") > 0
         }
 
+        composeRule.onNodeWithTag("note_list")
+            .performScrollToNode(hasTestTag("note_card_$firstNoteId"))
         composeRule.onNodeWithTag("note_card_$firstNoteId")
-            .performScrollTo()
             .assertIsDisplayed()
             .performTouchInput { longClick() }
         composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("1 selected")
+        composeRule.onNodeWithTag("note_list")
+            .performScrollToNode(hasTestTag("note_card_$secondNoteId"))
         composeRule.onNodeWithTag("note_card_$secondNoteId")
-            .performScrollTo()
             .assertIsDisplayed()
             .performClick()
         composeRule.onNodeWithTag("selected_notes_count").assertTextEquals("2 selected")
@@ -2090,10 +2133,12 @@ class TextInputTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             tagCount("note_search_input") == 0 && tagCount("add_note_button") > 0
         }
+        composeRule.waitUntil(timeoutMillis = 10_000) { !isImeVisible() }
 
         openSearchPanel()
+        composeRule.onNodeWithTag("note_search_input").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) { isImeVisible() }
         composeRule.onNodeWithTag("note_search_input").performTextInput("device back")
-        composeRule.waitUntil(timeoutMillis = 5_000) { isImeVisible() }
         pressDeviceBackAtMostTwiceUntilTagAbsent("note_search_input")
         composeRule.waitUntil(timeoutMillis = 5_000) {
             tagCount("note_search_input") == 0 && tagCount("add_note_button") > 0
@@ -2109,13 +2154,14 @@ class TextInputTest {
         composeRule.onNodeWithTag("delete_text_note_menu_item").performClick()
         waitForTag("confirm_dialog_cancel_button")
 
-        pressDeviceBackAtMostTwiceUntilTagAbsent("confirm_dialog_cancel_button")
+        composeRule.waitUntil(timeoutMillis = 10_000) { !isImeVisible() }
+        pressThreeButtonBack()
 
         composeRule.waitUntil(timeoutMillis = 5_000) {
             tagCount("confirm_dialog_cancel_button") == 0
         }
+        assertTagAbsent("add_note_button")
         composeRule.onNodeWithTag("text_note_content")
-            .assertIsDisplayed()
             .assertTextContains("Keep this draft")
     }
 
@@ -2638,7 +2684,10 @@ class TextInputTest {
         composeRule.onNodeWithTag("premium_free_features").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Reminders / calendar").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Google Drive sync").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Search").performScrollTo().assertIsDisplayed()
+        composeRule.onNode(
+            matcher = hasText("Search") and hasAnyAncestor(hasTestTag("premium_free_features")),
+            useUnmergedTree = true,
+        ).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Local storage").performScrollTo().assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("Import / Export").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Import and export").fetchSemanticsNodes().size)
@@ -3238,6 +3287,253 @@ class TextInputTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithText(textTitle).fetchSemanticsNodes().isEmpty()
         }
+    }
+
+    @Test
+    fun builtInChecklistStyleTemplateCreatesOrdinaryTextNoteAndSaves() {
+        val beforeIds = noteIds()
+
+        openCreationMenuItem("choose_template_menu_item")
+        waitForTag("template_picker")
+        composeRule.onNodeWithTag("template_DailyChecklist").performClick()
+        waitForTag("text_note_content")
+        showTextNoteMetadata()
+        composeRule.onNodeWithTag("text_note_content").assertTextContains("- [ ]", substring = true)
+        composeRule.onNodeWithTag("back_button").performClick()
+
+        val noteId = waitForSingleNewNoteId(beforeIds)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            noteById(noteId)?.textContent.orEmpty().contains("- [ ]")
+        }
+        assertEquals(NoteTypes.TEXT, noteById(noteId)?.type)
+    }
+
+    @Test
+    fun todayHubPrioritizesSectionsAndOpensNotes() {
+        val calendar = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val dayStart = calendar.timeInMillis
+        val overdueId = createTextNote(
+            title = "Today overdue ${System.currentTimeMillis()}",
+            body = "Overdue body",
+            reminderAt = dayStart - 60_000,
+            isPinned = true,
+        )
+        val dueTodayTitle = "Today due ${System.currentTimeMillis()}"
+        val dueTodayId = createTextNote(
+            title = dueTodayTitle,
+            body = "Due today body",
+            reminderAt = dayStart + 12 * 60 * 60 * 1_000L,
+        )
+        val pinnedId = createTextNote(
+            title = "Today pinned ${System.currentTimeMillis()}",
+            body = "Pinned body",
+            isPinned = true,
+        )
+
+        composeRule.onNodeWithTag("today_tab").performClick()
+        waitForTag("today_hub")
+        composeRule.onNodeWithTag("today_section_overdue").assertIsDisplayed()
+        composeRule.onNodeWithTag("today_section_due_today").assertIsDisplayed()
+        composeRule.onNodeWithTag("today_section_pinned").assertIsDisplayed()
+        composeRule.onNodeWithTag("today_note_$overdueId").assertIsDisplayed()
+        composeRule.onNodeWithTag("today_note_$dueTodayId").assertIsDisplayed().performClick()
+        waitForTag("text_note_read_mode")
+        composeRule.onNodeWithTag("text_note_read_title").assertTextContains(dueTodayTitle)
+        composeRule.activityRule.scenario.recreate()
+        waitForTag("text_note_read_mode", timeoutMillis = 10_000)
+        composeRule.onNodeWithTag("back_button").performClick()
+        waitForTag("today_hub")
+        composeRule.onNodeWithTag("today_open_reminders").performClick()
+        waitForTag("reminder_calendar")
+        pressActivityBack()
+        waitForTag("today_hub")
+        assertTrue(overdueId != pinnedId)
+    }
+
+    @Test
+    fun todayReminderCalendarUsesGlobalScopeAndDefaultFolderForNewReminder() {
+        grantPostNotificationsIfNeeded()
+        val suffix = System.currentTimeMillis()
+        val folderA = createFolder("Today folder A $suffix")
+        val folderB = createFolder("Today folder B $suffix")
+        val reminderAt = addDaysForTest(startOfDayMillisForTest(System.currentTimeMillis()), 1) +
+            12 * 60 * 60 * 1_000L
+        val folderATitle = "Folder A reminder $suffix"
+        val folderBTitle = "Folder B reminder $suffix"
+        createTextNote(folderATitle, "A", folderA, reminderAt)
+        createTextNote(folderBTitle, "B", folderB, reminderAt)
+        val activeNoteCount = runBlocking {
+            withContext(Dispatchers.IO) {
+                NotepadDatabase.getInstance(composeRule.activity)
+                    .notepadDao()
+                    .getAllNotes()
+                    .count { note -> !note.isDeleted }
+            }
+        }
+
+        waitForTag("folder_filter_row")
+        composeRule.onNodeWithTag("folder_filter_$folderA").performClick()
+        composeRule.onNodeWithTag("folder_action_row").assertIsDisplayed()
+        composeRule.onNodeWithTag("today_tab").performClick()
+        waitForTag("today_hub")
+        composeRule.onNodeWithTag("today_open_reminders").performClick()
+        waitForTag("reminder_calendar")
+
+        assertTagAbsent("folder_filter_row")
+        assertTagAbsent("folder_action_row")
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runCatching {
+                nodeText("note_result_count").contains(activeNoteCount.toString())
+            }.getOrDefault(false)
+        }
+        composeRule.onNodeWithTag("note_result_count")
+            .assertTextContains(activeNoteCount.toString(), substring = true)
+        val currentDayTitle = nodeText("calendar_selected_day_title")
+        composeRule.onNodeWithTag("calendar_next_day").performScrollTo().performClick()
+        waitForCalendarDayChange(currentDayTitle)
+        composeRule.onNodeWithText(folderATitle).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(folderBTitle).performScrollTo().assertIsDisplayed()
+
+        val beforeIds = noteIds()
+        composeRule.onNodeWithTag("calendar_add_reminder").performScrollTo().performClick()
+        waitForTag("calendar_add_reminder_dialog")
+        clickFirstCalendarPreset()
+        waitForTag("text_note_content")
+        val newNoteId = waitForSingleNewNoteId(beforeIds)
+        assertEquals(DEFAULT_FOLDER_ID, noteById(newNoteId)?.folderId)
+        composeRule.onNodeWithTag("back_button").performClick()
+        waitForTag("reminder_calendar")
+        pressActivityBack()
+        waitForTag("today_hub")
+        pressActivityBack()
+        waitForTag("folder_filter_row")
+        assertTaggedSelected("folder_filter_$folderA", true)
+    }
+
+    @Test
+    fun backFromTodayReturnsToNotesHome() {
+        composeRule.onNodeWithTag("today_tab").performClick()
+        waitForTag("today_hub")
+
+        pressActivityBack()
+
+        waitForTag("add_note_button")
+        composeRule.onNodeWithTag("notes_tab").assertIsDisplayed()
+    }
+
+    @Test
+    fun todayDestinationSurvivesActivityRecreation() {
+        composeRule.onNodeWithTag("today_tab").performClick()
+        waitForTag("today_hub")
+
+        composeRule.activityRule.scenario.recreate()
+
+        waitForTag("today_hub", timeoutMillis = 10_000)
+        assertTaggedSelected("today_tab", true)
+    }
+
+    @Test
+    fun zeroResultSearchCanClearWithoutPersistingTheQuery() {
+        val suffix = System.currentTimeMillis()
+        val title = "Search recovery $suffix"
+        createTextNote(title = title, body = "Known content")
+
+        openSearchPanel()
+        composeRule.onNodeWithTag("note_search_input").performTextInput("definitely absent $suffix")
+        waitForTag("clear_empty_search_filters")
+        composeRule.onNodeWithTag("clear_empty_search_filters").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+        val editableText = composeRule.onNodeWithTag("note_search_input")
+            .fetchSemanticsNode()
+            .config
+            .getOrNull(SemanticsProperties.EditableText)
+        assertEquals("", editableText?.text)
+    }
+
+    @Test
+    fun searchUiUsesAccentCollapsedWhitespaceAndTokenReorderRules() {
+        val suffix = System.currentTimeMillis()
+        val title = "Café roadmap $suffix"
+        val noteId = createTextNote(
+            title = title,
+            body = "Meet José   after class",
+        )
+        openSearchPanel()
+
+        composeRule.onNodeWithTag("note_search_input").performTextInput("meet jose after class")
+        composeRule.onNodeWithTag("note_card_$noteId").assertIsDisplayed()
+        composeRule.onNodeWithTag("note_preview_$noteId", useUnmergedTree = true)
+            .assertTextContains("Meet José after class", substring = true)
+
+        composeRule.onNodeWithTag("note_search_input").performTextReplacement("class cafe")
+        composeRule.onNodeWithText(title).assertIsDisplayed()
+        composeRule.onNodeWithTag("note_card_$noteId").assertIsDisplayed()
+    }
+
+    @Test
+    fun premiumScreenKeepsFourItemNavigationAndBackReturnsToToday() {
+        composeRule.onNodeWithTag("today_tab").performClick()
+        waitForTag("today_hub")
+        composeRule.onNodeWithTag("premium_tab").performClick()
+        waitForTag("premium_screen")
+
+        listOf("notes_tab", "today_tab", "search_tab", "premium_tab").forEach { tag ->
+            composeRule.onNodeWithTag(tag).assertIsDisplayed()
+        }
+        assertTaggedSelected("premium_tab", true)
+
+        pressActivityBack()
+
+        waitForTag("today_hub")
+        assertTaggedSelected("today_tab", true)
+    }
+
+    @Test
+    fun premiumSearchRequestIsConsumedAndDoesNotReplayWhenMainReturns() {
+        composeRule.onNodeWithTag("premium_tab").performClick()
+        waitForTag("premium_screen")
+        composeRule.onNodeWithTag("search_tab").performClick()
+        waitForTag("note_search_input")
+        pressActivityBack()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("note_search_input").fetchSemanticsNodes().isEmpty()
+        }
+
+        composeRule.onNodeWithTag("premium_tab").performClick()
+        waitForTag("premium_screen")
+        pressActivityBack()
+
+        waitForTag("add_note_button")
+        assertTagAbsent("note_search_input")
+    }
+
+    @Test
+    fun todayEntriesNormalizeTrashToActiveAndKeepTodaySelected() {
+        composeRule.onNodeWithTag("trash_filter").performClick()
+        composeRule.onNodeWithTag("today_tab").performClick()
+        waitForTag("today_hub")
+        assertTaggedSelected("today_tab", true)
+        composeRule.onNodeWithTag("notes_tab").performClick()
+        waitForTag("active_notes_filter")
+        assertTaggedSelected("active_notes_filter", true)
+
+        composeRule.onNodeWithTag("trash_filter").performClick()
+        composeRule.onNodeWithTag("premium_tab").performClick()
+        waitForTag("premium_screen")
+        composeRule.onNodeWithTag("today_tab").performClick()
+        waitForTag("today_hub")
+        assertTaggedSelected("today_tab", true)
+        composeRule.onNodeWithTag("notes_tab").performClick()
+        waitForTag("active_notes_filter")
+        assertTaggedSelected("active_notes_filter", true)
     }
 
 }

@@ -70,6 +70,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -102,12 +103,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -197,6 +202,7 @@ import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NoteQuickFilter
 import com.example.notepad.data.NoteListMode
 import com.example.notepad.data.NoteSortOption
+import com.example.notepad.data.NoteTemplate
 import com.example.notepad.data.NoteTypeFilter
 import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.PrivacyPreferences
@@ -209,9 +215,12 @@ import com.example.notepad.data.TextFormatRange
 import com.example.notepad.data.TextFormatType
 import com.example.notepad.data.TextFormattingJson
 import com.example.notepad.data.adjustTextFormattingAfterEdit
+import com.example.notepad.data.buildTodayNoteSections
+import com.example.notepad.data.builtInNoteTemplates
 import com.example.notepad.data.defaultBatchExportFileName
 import com.example.notepad.data.currentLineRange
 import com.example.notepad.data.currentWordRange
+import com.example.notepad.data.findSearchMatchRanges
 import com.example.notepad.data.normalizedReminderRepeat
 import com.example.notepad.data.normalizedFormatUrl
 import com.example.notepad.data.renderDrawingPng
@@ -270,8 +279,9 @@ private enum class SaveStatus {
     Failed,
 }
 
-private enum class MainTab {
+internal enum class MainTab {
     Notes,
+    Today,
     Search,
     Premium,
 }
@@ -279,6 +289,55 @@ private enum class MainTab {
 private enum class MainContentView {
     List,
     Calendar,
+    Today,
+}
+
+private val MainContentViewSaver = Saver<MainContentView, String>(
+    save = { view -> view.name },
+    restore = { saved -> MainContentView.entries.firstOrNull { it.name == saved } ?: MainContentView.List },
+)
+
+private val AppScreenSaver = Saver<AppScreen, String>(
+    save = { screen -> screen.savedKey() },
+    restore = ::appScreenFromSavedKey,
+)
+
+private fun AppScreen.savedKey(): String {
+    return when (this) {
+        AppScreen.Main -> "main"
+        AppScreen.Settings -> "settings"
+        is AppScreen.Premium -> "premium:${returnTo.savedKey()}"
+        is AppScreen.TextEditor -> "text:$noteId:${if (isNewDraft) 1 else 0}"
+        is AppScreen.DrawingEditor -> "drawing:$noteId:${if (isNewDraft) 1 else 0}"
+        is AppScreen.ChecklistEditor -> "checklist:$noteId:${if (startInEditMode) 1 else 0}"
+    }
+}
+
+private fun appScreenFromSavedKey(saved: String): AppScreen {
+    return when {
+        saved == "main" -> AppScreen.Main
+        saved == "settings" -> AppScreen.Settings
+        saved.startsWith("premium:") -> AppScreen.Premium(appScreenFromSavedKey(saved.removePrefix("premium:")))
+        saved.startsWith("text:") -> saved.toEditorParts()?.let { (id, flag) ->
+            AppScreen.TextEditor(id, flag)
+        } ?: AppScreen.Main
+
+        saved.startsWith("drawing:") -> saved.toEditorParts()?.let { (id, flag) ->
+            AppScreen.DrawingEditor(id, flag)
+        } ?: AppScreen.Main
+
+        saved.startsWith("checklist:") -> saved.toEditorParts()?.let { (id, flag) ->
+            AppScreen.ChecklistEditor(id, flag)
+        } ?: AppScreen.Main
+
+        else -> AppScreen.Main
+    }
+}
+
+private fun String.toEditorParts(): Pair<Long, Boolean>? {
+    val parts = split(':')
+    val id = parts.getOrNull(1)?.toLongOrNull() ?: return null
+    return id to (parts.getOrNull(2) == "1")
 }
 
 private enum class PremiumPlanSelection {
@@ -649,7 +708,17 @@ fun NotepadApp(
     onWidgetActionHandled: (Long) -> Unit,
     viewModel: NotepadViewModel,
 ) {
-    var screen: AppScreen by remember { mutableStateOf(AppScreen.Main) }
+    var screen: AppScreen by rememberSaveable(stateSaver = AppScreenSaver) {
+        mutableStateOf(AppScreen.Main)
+    }
+    var mainContentView by rememberSaveable(stateSaver = MainContentViewSaver) {
+        mutableStateOf(MainContentView.List)
+    }
+    var calendarReturnView by rememberSaveable(stateSaver = MainContentViewSaver) {
+        mutableStateOf(MainContentView.List)
+    }
+    var latestSearchOpenRequestId by rememberSaveable { mutableIntStateOf(0) }
+    var handledSearchOpenRequestId by rememberSaveable { mutableIntStateOf(0) }
     val appLanguage = rememberSystemAppLanguage()
     val text = remember(appLanguage) { uiTextFor(appLanguage) }
     val context = LocalContext.current
@@ -658,11 +727,16 @@ fun NotepadApp(
     val onlineSyncAutoOnStart by viewModel.onlineSyncAutoOnStart.collectAsStateWithLifecycle()
     val hideReminderNotificationContent by viewModel.hideReminderNotificationContent.collectAsStateWithLifecycle()
     val requireDeviceUnlock by viewModel.requireDeviceUnlock.collectAsStateWithLifecycle()
+    val hasCompletedFirstRun by viewModel.hasCompletedFirstRun.collectAsStateWithLifecycle()
+    val isFirstRunResolved by viewModel.isFirstRunResolved.collectAsStateWithLifecycle()
     val lastOnlineSyncAt by viewModel.lastOnlineSyncAt.collectAsStateWithLifecycle()
     val lastOnlineRestoreAt by viewModel.lastOnlineRestoreAt.collectAsStateWithLifecycle()
     val restoreRollbackCheckpoint by viewModel.restoreRollbackCheckpoint.collectAsStateWithLifecycle()
     val syncMetadata by viewModel.syncMetadata.collectAsStateWithLifecycle()
     var onlineSyncAutoAttempted by remember { mutableStateOf(false) }
+    var showTemplatePicker by remember { mutableStateOf(false) }
+    val v109Text = remember(appLanguage) { v109Text(appLanguage) }
+    val noteTemplates = remember(appLanguage) { builtInNoteTemplates(appLanguage) }
     val calendarNotes = remember(allNotes, selectedFolderId, listMode) {
         allNotes
             .filter { note -> note.isDeleted == (listMode == NoteListMode.Trash) }
@@ -685,6 +759,18 @@ fun NotepadApp(
                 Toast.makeText(context, text.ocrFailed, Toast.LENGTH_SHORT).show()
             },
         )
+    }
+
+    fun openCreatedTemplate(template: NoteTemplate) {
+        if (!billingState.hasPremiumAccess) {
+            viewModel.selectFolder(null)
+        }
+        viewModel.createNoteFromTemplate(template) { noteId ->
+            screen = when (template.type) {
+                NoteTypes.CHECKLIST -> AppScreen.ChecklistEditor(noteId, startInEditMode = true)
+                else -> AppScreen.TextEditor(noteId, isNewDraft = true)
+            }
+        }
     }
 
     LaunchedEffect(incomingTextShare?.id) {
@@ -742,8 +828,15 @@ fun NotepadApp(
     when (val currentScreen = screen) {
         AppScreen.Main -> MainScreen(
             folders = folders,
+            allNotes = allNotes,
             notes = notes,
             calendarNotes = calendarNotes,
+            hasAnyActiveNotes = allNotes.any { note -> !note.isDeleted },
+            contentView = mainContentView,
+            calendarReturnView = calendarReturnView,
+            searchOpenRequestId = latestSearchOpenRequestId.takeIf {
+                it > handledSearchOpenRequestId
+            } ?: 0,
             selectedFolderId = selectedFolderId,
             searchQuery = searchQuery,
             listMode = listMode,
@@ -762,6 +855,13 @@ fun NotepadApp(
             onTypeFilterChange = viewModel::setTypeFilter,
             onReminderFilterChange = viewModel::setReminderFilter,
             onQuickFilterChange = viewModel::setQuickFilter,
+            onSearchOpenRequestHandled = { requestId ->
+                if (requestId > handledSearchOpenRequestId) {
+                    handledSearchOpenRequestId = requestId
+                }
+            },
+            onContentViewChange = { view -> mainContentView = view },
+            onCalendarReturnViewChange = { view -> calendarReturnView = view },
             onOpenSettings = { screen = AppScreen.Settings },
             onOpenPremium = { screen = AppScreen.Premium() },
             onCreateFolder = viewModel::createFolder,
@@ -785,8 +885,9 @@ fun NotepadApp(
             onCreateOcrNote = {
                 imagePickerLauncher.launch("image/*")
             },
-            onCreateReminderTextNote = { reminderAt ->
-                viewModel.createTextNoteWithReminder(reminderAt) { noteId ->
+            onChooseTemplate = { showTemplatePicker = true },
+            onCreateReminderTextNote = { reminderAt, folderId ->
+                viewModel.createTextNoteWithReminder(reminderAt, folderId) { noteId ->
                     screen = AppScreen.TextEditor(noteId, isNewDraft = true)
                 }
             },
@@ -838,6 +939,7 @@ fun NotepadApp(
 
         is AppScreen.Premium -> PremiumScreen(
             text = text,
+            v109Text = v109Text,
             billingState = billingState,
             onSubscribe = { plan ->
                 val activity = context as? Activity
@@ -847,7 +949,20 @@ fun NotepadApp(
             },
             onRefreshPurchaseStatus = viewModel::refreshPremiumEntitlement,
             onBack = { screen = currentScreen.returnTo },
-            onOpenNotes = { screen = currentScreen.returnTo },
+            onOpenNotes = {
+                mainContentView = MainContentView.List
+                screen = AppScreen.Main
+            },
+            onOpenToday = {
+                viewModel.setListMode(NoteListMode.Active)
+                mainContentView = MainContentView.Today
+                screen = AppScreen.Main
+            },
+            onOpenSearch = {
+                mainContentView = MainContentView.List
+                latestSearchOpenRequestId += 1
+                screen = AppScreen.Main
+            },
             onOpenComplianceUrl = { url -> openComplianceUrl(context, url) },
         )
 
@@ -905,6 +1020,39 @@ fun NotepadApp(
     if (isRecognizingText && !isPrivacyLocked) {
         OcrProgressDialog(text = text)
     }
+
+    if (
+        screen == AppScreen.Main &&
+        isFirstRunResolved &&
+        !hasCompletedFirstRun &&
+        !showTemplatePicker &&
+        !isPrivacyLocked
+    ) {
+        FirstRunWelcome(
+            text = v109Text,
+            onNewNote = {
+                viewModel.completeFirstRun()
+                viewModel.createTextNote { noteId ->
+                    screen = AppScreen.TextEditor(noteId, isNewDraft = true)
+                }
+            },
+            onChooseTemplate = { showTemplatePicker = true },
+            onSkip = viewModel::completeFirstRun,
+        )
+    }
+
+    if (screen == AppScreen.Main && showTemplatePicker && !isPrivacyLocked) {
+        TemplatePickerDialog(
+            templates = noteTemplates,
+            text = v109Text,
+            onSelect = { template ->
+                showTemplatePicker = false
+                viewModel.completeFirstRun()
+                openCreatedTemplate(template)
+            },
+            onDismiss = { showTemplatePicker = false },
+        )
+    }
 }
 
 private fun NoteEntity.toEditorScreen(): AppScreen {
@@ -949,11 +1097,13 @@ private fun OcrProgressDialog(text: UiText) {
 }
 
 @Composable
-private fun MainNavigationBar(
+internal fun MainNavigationBar(
     selectedTab: MainTab,
     text: UiText,
+    v109Text: V109Text,
     onOpenNotes: () -> Unit,
-    onOpenSearch: (() -> Unit)? = null,
+    onOpenToday: () -> Unit,
+    onOpenSearch: () -> Unit,
     onOpenPremium: () -> Unit,
 ) {
     NavigationBar {
@@ -964,15 +1114,20 @@ private fun MainNavigationBar(
             label = { Text(text.notesTab) },
             modifier = Modifier.testTag("notes_tab"),
         )
-        if (onOpenSearch != null) {
-            NavigationBarItem(
-                selected = selectedTab == MainTab.Search,
-                onClick = onOpenSearch,
-                icon = { Icon(Icons.Filled.Search, contentDescription = text.search) },
-                label = { Text(text.search) },
-                modifier = Modifier.testTag("search_tab"),
-            )
-        }
+        NavigationBarItem(
+            selected = selectedTab == MainTab.Today,
+            onClick = onOpenToday,
+            icon = { Icon(Icons.Filled.Today, contentDescription = null) },
+            label = { Text(v109Text.today) },
+            modifier = Modifier.testTag("today_tab"),
+        )
+        NavigationBarItem(
+            selected = selectedTab == MainTab.Search,
+            onClick = onOpenSearch,
+            icon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            label = { Text(text.search) },
+            modifier = Modifier.testTag("search_tab"),
+        )
         NavigationBarItem(
             selected = selectedTab == MainTab.Premium,
             onClick = onOpenPremium,
@@ -987,11 +1142,14 @@ private fun MainNavigationBar(
 @Composable
 internal fun PremiumScreen(
     text: UiText,
+    v109Text: V109Text,
     billingState: PremiumBillingState,
     onSubscribe: (PremiumPlan) -> Unit,
     onRefreshPurchaseStatus: () -> Unit,
     onBack: () -> Unit,
     onOpenNotes: () -> Unit,
+    onOpenToday: () -> Unit,
+    onOpenSearch: () -> Unit,
     onOpenComplianceUrl: (String) -> Unit,
 ) {
     var selectedPlan by remember { mutableStateOf(PremiumPlanSelection.Annual) }
@@ -1050,7 +1208,10 @@ internal fun PremiumScreen(
             MainNavigationBar(
                 selectedTab = MainTab.Premium,
                 text = text,
+                v109Text = v109Text,
                 onOpenNotes = onOpenNotes,
+                onOpenToday = onOpenToday,
+                onOpenSearch = onOpenSearch,
                 onOpenPremium = {},
             )
         },
@@ -1522,8 +1683,13 @@ private fun PremiumFreeFeatures(text: UiText) {
 @Composable
 private fun MainScreen(
     folders: List<FolderEntity>,
+    allNotes: List<NoteEntity>,
     notes: List<NoteEntity>,
     calendarNotes: List<NoteEntity>,
+    hasAnyActiveNotes: Boolean,
+    contentView: MainContentView,
+    calendarReturnView: MainContentView,
+    searchOpenRequestId: Int,
     selectedFolderId: Long?,
     searchQuery: String,
     listMode: NoteListMode,
@@ -1542,6 +1708,9 @@ private fun MainScreen(
     onTypeFilterChange: (NoteTypeFilter) -> Unit,
     onReminderFilterChange: (ReminderFilter) -> Unit,
     onQuickFilterChange: (NoteQuickFilter) -> Unit,
+    onSearchOpenRequestHandled: (Int) -> Unit,
+    onContentViewChange: (MainContentView) -> Unit,
+    onCalendarReturnViewChange: (MainContentView) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenPremium: () -> Unit,
     onCreateFolder: (String) -> Unit,
@@ -1551,7 +1720,8 @@ private fun MainScreen(
     onCreateDrawingNote: () -> Unit,
     onCreateChecklistNote: () -> Unit,
     onCreateOcrNote: () -> Unit,
-    onCreateReminderTextNote: (Long) -> Unit,
+    onChooseTemplate: () -> Unit,
+    onCreateReminderTextNote: (Long, Long?) -> Unit,
     onOpenNote: (NoteEntity) -> Unit,
     onMoveNote: (Long, Long) -> Unit,
     onDeleteNote: (Long) -> Unit,
@@ -1570,23 +1740,41 @@ private fun MainScreen(
     var noteToPermanentlyDelete by remember { mutableStateOf<NoteEntity?>(null) }
     var selectedNoteIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var selectedNotesToDelete by remember { mutableStateOf<Set<Long>?>(null) }
-    var contentView by remember { mutableStateOf(MainContentView.List) }
-    var isSearchVisible by remember { mutableStateOf(searchQuery.isNotBlank()) }
-    var searchFocusRequest by remember { mutableStateOf(0) }
+    var isSearchVisible by rememberSaveable { mutableStateOf(searchQuery.isNotBlank()) }
+    var searchFocusRequest by remember { mutableIntStateOf(0) }
     var areFiltersExpanded by remember { mutableStateOf(false) }
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val v109Text = remember(appLanguage) { v109Text(appLanguage) }
+    val todaySections = remember(allNotes, nowMillis) {
+        buildTodayNoteSections(allNotes, nowMillis)
+    }
     val hasNonDefaultFolders = folders.any { it.id != DEFAULT_FOLDER_ID }
-    val showFolderUi = hasPremiumAccess || hasNonDefaultFolders
+    val canUseFolderScope = hasPremiumAccess || hasNonDefaultFolders
+    val isGlobalTodayCalendar =
+        contentView == MainContentView.Calendar && calendarReturnView == MainContentView.Today
+    val displayedCalendarNotes = remember(
+        allNotes,
+        calendarNotes,
+        isGlobalTodayCalendar,
+    ) {
+        reminderCalendarNotes(
+            allNotes = allNotes,
+            selectedFolderNotes = calendarNotes,
+            openedFromToday = isGlobalTodayCalendar,
+        )
+    }
+    val showFolderUi = canUseFolderScope && !isGlobalTodayCalendar
     val selectedFolder = if (showFolderUi) folders.firstOrNull { it.id == selectedFolderId } else null
     val isTrash = listMode == NoteListMode.Trash
     val isSelectionMode = selectedNoteIds.isNotEmpty()
-    val visibleNoteIds = remember(notes, calendarNotes, contentView) {
-        val visibleNotes = if (contentView == MainContentView.Calendar) calendarNotes else notes
+    val visibleNoteIds = remember(notes, displayedCalendarNotes, contentView) {
+        val visibleNotes = if (contentView == MainContentView.Calendar) displayedCalendarNotes else notes
         visibleNotes.map { it.id }.toSet()
     }
     val hasActiveFilterPanel = quickFilter != NoteQuickFilter.All ||
         reminderFilter != ReminderFilter.All ||
         sortOption != NoteSortOption.UpdatedAt ||
-        (!isTrash && contentView != MainContentView.List)
+        (!isTrash && contentView == MainContentView.Calendar)
     val shouldShowSearchBar = isSearchVisible || searchQuery.isNotBlank()
     val shouldShowFilterPanel = areFiltersExpanded
     fun clearNoteSelection() {
@@ -1602,10 +1790,15 @@ private fun MainScreen(
     }
 
     fun createReminderWithAllowedFolder(reminderAt: Long) {
-        if (!hasPremiumAccess) {
+        val targetFolderId = if (isGlobalTodayCalendar) {
+            DEFAULT_FOLDER_ID
+        } else if (!hasPremiumAccess) {
             onSelectFolder(null)
+            null
+        } else {
+            selectedFolderId
         }
-        onCreateReminderTextNote(reminderAt)
+        onCreateReminderTextNote(reminderAt, targetFolderId)
     }
 
     LaunchedEffect(isPrivacyLocked) {
@@ -1622,8 +1815,8 @@ private fun MainScreen(
         }
     }
 
-    LaunchedEffect(showFolderUi, selectedFolderId) {
-        if (!showFolderUi && selectedFolderId != null) {
+    LaunchedEffect(canUseFolderScope, selectedFolderId) {
+        if (!canUseFolderScope && selectedFolderId != null) {
             onSelectFolder(null)
         }
     }
@@ -1637,11 +1830,27 @@ private fun MainScreen(
     }
 
     LaunchedEffect(listMode) {
-        if (isTrash) contentView = MainContentView.List
+        if (isTrash) onContentViewChange(MainContentView.List)
     }
 
     LaunchedEffect(searchQuery) {
         if (searchQuery.isNotBlank()) isSearchVisible = true
+    }
+
+    LaunchedEffect(searchOpenRequestId) {
+        if (searchOpenRequestId > 0) {
+            onContentViewChange(MainContentView.List)
+            isSearchVisible = true
+            searchFocusRequest += 1
+            onSearchOpenRequestHandled(searchOpenRequestId)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000)
+            nowMillis = System.currentTimeMillis()
+        }
     }
 
     LaunchedEffect(hasActiveFilterPanel) {
@@ -1655,6 +1864,13 @@ private fun MainScreen(
 
     BackHandler(enabled = isSelectionMode, onBack = ::clearNoteSelection)
     BackHandler(enabled = shouldShowSearchBar && !isSelectionMode, onBack = ::closeSearch)
+    BackHandler(
+        enabled = contentView != MainContentView.List && !shouldShowSearchBar && !isSelectionMode,
+    ) {
+        onContentViewChange(
+            if (contentView == MainContentView.Calendar) calendarReturnView else MainContentView.List,
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -1699,10 +1915,25 @@ private fun MainScreen(
         },
         bottomBar = {
             MainNavigationBar(
-                selectedTab = if (shouldShowSearchBar) MainTab.Search else MainTab.Notes,
+                selectedTab = when {
+                    shouldShowSearchBar -> MainTab.Search
+                    contentView == MainContentView.Today -> MainTab.Today
+                    else -> MainTab.Notes
+                },
                 text = text,
-                onOpenNotes = ::closeSearch,
+                v109Text = v109Text,
+                onOpenNotes = {
+                    closeSearch()
+                    onContentViewChange(MainContentView.List)
+                },
+                onOpenToday = {
+                    closeSearch()
+                    onListModeChange(NoteListMode.Active)
+                    onContentViewChange(MainContentView.Today)
+                    clearNoteSelection()
+                },
                 onOpenSearch = {
+                    onContentViewChange(MainContentView.List)
                     isSearchVisible = true
                     searchFocusRequest += 1
                 },
@@ -1710,7 +1941,7 @@ private fun MainScreen(
             )
         },
         floatingActionButton = {
-            if (!isTrash && !isSelectionMode && contentView != MainContentView.Calendar) {
+            if (!isTrash && !isSelectionMode && contentView == MainContentView.List) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.Bottom,
@@ -1754,6 +1985,14 @@ private fun MainScreen(
                                     onCreateOcrNote()
                                 },
                             )
+                            DropdownMenuItem(
+                                text = { Text(v109Text.chooseTemplate) },
+                                modifier = Modifier.testTag("choose_template_menu_item"),
+                                onClick = {
+                                    addMenuExpanded = false
+                                    onChooseTemplate()
+                                },
+                            )
                             if (hasPremiumAccess) {
                                 DropdownMenuItem(
                                     text = { Text(text.newFolder) },
@@ -1785,6 +2024,22 @@ private fun MainScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            if (contentView == MainContentView.Today && !isTrash) {
+                TodayHub(
+                    sections = todaySections,
+                    text = v109Text,
+                    isPrivacyLocked = isPrivacyLocked,
+                    onNewNote = { createNoteWithAllowedFolder(onCreateTextNote) },
+                    onNewChecklist = { createNoteWithAllowedFolder(onCreateChecklistNote) },
+                    onOpenReminders = {
+                        onCalendarReturnViewChange(MainContentView.Today)
+                        onContentViewChange(MainContentView.Calendar)
+                        clearNoteSelection()
+                    },
+                    onOpenNote = onOpenNote,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1827,14 +2082,19 @@ private fun MainScreen(
                 }
 
                 HomeHeaderSummaryRow(
-                    resultCount = notes.size,
+                    resultCount = if (contentView == MainContentView.Calendar) {
+                        displayedCalendarNotes.size
+                    } else {
+                        notes.size
+                    },
                     text = text,
                     appLanguage = appLanguage,
                     filtersExpanded = shouldShowFilterPanel,
                     showHomeRemindersButton = !isTrash,
                     isCalendarSelected = contentView == MainContentView.Calendar,
                     onOpenReminders = {
-                        contentView = MainContentView.Calendar
+                        onCalendarReturnViewChange(MainContentView.List)
+                        onContentViewChange(MainContentView.Calendar)
                         clearNoteSelection()
                     },
                     onToggleFilters = { areFiltersExpanded = !areFiltersExpanded },
@@ -1855,7 +2115,8 @@ private fun MainScreen(
                         onQuickFilterChange = onQuickFilterChange,
                         onReminderFilterChange = onReminderFilterChange,
                         onContentViewChange = { view ->
-                            contentView = view
+                            onCalendarReturnViewChange(MainContentView.List)
+                            onContentViewChange(view)
                             clearNoteSelection()
                         },
                     )
@@ -1876,7 +2137,7 @@ private fun MainScreen(
             }
             if (contentView == MainContentView.Calendar && !isTrash) {
                 ReminderCalendarView(
-                    notes = calendarNotes,
+                    notes = displayedCalendarNotes,
                     folders = folders,
                     text = text,
                     searchQuery = searchQuery,
@@ -1912,7 +2173,20 @@ private fun MainScreen(
                     showReminderSummary = reminderFilter != ReminderFilter.All ||
                         quickFilter == NoteQuickFilter.HasReminder,
                     isPrivacyLocked = isPrivacyLocked,
+                    showStarterHub = !hasAnyActiveNotes &&
+                        listMode == NoteListMode.Active &&
+                        searchQuery.isBlank() &&
+                        quickFilter == NoteQuickFilter.All &&
+                        reminderFilter == ReminderFilter.All,
+                    v109Text = v109Text,
                     selectedNoteIds = selectedNoteIds,
+                    onClearSearchAndFilters = {
+                        onSearchQueryChange("")
+                        onQuickFilterChange(NoteQuickFilter.All)
+                        onReminderFilterChange(ReminderFilter.All)
+                    },
+                    onCreateTextNote = { createNoteWithAllowedFolder(onCreateTextNote) },
+                    onChooseTemplate = onChooseTemplate,
                     onOpenNote = onOpenNote,
                     onToggleNoteSelection = toggleNoteSelection,
                     onStartNoteSelection = startNoteSelection,
@@ -1930,6 +2204,7 @@ private fun MainScreen(
                     onTogglePinned = onTogglePinned,
                     modifier = Modifier.weight(1f),
                 )
+            }
             }
         }
     }
@@ -3293,7 +3568,12 @@ private fun NoteList(
     appLanguage: AppLanguage,
     showReminderSummary: Boolean,
     isPrivacyLocked: Boolean,
+    showStarterHub: Boolean,
+    v109Text: V109Text,
     selectedNoteIds: Set<Long>,
+    onClearSearchAndFilters: () -> Unit,
+    onCreateTextNote: () -> Unit,
+    onChooseTemplate: () -> Unit,
     onOpenNote: (NoteEntity) -> Unit,
     onToggleNoteSelection: (NoteEntity) -> Unit,
     onStartNoteSelection: (NoteEntity) -> Unit,
@@ -3314,6 +3594,17 @@ private fun NoteList(
         }
     }
 
+    if (notes.isEmpty() && showStarterHub) {
+        StarterHub(
+            text = v109Text,
+            enabled = !isPrivacyLocked,
+            onNewNote = onCreateTextNote,
+            onChooseTemplate = onChooseTemplate,
+            modifier = modifier,
+        )
+        return
+    }
+
     if (notes.isEmpty()) {
         Box(
             modifier = modifier.fillMaxWidth(),
@@ -3325,23 +3616,46 @@ private fun NoteList(
                     .padding(20.dp)
                     .testTag("note_empty_state"),
             ) {
-                Text(
-                    text = when {
-                        searchQuery.isNotBlank() || hasActiveFilters -> text.noSearchOrFilterResults
-                        listMode == NoteListMode.Trash -> text.noDeletedNotes
-                        else -> text.noNotes
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Column(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        text = when {
+                            searchQuery.isNotBlank() || hasActiveFilters -> text.noSearchOrFilterResults
+                            listMode == NoteListMode.Trash -> text.noDeletedNotes
+                            else -> text.noNotes
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (searchQuery.isNotBlank() || hasActiveFilters) {
+                        TextButton(
+                            onClick = onClearSearchAndFilters,
+                            enabled = !isPrivacyLocked,
+                            modifier = Modifier.testTag("clear_empty_search_filters"),
+                        ) {
+                            Text(v109Text.clearSearchAndFilters)
+                        }
+                        TextButton(
+                            onClick = onCreateTextNote,
+                            enabled = !isPrivacyLocked,
+                            modifier = Modifier.testTag("empty_search_new_note"),
+                        ) {
+                            Text(v109Text.newNote)
+                        }
+                    }
+                }
             }
         }
         return
     }
 
     LazyColumn(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("note_list"),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -3368,6 +3682,18 @@ private fun NoteList(
                 onTogglePinned = { onTogglePinned(note) },
             )
         }
+    }
+}
+
+internal fun reminderCalendarNotes(
+    allNotes: List<NoteEntity>,
+    selectedFolderNotes: List<NoteEntity>,
+    openedFromToday: Boolean,
+): List<NoteEntity> {
+    return if (openedFromToday) {
+        allNotes.filterNot(NoteEntity::isDeleted)
+    } else {
+        selectedFolderNotes
     }
 }
 
@@ -4202,7 +4528,7 @@ private fun TextEditorScreen(
         saveStatus = SaveStatus.Synced
         if (modeInitializedNoteId != loaded.id) {
             val isBlankLoadedTextNote = loaded.title.isBlank() && loaded.textContent.orEmpty().isBlank()
-            isEditing = isBlankLoadedTextNote
+            isEditing = isNewDraft || isBlankLoadedTextNote
             isFocusWriting = isNewDraft && isBlankLoadedTextNote
             isMetadataExpanded = isNewDraft && loaded.reminderAt != null
             modeInitializedNoteId = loaded.id
@@ -8746,16 +9072,13 @@ private fun notePreview(note: NoteEntity, query: String): String? {
     }.replace(Regex("\\s+"), " ").trim()
     if (content.isBlank()) return null
 
-    val trimmedQuery = query.trim()
-    if (trimmedQuery.isNotBlank()) {
-        val matchIndex = content.indexOf(trimmedQuery, ignoreCase = true)
-        if (matchIndex >= 0) {
-            val start = (matchIndex - NOTE_PREVIEW_CONTEXT_BEFORE).coerceAtLeast(0)
-            val end = (matchIndex + trimmedQuery.length + NOTE_PREVIEW_CONTEXT_AFTER).coerceAtMost(content.length)
-            val prefix = if (start > 0) "..." else ""
-            val suffix = if (end < content.length) "..." else ""
-            return "$prefix${content.substring(start, end)}$suffix"
-        }
+    val firstMatch = findSearchMatchRanges(content, query).firstOrNull()
+    if (firstMatch != null) {
+        val start = (firstMatch.first - NOTE_PREVIEW_CONTEXT_BEFORE).coerceAtLeast(0)
+        val end = (firstMatch.last + 1 + NOTE_PREVIEW_CONTEXT_AFTER).coerceAtMost(content.length)
+        val prefix = if (start > 0) "..." else ""
+        val suffix = if (end < content.length) "..." else ""
+        return "$prefix${content.substring(start, end)}$suffix"
     }
 
     return content.take(NOTE_PREVIEW_MAX_CHARS)
@@ -8766,12 +9089,11 @@ fun highlightedText(
     query: String,
     highlightColor: Color,
 ): AnnotatedString {
-    val trimmedQuery = query.trim()
-    if (trimmedQuery.isBlank()) return AnnotatedString(value)
+    if (query.isBlank()) return AnnotatedString(value)
 
     return buildAnnotatedString {
         append(value)
-        value.highlightRanges(trimmedQuery).forEach { range ->
+        findSearchMatchRanges(value, query).forEach { range ->
             addStyle(
                 SpanStyle(background = highlightColor),
                 start = range.first,

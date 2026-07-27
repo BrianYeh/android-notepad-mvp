@@ -23,6 +23,12 @@ class NotepadRepository(
 
     suspend fun getNote(noteId: Long): NoteEntity? = dao.getNote(noteId)
 
+    suspend fun hasExistingUserData(): Boolean {
+        return dao.getAllNotes().isNotEmpty() ||
+            dao.getAllFolders().any { folder -> folder.id != DEFAULT_FOLDER_ID } ||
+            dao.getNoteTombstones().isNotEmpty()
+    }
+
     suspend fun ensureDefaultFolder() {
         dao.ensureSyncMetadata()
     }
@@ -110,6 +116,35 @@ class NotepadRepository(
                 updatedAt = now,
             ),
         )
+    }
+
+    suspend fun createNoteFromTemplate(folderId: Long?, template: NoteTemplate): Long {
+        dao.ensureDefaultFolder()
+        val now = System.currentTimeMillis()
+        val note = when (template.type) {
+            NoteTypes.CHECKLIST -> NoteEntity(
+                folderId = folderId ?: DEFAULT_FOLDER_ID,
+                type = NoteTypes.CHECKLIST,
+                title = template.title,
+                textContent = ChecklistJson.encode(
+                    template.checklistItems.map { item -> ChecklistItem(text = item) },
+                ),
+                drawingData = null,
+                createdAt = now,
+                updatedAt = now,
+            )
+
+            else -> NoteEntity(
+                folderId = folderId ?: DEFAULT_FOLDER_ID,
+                type = NoteTypes.TEXT,
+                title = template.title,
+                textContent = template.textContent.orEmpty(),
+                drawingData = null,
+                createdAt = now,
+                updatedAt = now,
+            )
+        }
+        return dao.insertNote(note)
     }
 
     suspend fun saveTextNote(

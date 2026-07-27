@@ -22,6 +22,7 @@ import com.example.notepad.ui.LocalNotepadTheme
 import com.example.notepad.ui.PRIVACY_POLICY_URL
 import com.example.notepad.ui.PremiumScreen
 import com.example.notepad.ui.TERMS_OF_SERVICE_URL
+import com.example.notepad.ui.v109Text
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -67,11 +68,14 @@ class ComplianceLinksInstrumentedTest {
             LocalNotepadTheme {
                 PremiumScreen(
                     text = EnglishText,
+                    v109Text = v109Text(com.example.notepad.data.AppLanguage.English),
                     billingState = state,
                     onSubscribe = {},
                     onRefreshPurchaseStatus = {},
                     onBack = {},
                     onOpenNotes = {},
+                    onOpenToday = {},
+                    onOpenSearch = {},
                     onOpenComplianceUrl = opened::add,
                 )
             }

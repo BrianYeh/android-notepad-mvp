@@ -3,6 +3,7 @@ package com.example.notepad
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import androidx.test.runner.AndroidJUnitRunner
+import com.example.notepad.data.FirstRunPreferences
 import com.example.notepad.debug.DebugPremiumAccess
 
 class JustNotesTestRunner : AndroidJUnitRunner() {
@@ -19,6 +20,7 @@ class JustNotesTestRunner : AndroidJUnitRunner() {
     }
 
     override fun onStart() {
+        FirstRunPreferences.markCompleted(targetContext)
         originalAnimationScales = animationScaleSettings.associateWith { setting ->
             shell("settings get global $setting")
                 ?.trim()

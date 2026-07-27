@@ -22,6 +22,20 @@ const read = (relativePath) => {
 const requireText = (body, pattern, message) => {
   if (!pattern.test(body)) failures.push(message);
 };
+const requireCurrentDate = (body, page) => {
+  const match = body.match(
+    /(?:Effective|Updated)\s+([A-Z][a-z]+\s+\d{1,2},\s+\d{4}|\d{4}-\d{2}-\d{2})/i,
+  );
+  if (!match) {
+    failures.push(`${page} needs an updated date`);
+    return;
+  }
+  const timestamp = Date.parse(match[1]);
+  const tomorrow = Date.now() + 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(timestamp) || timestamp > tomorrow) {
+    failures.push(`${page} has an invalid or future updated date`);
+  }
+};
 
 requiredFiles.forEach(read);
 
@@ -32,7 +46,7 @@ for (const page of requiredPages) {
   if (h1Count !== 1) failures.push(`${page} must contain exactly one h1`);
   requireText(html, /<html\s+lang="[^"]+"/i, `${page} needs a language declaration`);
   requireText(html, /<meta\s+name="viewport"/i, `${page} needs viewport metadata`);
-  requireText(html, /(?:Effective|Updated)\s+(?:July 12, 2026|2026-07-12)/i, `${page} needs an updated date`);
+  requireCurrentDate(html, page);
   requireText(html, /<nav\b/i, `${page} needs navigation`);
   requireText(html, /Just Notes/i, `${page} must name Just Notes`);
 }

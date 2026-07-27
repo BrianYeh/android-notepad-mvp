@@ -18,12 +18,13 @@ import com.example.notepad.billing.PremiumBilling
 import com.example.notepad.billing.PremiumPlan
 import com.example.notepad.data.DriveSyncResult
 import com.example.notepad.data.EditorFontSize
+import com.example.notepad.data.FirstRunPreferences
 import com.example.notepad.data.GoogleDriveSyncClient
 import com.example.notepad.data.BackupData
-import com.example.notepad.data.ChecklistJson
 import com.example.notepad.data.DecodedBackup
 import com.example.notepad.data.DrawingSaveEditGate
 import com.example.notepad.data.NoteEntity
+import com.example.notepad.data.NoteTemplate
 import com.example.notepad.data.NoteQuickFilter
 import com.example.notepad.data.NoteListMode
 import com.example.notepad.data.NoteSortOption
@@ -43,6 +44,7 @@ import com.example.notepad.data.SyncMetadata
 import com.example.notepad.data.SyncStatus
 import com.example.notepad.data.TextImportFile
 import com.example.notepad.data.buildSharedNoteTitle
+import com.example.notepad.data.matchesNoteSearch
 import com.example.notepad.data.normalizedReminderRepeat
 import com.example.notepad.debug.DebugPremiumAccess
 import com.example.notepad.debug.DebugSaveFailure
@@ -118,6 +120,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     val reminderFilter: StateFlow<ReminderFilter> = _reminderFilter
     private val _quickFilter = MutableStateFlow(NoteQuickFilter.All)
     val quickFilter: StateFlow<NoteQuickFilter> = _quickFilter
+    private val _hasCompletedFirstRun = MutableStateFlow(FirstRunPreferences.hasCompleted(application))
+    val hasCompletedFirstRun: StateFlow<Boolean> = _hasCompletedFirstRun
+    private val _isFirstRunResolved = MutableStateFlow(false)
+    val isFirstRunResolved: StateFlow<Boolean> = _isFirstRunResolved
     private val _editorFontSize = MutableStateFlow(
         EditorFontSize.fromCode(preferences.getString("editor_font_size", EditorFontSize.Medium.code)),
     )
@@ -213,7 +219,7 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
                 .filter { note -> filters.selectedFolderId == null || note.folderId == filters.selectedFolderId }
                 .filter { note -> note.matchesQuickFilter(filters.quickFilter) }
                 .filter { note -> note.matchesReminderFilter(filters.reminderFilter, now) }
-                .filter { note -> filters.searchQuery.isBlank() || note.matchesSearch(filters.searchQuery) }
+                .filter { note -> note.matchesNoteSearch(filters.searchQuery) }
                 .toList()
                 .sortedFor(filters)
         }
@@ -226,6 +232,10 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     init {
         viewModelScope.launch {
             repository.ensureDefaultFolder()
+            if (!_hasCompletedFirstRun.value && repository.hasExistingUserData()) {
+                completeFirstRun()
+            }
+            _isFirstRunResolved.value = true
             ReminderScheduler.rescheduleFutureReminders(application)
         }
         viewModelScope.launch {
@@ -308,6 +318,12 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
+    }
+
+    fun completeFirstRun() {
+        if (_hasCompletedFirstRun.value) return
+        FirstRunPreferences.markCompleted(getApplication())
+        _hasCompletedFirstRun.value = true
     }
 
     fun setListMode(mode: NoteListMode) {
@@ -642,12 +658,13 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun createTextNoteWithReminder(
         reminderAt: Long,
+        folderId: Long?,
         reminderRepeat: String = ReminderRepeat.None.code,
         onCreated: (Long) -> Unit,
     ) {
         viewModelScope.launch {
             if (reminderAt <= System.currentTimeMillis()) return@launch
-            val noteId = repository.createTextNote(_selectedFolderId.value)
+            val noteId = repository.createTextNote(folderId)
             val normalizedRepeat = normalizedReminderRepeat(reminderRepeat)
             val scheduledReminderAt = if (normalizedRepeat == ReminderRepeat.None.code) {
                 reminderAt
@@ -720,6 +737,13 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     fun createChecklistNote(onCreated: (Long) -> Unit) {
         viewModelScope.launch {
             onCreated(repository.createChecklistNote(_selectedFolderId.value))
+            refreshWidgets()
+        }
+    }
+
+    fun createNoteFromTemplate(template: NoteTemplate, onCreated: (Long) -> Unit) {
+        viewModelScope.launch {
+            onCreated(repository.createNoteFromTemplate(_selectedFolderId.value, template))
             refreshWidgets()
         }
     }
@@ -1091,11 +1115,6 @@ private data class NoteListFilters(
     val reminderFilter: ReminderFilter = ReminderFilter.All,
 )
 
-private fun NoteEntity.matchesSearch(query: String): Boolean {
-    return title.contains(query, ignoreCase = true) ||
-        searchableText().contains(query, ignoreCase = true)
-}
-
 private fun NoteEntity.matchesQuickFilter(filter: NoteQuickFilter): Boolean {
     return when (filter) {
         NoteQuickFilter.All -> true
@@ -1114,14 +1133,6 @@ private fun NoteEntity.matchesReminderFilter(filter: ReminderFilter, now: Long):
         ReminderFilter.WithReminder -> reminderAt != null
         ReminderFilter.Overdue -> reminderAt != null && reminderAt <= now
         ReminderFilter.Upcoming -> reminderAt != null && reminderAt > now
-    }
-}
-
-private fun NoteEntity.searchableText(): String {
-    return if (type == NoteTypes.CHECKLIST) {
-        ChecklistJson.plainText(textContent)
-    } else {
-        textContent.orEmpty()
     }
 }
 

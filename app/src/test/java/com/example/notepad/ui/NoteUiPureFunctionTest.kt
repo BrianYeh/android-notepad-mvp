@@ -1,12 +1,15 @@
 package com.example.notepad.ui
 
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.graphics.Color
 import com.example.notepad.billing.PremiumBillingState
 import com.example.notepad.billing.PremiumSubscriptionSnapshot
 import com.example.notepad.billing.PremiumSubscriptionStatus
 import com.example.notepad.data.DrawingPoint
 import com.example.notepad.data.DrawingStroke
 import com.example.notepad.data.DrawingTools
+import com.example.notepad.data.NoteEntity
+import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.SyncMetadata
 import com.example.notepad.data.SyncStatus
 import org.junit.Assert.assertEquals
@@ -14,6 +17,31 @@ import org.junit.Test
 import java.net.URI
 
 class NoteUiPureFunctionTest {
+    @Test
+    fun reminderCalendarOpenedFromTodayKeepsGlobalCrossFolderScope() {
+        val selectedFolderNote = note(id = 1, folderId = 10)
+        val otherFolderNote = note(id = 2, folderId = 20)
+        val deletedOtherFolderNote = note(id = 3, folderId = 20, isDeleted = true)
+        val allNotes = listOf(selectedFolderNote, otherFolderNote, deletedOtherFolderNote)
+
+        assertEquals(
+            listOf(selectedFolderNote, otherFolderNote),
+            reminderCalendarNotes(
+                allNotes = allNotes,
+                selectedFolderNotes = listOf(selectedFolderNote),
+                openedFromToday = true,
+            ),
+        )
+        assertEquals(
+            listOf(selectedFolderNote),
+            reminderCalendarNotes(
+                allNotes = allNotes,
+                selectedFolderNotes = listOf(selectedFolderNote),
+                openedFromToday = false,
+            ),
+        )
+    }
+
     @Test
     fun complianceUrlsAreExactPublicHttpsPages() {
         assertEquals(
@@ -229,6 +257,21 @@ class NoteUiPureFunctionTest {
     fun highlightRangesAreCaseInsensitive() {
         assertEquals(listOf(0..4, 11..15), "Alpha note alpha".highlightRanges("alpha"))
         assertEquals(listOf(0..1, 4..5), "中文內容中文".highlightRanges("中文"))
+    }
+
+    @Test
+    fun searchHighlightUsesAccentWhitespaceAndTokenFallbackRanges() {
+        val value = "Meet José   after class"
+        val accent = highlightedText(value, "jose", Color.Yellow)
+        val collapsedPhrase = highlightedText(value, "jose after class", Color.Yellow)
+        val reorderedTokens = highlightedText(value, "class meet", Color.Yellow)
+
+        assertEquals(listOf(5..8), accent.spanStyles.map { it.start until it.end })
+        assertEquals(listOf(5..22), collapsedPhrase.spanStyles.map { it.start until it.end })
+        assertEquals(
+            listOf(0..3, 18..22),
+            reorderedTokens.spanStyles.map { it.start until it.end },
+        )
     }
 
     @Test
@@ -462,5 +505,23 @@ class NoteUiPureFunctionTest {
         assertEquals(2, urlRanges.size)
         assertEquals("https://en.wikipedia.org/wiki/Foo_(bar)", content.substring(urlRanges[0].range))
         assertEquals("https://example.com/path", content.substring(urlRanges[1].range))
+    }
+
+    private fun note(
+        id: Long,
+        folderId: Long,
+        isDeleted: Boolean = false,
+    ): NoteEntity {
+        return NoteEntity(
+            id = id,
+            folderId = folderId,
+            type = NoteTypes.TEXT,
+            title = "Note $id",
+            textContent = "",
+            drawingData = null,
+            createdAt = id,
+            updatedAt = id,
+            isDeleted = isDeleted,
+        )
     }
 }
