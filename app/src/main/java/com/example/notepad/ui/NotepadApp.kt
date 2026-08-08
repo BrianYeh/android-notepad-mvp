@@ -2440,7 +2440,7 @@ private fun SettingsScreen(
                 is DriveSyncResult.Success -> Toast.makeText(context, text.syncComplete, Toast.LENGTH_SHORT).show()
                 is DriveSyncResult.Failure -> Toast.makeText(
                     context,
-                    result.error.message.ifBlank { text.syncFailed },
+                    text.googleSyncErrorMessage(result.error.code),
                     Toast.LENGTH_SHORT,
                 ).show()
             }
@@ -2782,7 +2782,7 @@ private fun SettingsScreen(
                 }
                 syncMetadata.lastError?.let { error ->
                     Text(
-                        text = error.message,
+                        text = text.googleSyncErrorMessage(error.code),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.testTag("google_sync_error"),
@@ -2790,7 +2790,12 @@ private fun SettingsScreen(
                 }
                 Button(
                     onClick = { startGoogleSync() },
-                    enabled = !isGoogleSyncInProgress && !isBackupInProgress && !isRestoreInProgress,
+                    enabled = isGoogleSyncActionEnabled(
+                        status = syncMetadata.status,
+                        isGoogleSyncInProgress = isGoogleSyncInProgress,
+                        isBackupInProgress = isBackupInProgress,
+                        isRestoreInProgress = isRestoreInProgress,
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("google_sync_button"),
@@ -10197,4 +10202,16 @@ private fun SyncStatus.label(text: UiText): String {
         SyncStatus.Failed -> text.syncFailed
         SyncStatus.Conflict -> text.syncConflict
     }
+}
+
+internal fun isGoogleSyncActionEnabled(
+    status: SyncStatus,
+    isGoogleSyncInProgress: Boolean,
+    isBackupInProgress: Boolean,
+    isRestoreInProgress: Boolean,
+): Boolean {
+    return status != SyncStatus.Syncing &&
+        !isGoogleSyncInProgress &&
+        !isBackupInProgress &&
+        !isRestoreInProgress
 }

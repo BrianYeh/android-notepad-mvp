@@ -42,6 +42,7 @@ import com.example.notepad.data.SyncErrorCode
 import com.example.notepad.data.SyncMerge
 import com.example.notepad.data.SyncMetadata
 import com.example.notepad.data.SyncStatus
+import com.example.notepad.data.afterSyncCancellation
 import com.example.notepad.data.TextImportFile
 import com.example.notepad.data.buildSharedNoteTitle
 import com.example.notepad.data.matchesNoteSearch
@@ -57,6 +58,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.CommonStatusCodes
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -559,6 +561,15 @@ class NotepadViewModel(application: Application) : AndroidViewModel(application)
     }
 
     suspend fun syncGoogleDrive(): DriveSyncResult<Unit> = googleSyncMutex.withLock {
+        try {
+            syncGoogleDriveLocked()
+        } catch (exception: CancellationException) {
+            _syncMetadata.value = _syncMetadata.value.afterSyncCancellation()
+            throw exception
+        }
+    }
+
+    private suspend fun syncGoogleDriveLocked(): DriveSyncResult<Unit> {
         val now = System.currentTimeMillis()
         _syncMetadata.value = _syncMetadata.value.copy(status = SyncStatus.Syncing, lastError = null)
         val sourceDevice = SyncDevice(

@@ -165,8 +165,10 @@ class GoogleDriveSyncClient(
                     message = "Google Drive sync data is corrupt.",
                 ),
             )
+        } catch (exception: CancellationException) {
+            throw exception
         } catch (exception: Exception) {
-            DriveSyncResult.Failure(exception.toSyncError())
+            DriveSyncResult.Failure(exception.toDriveSyncError())
         }
     }
 
@@ -187,8 +189,10 @@ class GoogleDriveSyncClient(
                 .setFields("id")
                 .execute()
             DriveSyncResult.Success(Unit)
+        } catch (exception: CancellationException) {
+            throw exception
         } catch (exception: Exception) {
-            DriveSyncResult.Failure(exception.toSyncError())
+            DriveSyncResult.Failure(exception.toDriveSyncError())
         }
     }
 
@@ -262,34 +266,40 @@ class GoogleDriveSyncClient(
         return "$SYNC_FILE_PREFIX-$safeSnapshotId.json"
     }
 
-    private fun Exception.toSyncError(): SyncError {
-        return when (this) {
-            is UserRecoverableAuthException,
-            is UserRecoverableAuthIOException -> SyncError(
-                code = SyncErrorCode.PermissionRevoked,
-                message = "Google Drive permission needs to be granted again.",
-            )
-            is GoogleJsonResponseException -> SyncError(
-                code = when (statusCode) {
-                    401, 403 -> SyncErrorCode.PermissionRevoked
-                    else -> SyncErrorCode.Unknown
-                },
-                message = details?.message ?: message ?: "Google Drive sync failed.",
-            )
-            is IOException -> SyncError(
-                code = SyncErrorCode.NetworkUnavailable,
-                message = message ?: "Network unavailable.",
-            )
-            else -> SyncError(
-                code = SyncErrorCode.Unknown,
-                message = message ?: "Google Drive sync failed.",
-            )
-        }
-    }
-
     private companion object {
         const val SYNC_FILE_PREFIX = "just-notes-sync-v1"
         const val BACKEND_ID_TOKEN_REFRESH_TIMEOUT_SECONDS = 10L
+    }
+}
+
+internal fun Exception.toDriveSyncError(): SyncError {
+    return when (this) {
+        is UserRecoverableAuthException,
+        is UserRecoverableAuthIOException -> SyncError(
+            code = SyncErrorCode.PermissionRevoked,
+            message = "Google Drive permission needs to be granted again.",
+        )
+        is GoogleJsonResponseException -> {
+            if (statusCode == 401 || statusCode == 403) {
+                SyncError(
+                    code = SyncErrorCode.PermissionRevoked,
+                    message = "Google Drive permission needs to be granted again.",
+                )
+            } else {
+                SyncError(
+                    code = SyncErrorCode.Unknown,
+                    message = "Google Drive sync failed.",
+                )
+            }
+        }
+        is IOException -> SyncError(
+            code = SyncErrorCode.NetworkUnavailable,
+            message = "Network unavailable.",
+        )
+        else -> SyncError(
+            code = SyncErrorCode.Unknown,
+            message = "Google Drive sync failed.",
+        )
     }
 }
 

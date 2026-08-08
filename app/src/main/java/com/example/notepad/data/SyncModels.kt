@@ -48,6 +48,14 @@ data class SyncError(
     val message: String,
 )
 
+internal fun SyncMetadata.afterSyncCancellation(): SyncMetadata {
+    if (status != SyncStatus.Syncing) return this
+    return copy(
+        status = if (accountEmail == null) SyncStatus.SignedOut else SyncStatus.Idle,
+        lastError = null,
+    )
+}
+
 enum class SyncErrorCode {
     MissingGoogleConfiguration,
     NotSignedIn,

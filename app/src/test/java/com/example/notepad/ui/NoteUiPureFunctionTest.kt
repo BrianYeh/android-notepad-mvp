@@ -11,6 +11,8 @@ import com.example.notepad.data.DrawingTools
 import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.SyncMetadata
+import com.example.notepad.data.SyncError
+import com.example.notepad.data.SyncErrorCode
 import com.example.notepad.data.SyncStatus
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -83,6 +85,50 @@ class NoteUiPureFunctionTest {
                     accountEmail = "person@example.com",
                     status = SyncStatus.Idle,
                 ),
+            ),
+        )
+    }
+
+    @Test
+    fun networkSyncErrorUsesFriendlyLocalizedCopyWithoutLeakingTechnicalDetails() {
+        val rawError = SyncError(
+            code = SyncErrorCode.NetworkUnavailable,
+            message = "Unable to resolve host \"www.googleapis.com\": No address associated with hostname",
+        )
+
+        val english = EnglishText.googleSyncErrorMessage(rawError.code)
+        val traditionalChinese = TraditionalChineseText.googleSyncErrorMessage(rawError.code)
+
+        assertEquals(
+            "Unable to connect to Google Drive. Check your internet connection, Private DNS, or VPN, then try again.",
+            english,
+        )
+        assertEquals(
+            "無法連上 Google Drive。請檢查網路、私人 DNS 或 VPN 後再試一次。",
+            traditionalChinese,
+        )
+        assertEquals(false, english.contains("googleapis.com"))
+        assertEquals(false, traditionalChinese.contains("Unable to resolve host"))
+    }
+
+    @Test
+    fun failedGoogleSyncKeepsManualRetryEnabled() {
+        assertEquals(
+            true,
+            isGoogleSyncActionEnabled(
+                status = SyncStatus.Failed,
+                isGoogleSyncInProgress = false,
+                isBackupInProgress = false,
+                isRestoreInProgress = false,
+            ),
+        )
+        assertEquals(
+            false,
+            isGoogleSyncActionEnabled(
+                status = SyncStatus.Syncing,
+                isGoogleSyncInProgress = false,
+                isBackupInProgress = false,
+                isRestoreInProgress = false,
             ),
         )
     }

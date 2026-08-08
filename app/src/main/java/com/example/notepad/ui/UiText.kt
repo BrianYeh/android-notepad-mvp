@@ -1,6 +1,7 @@
 package com.example.notepad.ui
 
 import com.example.notepad.data.AppLanguage
+import com.example.notepad.data.SyncErrorCode
 
 class UiText(
     val appName: String,
@@ -338,6 +339,44 @@ class UiText(
             "請開啟通知才能使用提醒。"
         } else {
             "Turn on notifications to use reminders."
+        }
+    }
+
+    fun googleSyncErrorMessage(code: SyncErrorCode): String {
+        return if (this === TraditionalChineseText) {
+            when (code) {
+                SyncErrorCode.MissingGoogleConfiguration ->
+                    "這個版本未正確設定 Google 登入，請更新 App 後再試一次。"
+                SyncErrorCode.NotSignedIn ->
+                    "請重新登入 Google 帳號後再同步。"
+                SyncErrorCode.NetworkUnavailable ->
+                    "無法連上 Google Drive。請檢查網路、私人 DNS 或 VPN 後再試一次。"
+                SyncErrorCode.PermissionRevoked ->
+                    "Google Drive 權限已失效，請登出後重新登入。"
+                SyncErrorCode.RemoteDataCorrupt ->
+                    "Google Drive 同步資料無法讀取，請稍後再試。"
+                SyncErrorCode.Conflict ->
+                    "同步期間本機記事有變更，請再按一次「立即同步」。"
+                SyncErrorCode.Unknown ->
+                    "同步暫時無法完成，請稍後再試。"
+            }
+        } else {
+            when (code) {
+                SyncErrorCode.MissingGoogleConfiguration ->
+                    "Google sign-in is not configured in this app version. Update the app and try again."
+                SyncErrorCode.NotSignedIn ->
+                    "Sign in with Google again before syncing."
+                SyncErrorCode.NetworkUnavailable ->
+                    "Unable to connect to Google Drive. Check your internet connection, Private DNS, or VPN, then try again."
+                SyncErrorCode.PermissionRevoked ->
+                    "Google Drive access needs to be renewed. Sign out, then sign in again."
+                SyncErrorCode.RemoteDataCorrupt ->
+                    "Google Drive sync data could not be read. Please try again later."
+                SyncErrorCode.Conflict ->
+                    "Notes changed during sync. Tap Sync now again."
+                SyncErrorCode.Unknown ->
+                    "Sync could not finish. Please try again later."
+            }
         }
     }
 }
