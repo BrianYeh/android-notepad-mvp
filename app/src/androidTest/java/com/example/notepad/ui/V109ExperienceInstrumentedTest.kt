@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -210,6 +211,7 @@ class V109ExperienceInstrumentedTest {
         composeRule.onNodeWithText(v109Text(AppLanguage.TraditionalChinese).today).assertIsDisplayed()
         composeRule.onNodeWithText(TraditionalChineseText.search).assertIsDisplayed()
         composeRule.onNodeWithText(TraditionalChineseText.premium).assertIsDisplayed()
+        composeRule.onNodeWithTag("premium_tab").assertTextEquals(TraditionalChineseText.premium)
         composeRule.onNodeWithTag("today_tab").assertIsSelected()
 
         composeRule.onNodeWithTag("notes_tab").performClick()

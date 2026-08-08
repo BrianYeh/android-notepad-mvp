@@ -97,8 +97,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.Typography
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -148,6 +147,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -269,8 +269,8 @@ private const val NOTE_PREVIEW_MAX_CHARS = 160
 private const val NOTE_PREVIEW_CONTEXT_BEFORE = 45
 private const val NOTE_PREVIEW_CONTEXT_AFTER = 110
 private const val PREMIUM_AVAILABILITY_CHECK_GRACE_MS = 2_500L
-private val NOTE_PAPER_BACKGROUND = Color(0xFFFFF7D7)
-private val NOTE_PAPER_SURFACE = Color(0xFFFFFBEA)
+private val NOTE_PAPER_BACKGROUND = StationeryPalette.Paper
+private val NOTE_PAPER_SURFACE = StationeryPalette.PaperRaised
 
 private enum class SaveStatus {
     Saving,
@@ -610,17 +610,7 @@ private fun debugPremiumOverrideBody(language: AppLanguage): String {
 
 @Composable
 fun LocalNotepadTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Color(0xFF2F5D50),
-            secondary = Color(0xFF6D5E2E),
-            tertiary = Color(0xFF6A4C93),
-            surface = Color(0xFFFFFBFE),
-            background = Color(0xFFFAFAF7),
-        ),
-        typography = Typography(),
-        content = content,
-    )
+    StationeryTheme(content)
 }
 
 @Composable
@@ -1106,11 +1096,14 @@ internal fun MainNavigationBar(
     onOpenSearch: () -> Unit,
     onOpenPremium: () -> Unit,
 ) {
-    NavigationBar {
+    NavigationBar(
+        containerColor = StationeryPalette.PaperRaised,
+        tonalElevation = 0.dp,
+    ) {
         NavigationBarItem(
             selected = selectedTab == MainTab.Notes,
             onClick = onOpenNotes,
-            icon = { Text("N", fontWeight = FontWeight.Bold) },
+            icon = { Icon(Icons.Filled.Edit, contentDescription = null) },
             label = { Text(text.notesTab) },
             modifier = Modifier.testTag("notes_tab"),
         )
@@ -1131,7 +1124,14 @@ internal fun MainNavigationBar(
         NavigationBarItem(
             selected = selectedTab == MainTab.Premium,
             onClick = onOpenPremium,
-            icon = { Text("P", fontWeight = FontWeight.Bold) },
+            icon = {
+                Text(
+                    text = "✦",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clearAndSetSemantics { },
+                )
+            },
             label = { Text(text.premium) },
             modifier = Modifier.testTag("premium_tab"),
         )
@@ -1194,6 +1194,7 @@ internal fun PremiumScreen(
     BackHandler(onBack = onBack)
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text(text.premium) },
@@ -1202,6 +1203,9 @@ internal fun PremiumScreen(
                         Text(text.back)
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = StationeryPalette.PaperRaised,
+                ),
             )
         },
         bottomBar = {
@@ -1452,12 +1456,21 @@ private fun PremiumPlanRow(
     modifier: Modifier = Modifier,
 ) {
     val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    val shape = MaterialTheme.shapes.large
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .background(
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
+                shape = shape,
+            )
+            .border(1.dp, borderColor, shape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -1487,7 +1500,11 @@ private fun PremiumFeature(
     body: String,
     sample: @Composable (() -> Unit)? = null,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    StationeryPaperCard(
+        modifier = Modifier.fillMaxWidth(),
+        tone = StationeryCardTone.Cream,
+        contentPadding = PaddingValues(start = 24.dp, top = 16.dp, end = 16.dp, bottom = 16.dp),
+    ) {
         Text(
             text = title,
             style = MaterialTheme.typography.titleLarge,
@@ -1530,7 +1547,7 @@ private fun PremiumFolderRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(background, RoundedCornerShape(8.dp))
+            .background(background, MaterialTheme.shapes.medium)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1873,6 +1890,7 @@ private fun MainScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             if (isSelectionMode) {
                 TopAppBar(
@@ -1898,10 +1916,38 @@ private fun MainScreen(
                             Text(if (isTrash) text.permanentlyDelete else text.moveToTrash)
                         }
                     },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    ),
                 )
             } else {
                 TopAppBar(
-                    title = { Text(text.appName) },
+                    title = {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = text.appName,
+                                style = MaterialTheme.typography.titleLarge,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Box(
+                                    Modifier
+                                        .size(width = 28.dp, height = 3.dp)
+                                        .background(
+                                            StationeryPalette.Berry.copy(alpha = 0.72f),
+                                            MaterialTheme.shapes.extraSmall,
+                                        ),
+                                )
+                                Box(
+                                    Modifier
+                                        .size(width = 12.dp, height = 3.dp)
+                                        .background(
+                                            StationeryPalette.ButterAccent.copy(alpha = 0.8f),
+                                            MaterialTheme.shapes.extraSmall,
+                                        ),
+                                )
+                            }
+                        }
+                    },
                     actions = {
                         TextButton(
                             onClick = onOpenSettings,
@@ -1910,6 +1956,9 @@ private fun MainScreen(
                             Text(text.settings)
                         }
                     },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = StationeryPalette.PaperRaised,
+                    ),
                 )
             }
         },
@@ -1951,6 +2000,9 @@ private fun MainScreen(
                             onClick = {
                                 if (!isPrivacyLocked) addMenuExpanded = true
                             },
+                            shape = MaterialTheme.shapes.large,
+                            containerColor = StationeryPalette.Lavender,
+                            contentColor = StationeryPalette.LavenderInk,
                             modifier = Modifier
                                 .semantics { contentDescription = text.noteOptions }
                                 .testTag("add_note_options_button"),
@@ -2009,11 +2061,14 @@ private fun MainScreen(
                         onClick = {
                             if (!isPrivacyLocked) createNoteWithAllowedFolder(onCreateTextNote)
                         },
+                        shape = MaterialTheme.shapes.large,
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier
                             .semantics { contentDescription = text.newTextNote }
                             .testTag("add_note_button"),
                     ) {
-                        Text("+", style = MaterialTheme.typography.headlineSmall)
+                        Icon(Icons.Filled.Edit, contentDescription = null)
                     }
                 }
             }
@@ -2543,6 +2598,7 @@ private fun SettingsScreen(
     BackHandler(onBack = onBack)
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text(text.settings) },
@@ -2551,6 +2607,9 @@ private fun SettingsScreen(
                         Text(text.back)
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = StationeryPalette.PaperRaised,
+                ),
             )
         },
     ) { padding ->
@@ -2562,15 +2621,9 @@ private fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = text.textEditor,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = text.editorFontSize,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            StationerySectionHeader(
+                title = text.textEditor,
+                subtitle = text.editorFontSize,
             )
             EditorFontSizeRow(
                 editorFontSize = editorFontSize,
@@ -2579,10 +2632,8 @@ private fun SettingsScreen(
             )
             if (debugPremiumToolsAvailable) {
                 HorizontalDivider()
-                Text(
-                    text = developerToolsLabel(appLanguage),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
+                StationerySectionHeader(
+                    title = developerToolsLabel(appLanguage),
                     modifier = Modifier.testTag("debug_premium_section"),
                 )
                 Row(
@@ -2608,11 +2659,7 @@ private fun SettingsScreen(
                 }
             }
             HorizontalDivider()
-            Text(
-                text = text.privacy,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
+            StationerySectionHeader(title = text.privacy)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -2668,10 +2715,8 @@ private fun SettingsScreen(
             }
             if (showGoogleAccountSyncUi) {
                 HorizontalDivider()
-                Text(
-                    text = text.googleAccountSync,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
+                StationerySectionHeader(
+                    title = text.googleAccountSync,
                     modifier = Modifier.testTag("google_account_sync_title"),
                 )
                 Row(
@@ -2687,7 +2732,7 @@ private fun SettingsScreen(
                         modifier = Modifier
                             .background(
                                 color = MaterialTheme.colorScheme.primaryContainer,
-                                shape = RoundedCornerShape(8.dp),
+                                shape = MaterialTheme.shapes.small,
                             )
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                     )
@@ -2767,10 +2812,8 @@ private fun SettingsScreen(
                 onOpenComplianceUrl = { url -> openComplianceUrl(context, url) },
             )
             HorizontalDivider()
-            Text(
-                text = text.googleDriveBackup,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
+            StationerySectionHeader(
+                title = text.googleDriveBackup,
                 modifier = Modifier.testTag("online_sync_title"),
             )
             Row(
@@ -2786,7 +2829,7 @@ private fun SettingsScreen(
                     modifier = Modifier
                         .background(
                             color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = MaterialTheme.shapes.small,
                         )
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 )
@@ -2944,16 +2987,10 @@ private fun SettingsScreen(
                 }
             }
             HorizontalDivider()
-            Text(
-                text = importExportTitleLabel(appLanguage),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
+            StationerySectionHeader(
+                title = importExportTitleLabel(appLanguage),
+                subtitle = importExportHintLabel(appLanguage),
                 modifier = Modifier.testTag("import_export_title"),
-            )
-            Text(
-                text = importExportHintLabel(appLanguage),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -3445,7 +3482,9 @@ private fun SearchBar(
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(focusRequest) {
-        if (focusRequest > 0) focusRequester.requestFocus()
+        if (focusRequest > 0) {
+            focusRequester.requestFocus()
+        }
     }
 
     OutlinedTextField(
@@ -3606,49 +3645,42 @@ private fun NoteList(
     }
 
     if (notes.isEmpty()) {
-        Box(
-            modifier = modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center,
-        ) {
-            Card(
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier
-                    .padding(20.dp)
-                    .testTag("note_empty_state"),
-            ) {
+        val hasRecoveryActions = searchQuery.isNotBlank() || hasActiveFilters
+        val emptyAction: (@Composable () -> Unit)? = if (hasRecoveryActions) {
+            {
                 Column(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text(
-                        text = when {
-                            searchQuery.isNotBlank() || hasActiveFilters -> text.noSearchOrFilterResults
-                            listMode == NoteListMode.Trash -> text.noDeletedNotes
-                            else -> text.noNotes
-                        },
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (searchQuery.isNotBlank() || hasActiveFilters) {
-                        TextButton(
-                            onClick = onClearSearchAndFilters,
-                            enabled = !isPrivacyLocked,
-                            modifier = Modifier.testTag("clear_empty_search_filters"),
-                        ) {
-                            Text(v109Text.clearSearchAndFilters)
-                        }
-                        TextButton(
-                            onClick = onCreateTextNote,
-                            enabled = !isPrivacyLocked,
-                            modifier = Modifier.testTag("empty_search_new_note"),
-                        ) {
-                            Text(v109Text.newNote)
-                        }
+                    TextButton(
+                        onClick = onClearSearchAndFilters,
+                        enabled = !isPrivacyLocked,
+                        modifier = Modifier.testTag("clear_empty_search_filters"),
+                    ) {
+                        Text(v109Text.clearSearchAndFilters)
+                    }
+                    TextButton(
+                        onClick = onCreateTextNote,
+                        enabled = !isPrivacyLocked,
+                        modifier = Modifier.testTag("empty_search_new_note"),
+                    ) {
+                        Text(v109Text.newNote)
                     }
                 }
             }
+        } else {
+            null
         }
+        StationeryEmptyState(
+            title = when {
+                hasRecoveryActions -> text.noSearchOrFilterResults
+                listMode == NoteListMode.Trash -> text.noDeletedNotes
+                else -> text.noNotes
+            },
+            body = "",
+            action = emptyAction,
+            modifier = modifier.testTag("note_empty_state"),
+        )
         return
     }
 
@@ -4081,8 +4113,8 @@ private fun CalendarDayCell(
     Box(
         modifier = modifier
             .height(48.dp)
-            .background(backgroundColor, RoundedCornerShape(8.dp))
-            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .background(backgroundColor, MaterialTheme.shapes.medium)
+            .border(1.dp, borderColor, MaterialTheme.shapes.medium)
             .then(
                 if (dayStart == null) {
                     Modifier
@@ -4144,6 +4176,14 @@ private fun NoteRow(
     onTogglePinned: () -> Unit,
 ) {
     var rowMenuExpanded by remember(note.id) { mutableStateOf(false) }
+    val cardTone = when {
+        note.isPinned -> StationeryCardTone.Butter
+        note.type == NoteTypes.DRAWING -> StationeryCardTone.Lavender
+        note.type == NoteTypes.CHECKLIST -> StationeryCardTone.Mint
+        note.id % 2L == 0L -> StationeryCardTone.Sky
+        else -> StationeryCardTone.Blush
+    }
+    val cardShape = MaterialTheme.shapes.large
     LaunchedEffect(isPrivacyLocked) {
         if (isPrivacyLocked) rowMenuExpanded = false
     }
@@ -4159,21 +4199,32 @@ private fun NoteRow(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .border(
+                width = 1.dp,
+                color = cardTone.accent.copy(alpha = 0.24f),
+                shape = cardShape,
+            )
             .combinedClickable(
                 onClick = ::handleClick,
                 onLongClick = onStartSelection,
             )
             .testTag("note_card_${note.id}"),
-        shape = RoundedCornerShape(8.dp),
+        shape = cardShape,
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceVariant
+                cardTone.container
+            },
+            contentColor = if (isSelected) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                cardTone.content
             },
         ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
-        Column(Modifier.padding(14.dp)) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isSelectionMode) {
                     Checkbox(
@@ -4336,8 +4387,8 @@ private fun DrawingNoteThumbnail(
     Canvas(
         modifier = modifier
             .height(84.dp)
-            .background(Color.White, RoundedCornerShape(8.dp))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            .background(StationeryPalette.PaperRaised, MaterialTheme.shapes.large)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large)
             .onSizeChanged { thumbnailSize = it }
             .semantics { contentDescription = text.drawing }
             .testTag(if (isEmpty) "empty_drawing_thumbnail_$noteId" else "drawing_note_thumbnail_$noteId"),
@@ -5374,6 +5425,9 @@ private fun TextEditorScreen(
                         }
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = StationeryPalette.PaperRaised,
+                ),
             )
         },
     ) { padding ->
@@ -5425,7 +5479,7 @@ private fun TextEditorScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(NOTE_PAPER_SURFACE, RoundedCornerShape(8.dp))
+                            .background(NOTE_PAPER_SURFACE, MaterialTheme.shapes.large)
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                             .testTag("text_note_focus_mode"),
                         verticalAlignment = Alignment.CenterVertically,
@@ -5485,7 +5539,7 @@ private fun TextEditorScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("text_note_edit_metadata"),
-                        shape = RoundedCornerShape(8.dp),
+                        shape = MaterialTheme.shapes.large,
                     ) {
                         Column(
                             modifier = Modifier
@@ -5604,7 +5658,7 @@ private fun TextEditorScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .background(NOTE_PAPER_SURFACE, RoundedCornerShape(10.dp))
+                        .background(NOTE_PAPER_SURFACE, MaterialTheme.shapes.large)
                         .onSizeChanged { editContentViewportHeight = it.height }
                         .pointerInput(Unit) {
                             detectTapGestures {
@@ -5740,7 +5794,7 @@ private fun TextEditorScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(NOTE_PAPER_SURFACE, RoundedCornerShape(8.dp))
+                            .background(NOTE_PAPER_SURFACE, MaterialTheme.shapes.large)
                             .padding(horizontal = 20.dp, vertical = 18.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
@@ -6128,7 +6182,7 @@ private fun FindInNoteBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(NOTE_PAPER_SURFACE, RoundedCornerShape(8.dp))
+            .background(NOTE_PAPER_SURFACE, MaterialTheme.shapes.large)
             .padding(horizontal = 8.dp, vertical = 6.dp)
             .testTag("find_in_note_bar"),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -6209,7 +6263,7 @@ private fun TextEditorAccessoryBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(NOTE_PAPER_SURFACE, RoundedCornerShape(8.dp))
+            .background(NOTE_PAPER_SURFACE, MaterialTheme.shapes.large)
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 8.dp, vertical = 6.dp)
             .testTag("text_editor_accessory_bar"),
@@ -6536,6 +6590,7 @@ private fun ChecklistEditorScreen(
     BackHandler(onBack = ::saveAndBack)
 
     Scaffold(
+        containerColor = NOTE_PAPER_BACKGROUND,
         topBar = {
             TopAppBar(
                 title = {
@@ -6579,6 +6634,9 @@ private fun ChecklistEditorScreen(
                         }
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = StationeryPalette.PaperRaised,
+                ),
             )
         },
     ) { padding ->
@@ -6602,7 +6660,7 @@ private fun ChecklistEditorScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
-                    Card(shape = RoundedCornerShape(8.dp)) {
+                    Card(shape = MaterialTheme.shapes.large) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -6687,7 +6745,7 @@ private fun ChecklistEditorScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 item {
-                    Card(shape = RoundedCornerShape(8.dp)) {
+                    Card(shape = MaterialTheme.shapes.large) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -7564,6 +7622,7 @@ private fun DrawingEditorScreen(
     }
 
     Scaffold(
+        containerColor = NOTE_PAPER_BACKGROUND,
         topBar = {
             if (!isFullscreenDrawing) {
                 TopAppBar(
@@ -7581,6 +7640,9 @@ private fun DrawingEditorScreen(
                             Text(text.moveToTrash)
                         }
                     },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = StationeryPalette.PaperRaised,
+                    ),
                 )
             }
         },
@@ -8066,11 +8128,11 @@ private fun DrawingToolSegmentButton(
     Box(
         modifier = Modifier
             .size(48.dp)
-            .background(background, RoundedCornerShape(8.dp))
+            .background(background, MaterialTheme.shapes.medium)
             .border(
                 width = 1.dp,
                 color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                shape = RoundedCornerShape(8.dp),
+                shape = MaterialTheme.shapes.medium,
             )
             .clickable(onClick = onClick)
             .semantics {
@@ -8114,11 +8176,11 @@ private fun DrawingBrushSizeButton(
     Box(
         modifier = Modifier
             .size(48.dp)
-            .background(background, RoundedCornerShape(8.dp))
+            .background(background, MaterialTheme.shapes.medium)
             .border(
                 width = 1.dp,
                 color = if (selected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outlineVariant,
-                shape = RoundedCornerShape(8.dp),
+                shape = MaterialTheme.shapes.medium,
             )
             .clickable(onClick = onClick)
             .semantics {
@@ -8150,11 +8212,11 @@ private fun DrawingColorSwatch(
     Box(
         modifier = Modifier
             .size(48.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
             .border(
                 width = if (selected) 2.dp else 1.dp,
                 color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                shape = RoundedCornerShape(8.dp),
+                shape = MaterialTheme.shapes.medium,
             )
             .clickable(onClick = onClick)
             .semantics {
@@ -8203,7 +8265,7 @@ private fun DrawingCanvasWithFullscreenEntry(
                 .align(Alignment.BottomEnd)
                 .padding(12.dp)
                 .size(48.dp)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), MaterialTheme.shapes.medium)
                 .semantics { contentDescription = text.fullscreenWriting }
                 .testTag("drawing_fullscreen_button"),
         ) {
@@ -8239,8 +8301,8 @@ private fun DrawingCanvas(
 
     Canvas(
         modifier = modifier
-            .background(Color.White, RoundedCornerShape(8.dp))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            .background(StationeryPalette.PaperRaised, MaterialTheme.shapes.large)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large)
             .onSizeChanged { size ->
                 measuredCanvasSize = size
                 onCanvasSizeChange(size)

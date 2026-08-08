@@ -1,5 +1,7 @@
 package com.example.notepad.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,21 +10,32 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -32,6 +45,114 @@ import com.example.notepad.data.NoteEntity
 import com.example.notepad.data.NoteTemplate
 import com.example.notepad.data.NoteTypes
 import com.example.notepad.data.TodayNoteSections
+
+private object StationeryColors {
+    val Paper = StationeryPalette.PaperRaised
+    val Cream = StationeryPalette.Paper
+    val Blush = StationeryPalette.Blush
+    val Mint = StationeryPalette.ForestSoft
+    val Lavender = StationeryPalette.Lavender
+    val Butter = StationeryPalette.Butter
+    val Forest = StationeryPalette.Forest
+    val Rose = StationeryPalette.Berry
+    val Ink = StationeryPalette.Ink
+    val PencilLine = StationeryPalette.OutlineSoft
+}
+
+private val StationeryCardShape = StationeryShapes.extraLarge
+private val StationeryButtonShape = StationeryShapes.medium
+
+@Composable
+private fun StationeryDoodle(modifier: Modifier = Modifier) {
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(58.dp)
+            .clearAndSetSemantics {},
+    ) {
+        val noteHeight = size.height * 0.68f
+        val noteWidth = size.width * 0.25f
+        val top = size.height * 0.16f
+        val radius = CornerRadius(12.dp.toPx())
+
+        drawRoundRect(
+            color = StationeryColors.Butter,
+            topLeft = Offset(size.width * 0.08f, top + size.height * 0.08f),
+            size = Size(noteWidth, noteHeight),
+            cornerRadius = radius,
+        )
+        drawRoundRect(
+            color = StationeryColors.Lavender,
+            topLeft = Offset(size.width * 0.36f, top),
+            size = Size(noteWidth, noteHeight),
+            cornerRadius = radius,
+        )
+        drawRoundRect(
+            color = StationeryColors.Blush,
+            topLeft = Offset(size.width * 0.64f, top + size.height * 0.06f),
+            size = Size(noteWidth, noteHeight),
+            cornerRadius = radius,
+        )
+
+        val dotRadius = 2.5.dp.toPx()
+        drawCircle(
+            color = StationeryColors.Forest.copy(alpha = 0.7f),
+            radius = dotRadius,
+            center = Offset(size.width * 0.16f, size.height * 0.55f),
+        )
+        drawCircle(
+            color = StationeryColors.Forest.copy(alpha = 0.7f),
+            radius = dotRadius,
+            center = Offset(size.width * 0.44f, size.height * 0.47f),
+        )
+        drawCircle(
+            color = StationeryColors.Rose.copy(alpha = 0.72f),
+            radius = dotRadius,
+            center = Offset(size.width * 0.72f, size.height * 0.53f),
+        )
+        drawLine(
+            color = StationeryColors.Forest.copy(alpha = 0.55f),
+            start = Offset(size.width * 0.87f, size.height * 0.8f),
+            end = Offset(size.width * 0.91f, size.height * 0.28f),
+            strokeWidth = 1.5.dp.toPx(),
+        )
+        drawCircle(
+            color = StationeryColors.Mint,
+            radius = 5.dp.toPx(),
+            center = Offset(size.width * 0.88f, size.height * 0.5f),
+        )
+        drawCircle(
+            color = StationeryColors.Mint,
+            radius = 4.dp.toPx(),
+            center = Offset(size.width * 0.92f, size.height * 0.4f),
+        )
+    }
+}
+
+@Composable
+private fun StationeryTape(
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(
+        modifier = modifier
+            .width(58.dp)
+            .height(11.dp)
+            .clearAndSetSemantics {},
+    ) {
+        drawRoundRect(
+            color = color.copy(alpha = 0.78f),
+            size = size,
+            cornerRadius = CornerRadius(4.dp.toPx()),
+        )
+        drawLine(
+            color = Color.White.copy(alpha = 0.42f),
+            start = Offset(size.width * 0.14f, size.height * 0.48f),
+            end = Offset(size.width * 0.86f, size.height * 0.48f),
+            strokeWidth = 1.dp.toPx(),
+        )
+    }
+}
 
 internal data class V109Text(
     val welcomeTitle: String,
@@ -126,6 +247,10 @@ internal fun FirstRunWelcome(
                 .fillMaxWidth()
                 .heightIn(max = 560.dp)
                 .testTag("first_run_welcome"),
+            shape = StationeryCardShape,
+            colors = CardDefaults.cardColors(containerColor = StationeryColors.Paper),
+            border = BorderStroke(1.dp, StationeryColors.Blush),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         ) {
             LazyColumn(
                 modifier = Modifier.testTag("first_run_welcome_scroll"),
@@ -133,23 +258,39 @@ internal fun FirstRunWelcome(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        StationeryDoodle()
+                        Text(
+                            text = text.welcomeTitle,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = StationeryColors.Ink,
+                            modifier = Modifier.testTag("first_run_title"),
+                        )
+                    }
+                }
+                item {
                     Text(
-                        text = text.welcomeTitle,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.testTag("first_run_title"),
+                        text = text.welcomeBody,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = StationeryColors.Ink,
                     )
                 }
                 item {
-                    Text(text.welcomeBody, style = MaterialTheme.typography.bodyLarge)
-                }
-                item {
-                    Text(
-                        text = text.localFirstBody,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.testTag("first_run_privacy_copy"),
-                    )
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp),
+                        color = StationeryColors.Mint,
+                    ) {
+                        Text(
+                            text = text.localFirstBody,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = StationeryColors.Ink,
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp, vertical = 14.dp)
+                                .testTag("first_run_privacy_copy"),
+                        )
+                    }
                 }
                 item {
                     Button(
@@ -157,6 +298,11 @@ internal fun FirstRunWelcome(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("first_run_new_note"),
+                        shape = StationeryButtonShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = StationeryColors.Forest,
+                            contentColor = StationeryColors.Paper,
+                        ),
                     ) {
                         Text(text.newNote)
                     }
@@ -167,6 +313,12 @@ internal fun FirstRunWelcome(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("first_run_choose_template"),
+                        shape = StationeryButtonShape,
+                        border = BorderStroke(1.dp, StationeryColors.Forest),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = StationeryColors.Lavender.copy(alpha = 0.72f),
+                            contentColor = StationeryColors.Forest,
+                        ),
                     ) {
                         Text(text.chooseTemplate)
                     }
@@ -179,6 +331,9 @@ internal fun FirstRunWelcome(
                         TextButton(
                             onClick = onSkip,
                             modifier = Modifier.testTag("first_run_skip"),
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = StationeryColors.Rose,
+                            ),
                         ) {
                             Text(text.skip)
                         }
@@ -203,9 +358,14 @@ internal fun StarterHub(
     ) {
         Card(
             modifier = Modifier
+                .fillMaxWidth()
                 .padding(20.dp)
                 .heightIn(max = 480.dp)
                 .testTag("starter_hub"),
+            shape = StationeryCardShape,
+            colors = CardDefaults.cardColors(containerColor = StationeryColors.Paper),
+            border = BorderStroke(1.dp, StationeryColors.PencilLine),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         ) {
             LazyColumn(
                 modifier = Modifier.testTag("starter_hub_scroll"),
@@ -213,16 +373,20 @@ internal fun StarterHub(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
-                    Text(
-                        text = text.starterTitle,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StationeryDoodle()
+                        Text(
+                            text = text.starterTitle,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = StationeryColors.Ink,
+                        )
+                    }
                 }
                 item {
                     Text(
                         text = text.starterBody,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = StationeryColors.Ink.copy(alpha = 0.78f),
                     )
                 }
                 item {
@@ -232,6 +396,11 @@ internal fun StarterHub(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("starter_new_note"),
+                        shape = StationeryButtonShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = StationeryColors.Forest,
+                            contentColor = StationeryColors.Paper,
+                        ),
                     ) {
                         Text(text.newNote)
                     }
@@ -243,6 +412,12 @@ internal fun StarterHub(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("starter_choose_template"),
+                        shape = StationeryButtonShape,
+                        border = BorderStroke(1.dp, StationeryColors.Forest),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = StationeryColors.Blush.copy(alpha = 0.64f),
+                            contentColor = StationeryColors.Forest,
+                        ),
                     ) {
                         Text(text.chooseTemplate)
                     }
@@ -321,19 +496,34 @@ internal fun TodayHub(
         modifier = modifier
             .fillMaxSize()
             .testTag("today_hub"),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            Text(
-                text = text.today,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = text.todayBody,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = StationeryCardShape,
+                colors = CardDefaults.cardColors(containerColor = StationeryColors.Cream),
+                border = BorderStroke(1.dp, StationeryColors.Butter),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    StationeryDoodle()
+                    Text(
+                        text = text.today,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = StationeryColors.Ink,
+                    )
+                    Text(
+                        text = text.todayBody,
+                        color = StationeryColors.Ink.copy(alpha = 0.76f),
+                    )
+                }
+            }
         }
         item {
             Row(
@@ -345,6 +535,11 @@ internal fun TodayHub(
                     modifier = Modifier
                         .weight(1f)
                         .testTag("today_new_note"),
+                    shape = StationeryButtonShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = StationeryColors.Forest,
+                        contentColor = StationeryColors.Paper,
+                    ),
                 ) {
                     Text(text.newNote)
                 }
@@ -353,6 +548,12 @@ internal fun TodayHub(
                     modifier = Modifier
                         .weight(1f)
                         .testTag("today_new_checklist"),
+                    shape = StationeryButtonShape,
+                    border = BorderStroke(1.dp, StationeryColors.Forest),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = StationeryColors.Mint,
+                        contentColor = StationeryColors.Forest,
+                    ),
                 ) {
                     Text(text.checklist)
                 }
@@ -361,6 +562,12 @@ internal fun TodayHub(
                     modifier = Modifier
                         .weight(1f)
                         .testTag("today_open_reminders"),
+                    shape = StationeryButtonShape,
+                    border = BorderStroke(1.dp, StationeryColors.Rose),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = StationeryColors.Lavender,
+                        contentColor = StationeryColors.Rose,
+                    ),
                 ) {
                     Text(text.reminder)
                 }
@@ -368,13 +575,24 @@ internal fun TodayHub(
         }
         if (sections.isEmpty) {
             item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = text.todayEmpty,
-                        modifier = Modifier
-                            .padding(20.dp)
-                            .testTag("today_empty"),
-                    )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = StationeryCardShape,
+                    colors = CardDefaults.cardColors(containerColor = StationeryColors.Butter.copy(alpha = 0.68f)),
+                    border = BorderStroke(1.dp, StationeryColors.PencilLine),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        StationeryTape(color = StationeryColors.Blush)
+                        Text(
+                            text = text.todayEmpty,
+                            color = StationeryColors.Ink,
+                            modifier = Modifier.testTag("today_empty"),
+                        )
+                    }
                 }
             }
         } else {
@@ -395,12 +613,26 @@ private fun androidx.compose.foundation.lazy.LazyListScope.todaySection(
 ) {
     if (notes.isEmpty()) return
     item {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.testTag("today_section_$tag"),
-        )
+        val labelColor = when (tag) {
+            "overdue" -> StationeryColors.Blush
+            "due_today" -> StationeryColors.Butter
+            "pinned" -> StationeryColors.Lavender
+            else -> StationeryColors.Mint
+        }
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = labelColor,
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = StationeryColors.Ink,
+                modifier = Modifier
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .testTag("today_section_$tag"),
+            )
+        }
     }
     items(notes, key = { note -> "$tag:${note.id}" }) { note ->
         TodayNoteCard(
@@ -431,28 +663,52 @@ private fun TodayNoteCard(
             .firstOrNull { line -> line.isNotBlank() }
             .orEmpty()
     }
+    val paperColor = when (((note.id % 4L) + 4L) % 4L) {
+        0L -> StationeryColors.Cream
+        1L -> StationeryColors.Blush.copy(alpha = 0.74f)
+        2L -> StationeryColors.Mint.copy(alpha = 0.82f)
+        else -> StationeryColors.Lavender.copy(alpha = 0.78f)
+    }
+    val tapeColor = when (((note.id % 3L) + 3L) % 3L) {
+        0L -> StationeryColors.Blush
+        1L -> StationeryColors.Mint
+        else -> StationeryColors.Butter
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onOpen)
             .testTag("today_note_${note.id}"),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = paperColor),
+        border = BorderStroke(1.dp, StationeryColors.PencilLine.copy(alpha = 0.82f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Medium,
+        Box(modifier = Modifier.fillMaxWidth()) {
+            StationeryTape(
+                color = tapeColor,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 7.dp),
             )
-            if (preview.isNotBlank()) {
+            Column(
+                modifier = Modifier.padding(start = 18.dp, top = 24.dp, end = 18.dp, bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
                 Text(
-                    text = preview,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = StationeryColors.Ink,
                 )
+                if (preview.isNotBlank()) {
+                    Text(
+                        text = preview,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = StationeryColors.Ink.copy(alpha = 0.72f),
+                        maxLines = 2,
+                    )
+                }
             }
         }
     }

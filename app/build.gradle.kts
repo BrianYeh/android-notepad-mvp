@@ -100,8 +100,8 @@ android {
         applicationId = "com.brianyeh.justnotes"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.0.9"
+        versionCode = 8
+        versionName = "1.0.10"
 
         testInstrumentationRunner = "com.example.notepad.JustNotesTestRunner"
 

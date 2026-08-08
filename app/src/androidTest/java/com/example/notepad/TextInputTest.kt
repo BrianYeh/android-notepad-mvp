@@ -3377,6 +3377,8 @@ class TextInputTest {
         }
 
         waitForTag("folder_filter_row")
+        composeRule.onNodeWithTag("folder_filter_row")
+            .performScrollToNode(hasTestTag("folder_filter_$folderA"))
         composeRule.onNodeWithTag("folder_filter_$folderA").performClick()
         composeRule.onNodeWithTag("folder_action_row").assertIsDisplayed()
         composeRule.onNodeWithTag("today_tab").performClick()
